@@ -1,0 +1,9 @@
+# Dashboard
+pandas>=2.1
+numpy>=1.26
+scikit-learn>=1.4
+lightgbm>=4.3
+mlflow>=2.11
+streamlit>=1.33
+plotly>=5.20
+requests>=2.31

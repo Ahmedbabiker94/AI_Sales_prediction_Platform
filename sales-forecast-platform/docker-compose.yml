@@ -1,0 +1,64 @@
+#version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: sales_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./mlruns:/app/mlruns
+      - ./data:/app/data
+      - ./database:/app/database
+      - ./reports:/app/reports
+    environment:
+      - PYTHONPATH=/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: sales_dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./database:/app/database
+      - ./mlruns:/app/mlruns
+      - ./reports:/app/reports
+    environment:
+      - PYTHONPATH=/app
+      - API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: sales_scheduler
+    command: ["python", "src/scheduler.py"]
+    volumes:
+      - ./database:/app/database
+      - ./data:/app/data
+      - ./mlruns:/app/mlruns
+      - ./reports:/app/reports
+    environment:
+      - PYTHONPATH=/app
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles:
+      - scheduler
+
+networks:
+  default:
+    name: sales_platform_net
