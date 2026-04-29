@@ -8,3 +8,4 @@ streamlit>=1.33
 plotly>=5.20
 requests>=2.31
 xgboost
+reportlab
