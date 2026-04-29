@@ -3,8 +3,11 @@ from pathlib import Path
 from datetime import datetime
 
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT /"database" /"predictions.db"
 
+DB_DIR = ROOT / "database"
+DB_DIR.mkdir(parents=True, exist_ok=True)
+
+DB_PATH = DB_DIR / "predictions.db"
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
