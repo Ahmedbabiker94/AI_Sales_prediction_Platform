@@ -49,9 +49,9 @@ from api.schemas import (
     ForecastMonthResponse,
 )
 RUN_ID ="a262e5b434f643958cbf3d938d2200eb"
-MODEL_URI = "runs:/a262e5b434f643958cbf3d938d2200eb/model"
-MODEL_VERSION = "run-artifact"
-_model = None
+MODEL_URI = str(ROOT/"models"/"production_xgboost")
+MODEL_VERSION = "production_xgboost_v1"
+_model = mlflow.pyfunc.load_model(MODEL_URI)
 
 
 def _load_model():

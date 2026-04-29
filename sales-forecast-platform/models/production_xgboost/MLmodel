@@ -1,0 +1,23 @@
+artifact_path: file:c:/Users/ababi/OneDrive/Desktop/AI_Platform/sales-forecast-platform/notebooks/../mlruns/827083823943770025/models/m-7e9073a975e9458e9c6376ae669552ad/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.14.3
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.8.0
+    skops_trusted_types: null
+mlflow_version: 3.10.1
+model_id: m-7e9073a975e9458e9c6376ae669552ad
+model_size_bytes: 16808
+model_uuid: m-7e9073a975e9458e9c6376ae669552ad
+prompts: null
+run_id: caca119ca58a4e5698126b75fe65eb7b
+utc_time_created: '2026-03-30 17:23:04.675343'
