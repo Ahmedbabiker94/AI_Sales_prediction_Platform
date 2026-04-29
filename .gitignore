@@ -12,3 +12,4 @@ mlruns/
 *.pt
 *.pth
 *.onnx
+!models/production_xgboost/**
