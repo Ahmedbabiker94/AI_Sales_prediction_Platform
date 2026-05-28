@@ -86,9 +86,17 @@ class ForecastResponse(BaseModel):
 # =========================
 
 class ForecastWeekRequest(BaseModel):
-    Store: int = Field(..., example=1)
-    Dept: int = Field(..., example=1)
+    Store: int
+    Dept: int
 
+    # REQUIRED features
+    Type: str
+    Size: float
+    Temperature: float
+    Fuel_Price: float
+    CPI: float
+    Unemployment: float
+    IsHoliday: int = 0
 
 class ForecastWeekItem(BaseModel):
     forecast_start_date: str

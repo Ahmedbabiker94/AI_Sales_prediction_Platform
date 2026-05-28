@@ -1,96 +1,48 @@
-import sqlite3
-from pathlib import Path
-from datetime import datetime
+import os
 
-ROOT = Path(__file__).resolve().parent.parent
+from dotenv import load_dotenv
 
-DB_DIR = ROOT / "database"
-DB_DIR.mkdir(parents=True, exist_ok=True)
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-DB_PATH = DB_DIR / "predictions.db"
-def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+from src.models import Base
+
+load_dotenv()
+
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+
+DATABASE_URL = (
+    f"postgresql://{DB_USER}:{DB_PASSWORD}"
+    f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+)
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
+
+
+def get_db():
+
+    db = SessionLocal()
+
+    try:
+        yield db
+
+    finally:
+        db.close()
+
 
 def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS predictions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at TEXT NOT NULL,
-        store INTEGER,
-        dept INTEGER,
-        input_date TEXT,
-        predicted_units REAL,
-        model_version TEXT
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS forecast_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_at TEXT NOT NULL,
-        forecast_date TEXT,
-        store INTEGER,
-        dept INTEGER,
-        predicted_units REAL,
-        model_version TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
-
-def log_prediction(store, dept, input_date, predicted_units, model_version):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    INSERT INTO predictions (
-        created_at,
-        store,
-        dept,
-        input_date,
-        predicted_units,
-        model_version
-    )
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        datetime.utcnow().isoformat(),
-        store,
-        dept,
-        input_date,
-        predicted_units,
-        model_version
-    ))
-
-    conn.commit()
-    conn.close()
-def log_forecast(forecast_date, store, dept, predicted_units, model_version):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    INSERT INTO forecast_logs (
-        created_at,
-        forecast_date,
-        store,
-        dept,
-        predicted_units,
-        model_version
-    )
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        datetime.utcnow().isoformat(),
-        forecast_date,
-        store,
-        dept,
-        predicted_units,
-        model_version
-    ))
-
-    conn.commit()
-    conn.close()
+    Base.metadata.create_all(bind=engine)

@@ -14,8 +14,9 @@ Run:
     streamlit run dashboard/app.py
 """
 import os
-import sqlite3
 import sys
+
+import sqlite3
 from pathlib import Path
 from datetime import date
 
@@ -26,15 +27,16 @@ import requests
 import streamlit as st
 import mlflow
 from mlflow.tracking import MlflowClient
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT ))
+
 from src.insights import generate_forecast_insights
 from src.reporting import generate_forecast_report
 from src.pdf_report import save_report_as_pdf
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "src"))
 
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+API_URL = os.getenv("API_URL", "http://144.24.223.13:8000")
 DB_PATH = ROOT / "database" / "predictions.db"
 SALES_CSV = ROOT / "data" / "walmart_cleaned.csv"
 
@@ -44,6 +46,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
 
 st.markdown("""
 <style>
@@ -236,38 +239,80 @@ def call_forecast_api(api_url: str, store: int, dept: int, periods: int):
         return None, str(e)    
 
 @st.cache_data(ttl=5)
-def call_next_week_forecast(api_url: str, store: int, dept: int):
+def call_next_week_forecast(
+    api_url: str,
+    store: int,
+    dept: int,
+    store_type: str,
+    size: int,
+    temperature: float,
+    fuel_price: float,
+    cpi: float,
+    unemployment: float,
+    is_holiday: bool
+):
     try:
         resp = requests.post(
             f"{api_url}/forecast-next-week",
             json={
                 "Store": store,
-                "Dept": dept
+                "Dept": dept,
+                "Type": store_type,
+                "Size": size,
+                "Temperature": temperature,
+                "Fuel_Price": fuel_price,
+                "CPI": cpi,
+                "Unemployment": unemployment,
+                "IsHoliday": is_holiday
             },
             timeout=15
         )
+
         if resp.status_code == 200:
             return resp.json(), None
+
         return None, f"API error {resp.status_code}: {resp.text}"
+
     except Exception as e:
         return None, str(e)
 
-
 @st.cache_data(ttl=5)
-def call_next_4_weeks_forecast(api_url: str, store: int, dept: int, weeks: int = 4):
+def call_next_4_weeks_forecast(
+    api_url: str,
+    store: int,
+    dept: int,
+    store_type: str,
+    size: int,
+    temperature: float,
+    fuel_price: float,
+    cpi: float,
+    unemployment: float,
+    is_holiday: bool,
+    weeks: int = 4
+):
     try:
         resp = requests.post(
             f"{api_url}/forecast-next-4-weeks",
             json={
                 "Store": store,
                 "Dept": dept,
+                "Type": store_type,
+                "Size": size,
+                "Temperature": temperature,
+                "Fuel_Price": fuel_price,
+                "CPI": cpi,
+                "Unemployment": unemployment,
+                "IsHoliday": is_holiday,
                 "weeks": weeks
             },
             timeout=60
         )
+
         if resp.status_code == 200:
             return resp.json(), None
+
         return None, f"API error {resp.status_code}: {resp.text}"
+
     except Exception as e:
         return None, str(e)
 
@@ -295,15 +340,6 @@ with st.sidebar:
     pred_unemp = st.number_input("Unemployment", value=7.5, key="pred_unemp")
     pred_holiday = st.toggle("Is Holiday?", value=False, key="pred_holiday")
 
-    st.markdown("### Lag / Rolling Features")
-    pred_lag_1 = st.number_input("lag_1", value=20000.0, key="pred_lag_1")
-    pred_lag_2 = st.number_input("lag_2", value=21000.0, key="pred_lag_2")
-    pred_lag_4 = st.number_input("lag_4", value=19000.0, key="pred_lag_4")
-    pred_lag_52 = st.number_input("lag_52", value=18000.0, key="pred_lag_52")
-    pred_roll_4 = st.number_input("rolling_mean_4", value=20000.0, key="pred_roll_4")
-    pred_roll_12 = st.number_input("rolling_mean_12", value=21000.0, key="pred_roll_12")
-    pred_std_4 = st.number_input("rolling_std_4", value=500.0, key="pred_std_4")
-    pred_trend = st.number_input("sales_trend", value=1.0, key="pred_trend")
 
     run_single_predict = st.button("Predict", use_container_width=True, type="primary")
 
@@ -315,10 +351,54 @@ with st.sidebar:
 
     forecast_store = st.number_input("Forecast Store", min_value=1, max_value=45, value=1, key="fc_store")
     forecast_dept = st.number_input("Forecast Dept", min_value=1, max_value=99, value=1, key="fc_dept")
+    
+    forecast_type = st.selectbox(
+        "Forecast Store Type",
+        ["A", "B", "C"],
+        key="fc_type"
+    )
+    
+    forecast_size = st.number_input(
+        "Forecast Store Size",
+        value=150000,
+        key="fc_size"
+    )
+    
+    forecast_temp = st.number_input(
+        "Forecast Temperature",
+        value=25.0,
+        key="fc_temp"
+    )
+    
+    forecast_fuel = st.number_input(
+        "Forecast Fuel Price",
+        value=3.5,
+        key="fc_fuel"
+    )
+    
+    forecast_cpi = st.number_input(
+        "Forecast CPI",
+        value=220.0,
+        key="fc_cpi"
+    )
+
+    forecast_unemployment = st.number_input(
+        "Forecast Unemployment",
+        value=7.0,
+        key="fc_unemployment"
+    )
+
+    forecast_holiday = st.toggle(
+        "Forecast Holiday?",
+        value=False,
+        key="fc_holiday"
+    )
     forecast_weeks = st.number_input("Forecast Weeks", min_value=1, max_value=8, value=4, key="fc_weeks")
 
     run_next_week = st.button("Forecast Next Week", use_container_width=True)
     run_next_month = st.button("Forecast Next 4 Weeks", use_container_width=True)
+
+
 
     # -------------------------
     # Auto refresh
@@ -369,38 +449,45 @@ if run_single_predict:
         "MarkDown4": 0.0,
         "MarkDown5": 0.0,
         "IsHoliday": bool(pred_holiday),
-        "lag_1": float(pred_lag_1),
-        "lag_2": float(pred_lag_2),
-        "lag_4": float(pred_lag_4),
-        "lag_52": float(pred_lag_52),
-        "rolling_mean_4": float(pred_roll_4),
-        "rolling_mean_12": float(pred_roll_12),
-        "rolling_std_4": float(pred_std_4),
-        "sales_trend": float(pred_trend),
+
     }
 
     result, error = call_predict_api(api_url, predict_payload)
     st.session_state["single_predict_result"] = result
     st.session_state["single_predict_error"] = error
 
-
 if run_next_week:
     result, error = call_next_week_forecast(
         api_url=api_url,
         store=int(forecast_store),
-        dept=int(forecast_dept)
+        dept=int(forecast_dept),
+        store_type=forecast_type,
+        size=int(forecast_size),
+        temperature=float(forecast_temp),
+        fuel_price=float(forecast_fuel),
+        cpi=float(forecast_cpi),
+        unemployment=float(forecast_unemployment),
+        is_holiday=bool(forecast_holiday)
     )
+
     st.session_state["next_week_result"] = result
     st.session_state["next_week_error"] = error
-
 
 if run_next_month:
     result, error = call_next_4_weeks_forecast(
         api_url=api_url,
         store=int(forecast_store),
         dept=int(forecast_dept),
+        store_type=forecast_type,
+        size=int(forecast_size),
+        temperature=float(forecast_temp),
+        fuel_price=float(forecast_fuel),
+        cpi=float(forecast_cpi),
+        unemployment=float(forecast_unemployment),
+        is_holiday=bool(forecast_holiday),
         weeks=int(forecast_weeks)
     )
+
     st.session_state["next_month_result"] = result
     st.session_state["next_month_error"] = error
 
