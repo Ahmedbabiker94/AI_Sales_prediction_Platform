@@ -13,7 +13,7 @@ def log_model_to_mlflow(
     outlier_report_path=None
 ):
 
-    mlflow.set_tracking_uri("sqlite:///mlflow.db")
+    mlflow.set_tracking_uri("http://127.0.0.1:5000")
 
     mlflow.set_experiment(
         "sales_forecasting"

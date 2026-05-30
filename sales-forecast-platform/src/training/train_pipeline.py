@@ -131,16 +131,6 @@ def run_training_pipeline(
         test_df
     )
 
-    print("Preparing features...")
-
-    X_train, y_train = prepare_features(
-        train_df
-    )
-
-    X_test, y_test = prepare_features(
-        test_df
-    )
-
     print(
         "Running TimeSeries "
         "Cross Validation..."

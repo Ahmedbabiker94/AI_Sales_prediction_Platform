@@ -1,4 +1,8 @@
 import mlflow
+
+mlflow.set_tracking_uri(
+    "http://127.0.0.1:5000"
+)
 import mlflow.xgboost
 from mlflow.tracking import MlflowClient
 
@@ -42,14 +46,18 @@ def promote_model_to_staging(version: int):
     print(f"Model version {version} promoted to Staging")
 
 
+
 def load_production_model():
 
-    model_uri = f"models:/{MODEL_NAME}/Production"
+    model_uri = (
+        "models:/sales_forecasting_model@production"
+    )
 
-    model = mlflow.xgboost.load_model(model_uri)
+    model = mlflow.xgboost.load_model(
+        model_uri
+    )
 
     return model
-
 
 def load_staging_model():
 

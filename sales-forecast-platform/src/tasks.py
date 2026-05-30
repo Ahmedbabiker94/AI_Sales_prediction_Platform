@@ -4,36 +4,34 @@ from src.celery_app import (
     celery_app
 )
 
-from api.forecasting import (
-    recursive_forecast
+from src.services.forecast_service import (
+    ForecastService
 )
 
 from src.logger import (
     log_forecast
 )
 
-from src.ml.model_registry import (
-    load_production_model
+# ─────────────────────────────────────
+# GLOBAL SERVICE
+# ─────────────────────────────────────
+
+forecast_service = ForecastService(
+    model_type="production"
 )
 
-# ─────────────────────────────────────────────────────
-# GLOBAL MODEL
-# ─────────────────────────────────────────────────────
-
-model = load_production_model()
-
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 # TEST TASK
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 
 @celery_app.task
 def test_task(x, y):
 
     return x + y
 
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 # FORECAST TASK
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 
 @celery_app.task
 def forecast_next_week_task(
@@ -41,37 +39,37 @@ def forecast_next_week_task(
     dept
 ):
 
-    class TempRequest:
+    df = pd.DataFrame([
+        {
+            "Store": store,
+            "Dept": dept
+        }
+    ])
 
-        Store = store
-        Dept = dept
-
-    today = (
-        pd.Timestamp.today()
-        .normalize()
+    prediction = (
+        forecast_service.forecast_single(df)
     )
 
-    forecasts = recursive_forecast(
-        model=model,
-        req=TempRequest,
-        start_date=today,
-        weeks=1
-    )
-
-    item = forecasts[0]
+    result = {
+        "Store": store,
+        "Dept": dept,
+        "predicted_units": round(
+            max(0, float(prediction)),
+            2
+        ),
+        "model_version": "production"
+    }
 
     log_forecast(
-        forecast_date=item[
-            "forecast_start_date"
-        ],
-        store=item["Store"],
-        dept=item["Dept"],
-        predicted_units=item[
+        forecast_date=str(
+            pd.Timestamp.today().date()
+        ),
+        store=store,
+        dept=dept,
+        predicted_units=result[
             "predicted_units"
         ],
-        model_version=item[
-            "model_version"
-        ]
+        model_version="production"
     )
 
-    return item
+    return result

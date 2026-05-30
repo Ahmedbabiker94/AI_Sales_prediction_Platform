@@ -1,4 +1,4 @@
-from src.models.model_factory import get_model
+from src.ml.models.model_factory import get_model
 from src.preprocessing.preprocessing_factory import get_preprocessor
 
 

@@ -1,25 +1,21 @@
 
 """
 main.py
--------
-FastAPI prediction service.
-Loads the Production model from MLflow registry at startup.
+--------
+Enterprise FastAPI prediction service.
 
-Endpoints:
-  GET  /health          — liveness check + model info
-  POST /predict         — single-row prediction
-  POST /batch-predict   — batch prediction
-
-Run:
-    uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+Application layer ONLY.
+No direct MLflow.
+No direct XGBoost.
+No direct preprocessing.
 """
-
 
 from pathlib import Path
 import sys
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from celery.result import AsyncResult
@@ -28,13 +24,8 @@ from src.tasks import (
     forecast_next_week_task
 )
 
-from src.ml.model_registry import (
-    load_production_model
-)
-
-from src.features.feature_pipeline import (
-    FEATURE_COLS,
-    build_prediction_features
+from src.services.forecast_service import (
+    ForecastService
 )
 
 from api.forecasting import (
@@ -53,13 +44,11 @@ from api.schemas import (
     ForecastWeekRequest,
     ForecastWeekResponse,
     ForecastWeekItem,
-    ForecastMonthRequest,
-    ForecastMonthResponse,
 )
 
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 # PATH SETUP
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -68,13 +57,13 @@ sys.path.insert(
     str(ROOT / "src")
 )
 
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 # APP SETUP
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 
 app = FastAPI(
     title="AI Sales Forecast Platform",
-    version="2.0.0"
+    version="3.0.0"
 )
 
 app.add_middleware(
@@ -85,100 +74,65 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─────────────────────────────────────────────────────
-# MODEL INFO
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
+# GLOBAL FORECAST SERVICE
+# ─────────────────────────────────────
 
-MODEL_VERSION = "production_xgboost_v2"
+forecast_service = None
 
-_model = None
-
-# ─────────────────────────────────────────────────────
-# STARTUP EVENT
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
+# STARTUP
+# ─────────────────────────────────────
 
 @app.on_event("startup")
 def startup_event():
 
-    global _model
+    global forecast_service
 
-    try:
-
-        print(
-            "Loading production model..."
-        )
-
-        _model = load_production_model()
-
-        print(
-            "Production model loaded successfully."
-        )
-
-    except Exception as e:
-
-        print(
-            f"Model loading failed: {e}"
-        )
-
-        _model = None
-
-# ─────────────────────────────────────────────────────
-# MODEL ACCESS HELPER
-# ─────────────────────────────────────────────────────
-
-def get_model():
-
-    global _model
-
-    if _model is None:
-
-        raise HTTPException(
-            status_code=503,
-            detail="Model not loaded."
-        )
-
-    return _model
-
-# ─────────────────────────────────────────────────────
-# HEALTH ENDPOINT
-# ─────────────────────────────────────────────────────
-
-@app.get("/health", response_model=HealthResponse)
-def health():
-
-    model_loaded = _model is not None
-
-    return HealthResponse(
-        status="ok" if model_loaded else "model_not_loaded",
-        model_loaded=model_loaded,
-        model_version=MODEL_VERSION
+    print(
+        "Initializing Forecast Service..."
     )
 
-# ─────────────────────────────────────────────────────
-# SINGLE PREDICTION
-# ─────────────────────────────────────────────────────
+    forecast_service = ForecastService(
+        model_type="production"
+    )
 
-@app.post("/predict", response_model=PredictResponse)
+    print(
+        "Forecast Service initialized."
+    )
+
+# ─────────────────────────────────────
+# HEALTH
+# ─────────────────────────────────────
+
+@app.get(
+    "/health",
+    response_model=HealthResponse
+)
+def health():
+
+    return HealthResponse(
+        status="ok",
+        model_loaded=True,
+        model_version="production"
+    )
+
+# ─────────────────────────────────────
+# SINGLE PREDICTION
+# ─────────────────────────────────────
+
+@app.post(
+    "/predict",
+    response_model=PredictResponse
+)
 def predict(req: PredictRequest):
 
-    model = get_model()
+    df = pd.DataFrame([
+        req.model_dump()
+    ])
 
-    features = build_prediction_features(req)
-
-    X = pd.DataFrame([features])
-
-    missing_cols = [
-        col for col in FEATURE_COLS
-        if col not in X.columns
-    ]
-
-    for col in missing_cols:
-        X[col] = 0.0
-
-    X = X[FEATURE_COLS]
-
-    prediction = float(
-        model.predict(X)[0]
+    prediction = (
+        forecast_service.forecast_single(df)
     )
 
     prediction = round(
@@ -188,12 +142,12 @@ def predict(req: PredictRequest):
 
     return PredictResponse(
         prediction=prediction,
-        model_version=MODEL_VERSION
+        model_version="production"
     )
 
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 # BATCH PREDICTION
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
 
 @app.post(
     "/batch_predict",
@@ -201,45 +155,30 @@ def predict(req: PredictRequest):
 )
 def batch_predict(req: BatchPredictRequest):
 
-    model = get_model()
-
-    rows = []
-
-    for item in req.items:
-
-        features = build_prediction_features(
-            item
-        )
-
-        rows.append(features)
-
-    X = pd.DataFrame(rows)
-
-    missing_cols = [
-        col for col in FEATURE_COLS
-        if col not in X.columns
+    rows = [
+        item.model_dump()
+        for item in req.items
     ]
 
-    for col in missing_cols:
-        X[col] = 0.0
+    df = pd.DataFrame(rows)
 
-    X = X[FEATURE_COLS]
-
-    preds = model.predict(X)
+    predictions = (
+        forecast_service.forecast_dataframe(df)
+    )
 
     predictions = [
         round(max(0, float(p)), 2)
-        for p in preds
+        for p in predictions
     ]
 
     return BatchPredictResponse(
         predictions=predictions,
-        model_version=MODEL_VERSION
+        model_version="production"
     )
 
-# ─────────────────────────────────────────────────────
-# FORECAST NEXT WEEK
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
+# FORECAST WEEK
+# ─────────────────────────────────────
 
 @app.post(
     "/forecast/week",
@@ -247,15 +186,13 @@ def batch_predict(req: BatchPredictRequest):
 )
 def forecast_week(req: ForecastWeekRequest):
 
-    model = get_model()
-
     today = (
         pd.Timestamp.today()
         .normalize()
     )
 
     forecasts = recursive_forecast(
-        model=model,
+        predictor=forecast_service.predictor,
         req=req,
         start_date=today,
         weeks=1
@@ -285,9 +222,9 @@ def forecast_week(req: ForecastWeekRequest):
         forecasts=items
     )
 
-# ─────────────────────────────────────────────────────
-# FORECAST MULTIPLE WEEKS
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
+# MULTI WEEK FORECAST
+# ─────────────────────────────────────
 
 @app.post(
     "/forecast",
@@ -295,15 +232,13 @@ def forecast_week(req: ForecastWeekRequest):
 )
 def forecast(req: ForecastRequest):
 
-    model = get_model()
-
     today = (
         pd.Timestamp.today()
         .normalize()
     )
 
     forecasts = recursive_forecast(
-        model=model,
+        predictor=forecast_service.predictor,
         req=req,
         start_date=today,
         weeks=req.weeks
@@ -333,9 +268,9 @@ def forecast(req: ForecastRequest):
         forecasts=items
     )
 
-# ─────────────────────────────────────────────────────
-# ASYNC FORECAST ENDPOINT
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
+# ASYNC FORECAST
+# ─────────────────────────────────────
 
 @app.post("/forecast/async")
 def forecast_async(
@@ -353,9 +288,9 @@ def forecast_async(
         "status": "submitted"
     }
 
-# ─────────────────────────────────────────────────────
-# TASK STATUS ENDPOINT
-# ─────────────────────────────────────────────────────
+# ─────────────────────────────────────
+# TASK STATUS
+# ─────────────────────────────────────
 
 @app.get("/task/{task_id}")
 def task_status(task_id: str):
