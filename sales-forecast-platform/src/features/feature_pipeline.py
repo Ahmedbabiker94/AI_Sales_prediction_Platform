@@ -1,5 +1,7 @@
 import pandas as pd
-
+from src.features.history_feature_builder import (
+    HistoryFeatureBuilder
+)
 FEATURE_COLS = [
     "Unnamed: 0",
     "Store",
@@ -44,7 +46,9 @@ FEATURE_COLS = [
 def prepare_features(df):
 
     df = df.copy()
-
+    df["Date"] = pd.to_datetime(
+    df["Date"]
+    )
     # -----------------------------------------------------
     # Date Features
     # -----------------------------------------------------
@@ -299,31 +303,36 @@ def prepare_inference_features(df):
     df["is_christmas"] = 0
 
     # -----------------------------------------------------
-    # Lag Features
+    # Validate History Features
     # -----------------------------------------------------
 
-    base_sales = df["Weekly_Sales"]
+    required_history_cols = [
 
-    df["lag_1"] = base_sales
-    df["lag_2"] = base_sales
-    df["lag_4"] = base_sales
-    df["lag_52"] = base_sales
+        "lag_1",
+        "lag_2",
+        "lag_4",
+        "lag_52",
 
-    # -----------------------------------------------------
-    # Rolling Features
-    # -----------------------------------------------------
+        "rolling_mean_4",
+        "rolling_mean_12",
+        "rolling_std_4",
 
-    df["rolling_mean_4"] = base_sales
+        "sales_trend"
+    ]
 
-    df["rolling_mean_12"] = base_sales
+    missing = [
 
-    df["rolling_std_4"] = 0
+        col
+        for col in required_history_cols
+        if col not in df.columns
 
-    # -----------------------------------------------------
-    # Trend Feature
-    # -----------------------------------------------------
+    ]
 
-    df["sales_trend"] = 0
+    if missing:
+
+        raise ValueError(
+            f"Missing history features: {missing}"
+        )
 
     # -----------------------------------------------------
     # Encode Type
@@ -384,7 +393,7 @@ def prepare_inference_features(df):
     ]
 
     return df[feature_columns]
-
+    
 from src.features.base_features import (
     add_date_features,
     add_markdown_features,

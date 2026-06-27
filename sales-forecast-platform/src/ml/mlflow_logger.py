@@ -2,7 +2,7 @@ import mlflow
 import mlflow.xgboost
 
 
-mlflow.set_tracking_uri("sqlite:///mlflow.db")
+mlflow.set_tracking_uri("http://127.0.0.1:5000")
 mlflow.set_experiment("sales_forecasting")
 
 
@@ -10,6 +10,7 @@ mlflow.set_experiment("sales_forecasting")
 def log_model_to_mlflow(
     model,
     metrics,
+    model_type,
     outlier_report_path=None
 ):
 
@@ -20,6 +21,11 @@ def log_model_to_mlflow(
     )
 
     with mlflow.start_run() as run:
+        mlflow.set_tag(
+
+            "model_type",
+            model_type
+        )
 
         mlflow.log_metric(
             "mae",

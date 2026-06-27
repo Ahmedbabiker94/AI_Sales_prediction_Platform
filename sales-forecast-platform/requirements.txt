@@ -54,7 +54,7 @@ mlflow-tracing==3.11.1
 multidict==6.7.1
 narwhals==2.20.0
 numpy==2.4.4
-nvidia-nccl-cu12==2.30.4
+# nvidia-nccl-cu12==2.30.4
 opentelemetry-api==1.41.1
 opentelemetry-proto==1.41.1
 opentelemetry-sdk==1.41.1
@@ -102,7 +102,7 @@ tzdata==2026.2
 tzlocal==5.3.1
 urllib3==2.6.3
 uvicorn==0.46.0
-uvloop==0.22.1
+uvloop==0.22.1; sys_platform != "win32"
 watchdog==6.0.0
 watchfiles==1.1.1
 wcwidth==0.7.0

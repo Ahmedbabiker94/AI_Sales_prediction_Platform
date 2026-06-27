@@ -14,6 +14,17 @@ with DAG(
         bash_command="""
         cd /home/ubuntu/AI_Sales_prediction_Platform/sales-forecast-platform &&
         source .venv/bin/activate &&
-        python train.py
+        python -m src.train --promote
         """
     )
+
+    evaluate_model = BashOperator(
+        task_id="evaluate_model",
+        bash_command="""
+        cd /home/ubuntu/AI_Sales_prediction_Platform/sales-forecast-platform &&
+        source .venv/bin/activate &&
+        python -m src.evaluate
+        """
+    )
+
+    retrain_model >> evaluate_model

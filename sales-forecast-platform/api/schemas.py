@@ -1,8 +1,3 @@
-"""
-schemas.py
-----------
-Pydantic request/response schemas for the FastAPI prediction service.
-"""
 
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -85,38 +80,88 @@ class ForecastResponse(BaseModel):
 # Weekly Forecast Schemas
 # =========================
 
+
 class ForecastWeekRequest(BaseModel):
     Store: int
     Dept: int
 
-    # REQUIRED features
-    Type: str
-    Size: float
-    Temperature: float
-    Fuel_Price: float
-    CPI: float
-    Unemployment: float
-    IsHoliday: int = 0
 
 class ForecastWeekItem(BaseModel):
     forecast_start_date: str
-    forecast_end_date: str
+    Store: int
+    Dept: int
+    predicted_units: float
+    model_version: str
+
+class ForecastWeekResponse(BaseModel):
+    forecasts: list[ForecastWeekItem]
+
+
+# =========================
+# MULTI-WEEK FORECAST
+# =========================
+
+class ForecastRequest(BaseModel):
+    Store: int
+    Dept: int
+    weeks: int = Field(
+        4,
+        ge=1,
+        le=52,
+        description="Number of future weeks"
+    )
+
+
+class ForecastItem(BaseModel):
+    forecast_start_date: str
     Store: int
     Dept: int
     predicted_units: float
     model_version: str
 
 
-class ForecastWeekResponse(BaseModel):
-    forecast: ForecastWeekItem
+class ForecastResponse(BaseModel):
+    forecasts: list[ForecastItem]
 
+class AccuracySummaryResponse(BaseModel):
 
-class ForecastMonthRequest(BaseModel):
-    Store: int = Field(..., example=1)
-    Dept: int = Field(..., example=1)
-    weeks: int = Field(4, example=4, ge=1, le=8, description="Number of future weeks to forecast")
+    avg_absolute_error: float
 
+    avg_percentage_error: float
 
-class ForecastMonthResponse(BaseModel):
-    forecasts: list[ForecastWeekItem]
-    total_weeks: int    
+    total_forecasts: int
+
+class WorstForecastItem(BaseModel):
+
+    store: int
+    dept: int
+    forecast_date: str
+
+    actual_sales: float
+    predicted_sales: float
+
+    percentage_error: float
+
+class ForecastInsightsResponse(BaseModel):
+
+    summary: str
+
+    insights: list[str]
+
+    stats: dict
+
+class HealthMonitoringResponse(BaseModel):
+
+    api: str
+
+    database: str
+
+    forecast_job: str
+
+    accuracy_job: str
+
+    report_job: str
+
+class MetricsResponse(BaseModel):
+
+    metrics: dict

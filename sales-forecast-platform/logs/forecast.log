@@ -1,0 +1,167 @@
+2026-06-10 14:36:49,458 | INFO | forecast | Forecast service started
+2026-06-10 14:36:49,458 | ERROR | forecast | Example error
+2026-06-10 14:36:53,494 | INFO | forecast | Forecast service started
+2026-06-10 14:36:53,494 | ERROR | forecast | Example error
+2026-06-10 15:18:06,329 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:19:53,274 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:19:55,056 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:20:18,156 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:21:16,223 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:31:04,173 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:31:05,926 | INFO | forecast | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 15:41:57,075 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:41:57,834 | INFO | forecast | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 15:42:35,486 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:42:35,825 | INFO | forecast | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 15:50:53,540 | INFO | forecast | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 15:50:54,154 | INFO | forecast | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 15:50:54,300 | INFO | forecast | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-17 15:50:54.154085
+2026-06-10 15:50:54,300 | INFO | forecast | Forecast completed | Store=1 | Dept=1
+2026-06-10 21:57:20,880 | INFO | Forecast started | Store=1000000000 | Dept=1 | Weeks=1
+2026-06-10 22:13:07,422 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 22:13:07,424 | INFO | Forecast started | Store=1000000000 | Dept=1 | Weeks=1
+2026-06-10 22:13:08,852 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:13:08,952 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-17 22:13:08.852695
+2026-06-10 22:13:08,952 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:13:12,361 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-10 22:13:12,727 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:13:12,729 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-17 22:13:12.727951
+2026-06-10 22:13:12,729 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:30:21,374 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=4
+2026-06-10 22:30:21,962 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:30:21,971 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-17 22:30:21.962417
+2026-06-10 22:30:21,973 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:30:22,147 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:30:22,149 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-24 22:30:22.147785
+2026-06-10 22:30:22,151 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:30:22,360 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:30:22,486 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-01 22:30:22.486262
+2026-06-10 22:30:22,486 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:30:22,666 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:30:22,670 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-08 22:30:22.666049
+2026-06-10 22:30:22,670 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:28,112 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=4
+2026-06-10 22:35:28,887 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:28,919 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-17 22:35:28.887725
+2026-06-10 22:35:28,919 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:29,099 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:29,101 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-24 22:35:29.099986
+2026-06-10 22:35:29,101 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:29,282 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:29,293 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-01 22:35:29.291118
+2026-06-10 22:35:29,293 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:29,456 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:29,468 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-08 22:35:29.465342
+2026-06-10 22:35:29,468 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:30,810 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=4
+2026-06-10 22:35:31,187 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:31,197 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-17 22:35:31.195647
+2026-06-10 22:35:31,199 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:31,377 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:31,380 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-24 22:35:31.377348
+2026-06-10 22:35:31,380 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:31,553 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:31,555 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-01 22:35:31.553098
+2026-06-10 22:35:31,555 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:31,725 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:31,729 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-08 22:35:31.725044
+2026-06-10 22:35:31,729 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:32,552 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=4
+2026-06-10 22:35:32,873 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:32,876 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-17 22:35:32.873281
+2026-06-10 22:35:32,876 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:33,032 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:33,086 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-24 22:35:33.045046
+2026-06-10 22:35:33,086 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:33,254 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:33,258 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-01 22:35:33.254093
+2026-06-10 22:35:33,258 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-10 22:35:33,515 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-10 22:35:33,519 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-08 22:35:33.515004
+2026-06-10 22:35:33,519 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-11 14:17:20,484 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=4
+2026-06-11 14:17:48,458 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-11 14:17:51,430 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-18 14:17:48.460330
+2026-06-11 14:17:51,430 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-11 14:17:51,613 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-11 14:17:51,638 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-25 14:17:51.613290
+2026-06-11 14:17:51,638 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-11 14:17:52,026 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-11 14:17:52,066 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-02 14:17:52.026728
+2026-06-11 14:17:52,066 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-11 14:17:52,264 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-11 14:17:52,737 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-09 14:17:52.264088
+2026-06-11 14:17:52,737 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-12 19:01:13,989 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-12 19:01:21,297 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-12 19:01:21,745 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-19 19:01:21.298220
+2026-06-12 19:01:21,747 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-12 19:01:23,832 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=1
+2026-06-12 19:01:24,329 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33492.91796875
+2026-06-12 19:01:24,422 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-19 19:01:24.329366
+2026-06-12 19:01:24,423 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-16 03:23:06,672 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=4
+2026-06-16 03:23:14,886 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33634.66015625
+2026-06-16 03:23:15,874 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-23 03:23:14.886764
+2026-06-16 03:23:15,874 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-16 03:23:16,091 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33634.66015625
+2026-06-16 03:23:16,477 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-06-30 03:23:16.093339
+2026-06-16 03:23:16,477 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-16 03:23:16,718 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33634.66015625
+2026-06-16 03:23:16,891 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-07 03:23:16.718809
+2026-06-16 03:23:16,891 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-16 03:23:17,160 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33634.66015625
+2026-06-16 03:23:17,778 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-14 03:23:17.160320
+2026-06-16 03:23:17,778 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 08:28:56,120 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=4
+2026-06-24 08:29:03,102 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33645.4765625
+2026-06-24 08:29:04,391 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-01 08:29:03.102687
+2026-06-24 08:29:04,737 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 08:29:05,394 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33645.4765625
+2026-06-24 08:29:05,400 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-08 08:29:05.396658
+2026-06-24 08:29:05,400 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 08:29:06,007 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33645.4765625
+2026-06-24 08:29:06,144 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-15 08:29:06.017140
+2026-06-24 08:29:06,144 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 08:29:06,339 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33645.4765625
+2026-06-24 08:29:06,451 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-22 08:29:06.341978
+2026-06-24 08:29:06,451 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 08:29:06,451 | INFO | Forecast started | Store=2 | Dept=1 | Weeks=4
+2026-06-24 08:29:06,984 | INFO | Forecast generated | Store=2 | Dept=1 | Value=52601.3984375
+2026-06-24 08:29:07,205 | INFO | Forecast persisted | Store=2 | Dept=1 | Date=2026-07-01 08:29:07.024427
+2026-06-24 08:29:07,205 | INFO | Forecast completed | Store=2 | Dept=1
+2026-06-24 08:29:07,399 | INFO | Forecast generated | Store=2 | Dept=1 | Value=52601.3984375
+2026-06-24 08:29:08,351 | INFO | Forecast persisted | Store=2 | Dept=1 | Date=2026-07-08 08:29:07.406117
+2026-06-24 08:29:09,390 | INFO | Forecast completed | Store=2 | Dept=1
+2026-06-24 08:29:09,599 | INFO | Forecast generated | Store=2 | Dept=1 | Value=52601.3984375
+2026-06-24 08:29:11,476 | INFO | Forecast persisted | Store=2 | Dept=1 | Date=2026-07-15 08:29:09.599742
+2026-06-24 08:29:11,476 | INFO | Forecast completed | Store=2 | Dept=1
+2026-06-24 08:29:11,680 | INFO | Forecast generated | Store=2 | Dept=1 | Value=52601.3984375
+2026-06-24 08:29:12,436 | INFO | Forecast persisted | Store=2 | Dept=1 | Date=2026-07-22 08:29:11.680431
+2026-06-24 08:29:12,436 | INFO | Forecast completed | Store=2 | Dept=1
+2026-06-24 14:06:48,623 | INFO | Forecast started | Store=1 | Dept=1 | Weeks=4
+2026-06-24 14:07:05,695 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33645.4765625
+2026-06-24 14:07:06,311 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-01 14:07:05.697463
+2026-06-24 14:07:06,311 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 14:07:06,524 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33645.4765625
+2026-06-24 14:07:07,163 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-08 14:07:06.659447
+2026-06-24 14:07:07,163 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 14:07:07,310 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33645.4765625
+2026-06-24 14:07:07,465 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-15 14:07:07.325298
+2026-06-24 14:07:07,465 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 14:07:07,652 | INFO | Forecast generated | Store=1 | Dept=1 | Value=33645.4765625
+2026-06-24 14:07:07,661 | INFO | Forecast persisted | Store=1 | Dept=1 | Date=2026-07-22 14:07:07.659056
+2026-06-24 14:07:07,661 | INFO | Forecast completed | Store=1 | Dept=1
+2026-06-24 14:07:07,661 | INFO | Forecast started | Store=2 | Dept=1 | Weeks=4
+2026-06-24 14:07:07,949 | INFO | Forecast generated | Store=2 | Dept=1 | Value=52601.3984375
+2026-06-24 14:07:07,952 | INFO | Forecast persisted | Store=2 | Dept=1 | Date=2026-07-01 14:07:07.949647
+2026-06-24 14:07:07,952 | INFO | Forecast completed | Store=2 | Dept=1
+2026-06-24 14:07:08,193 | INFO | Forecast generated | Store=2 | Dept=1 | Value=52601.3984375
+2026-06-24 14:07:08,197 | INFO | Forecast persisted | Store=2 | Dept=1 | Date=2026-07-08 14:07:08.193778
+2026-06-24 14:07:08,197 | INFO | Forecast completed | Store=2 | Dept=1
+2026-06-24 14:07:08,401 | INFO | Forecast generated | Store=2 | Dept=1 | Value=52601.3984375
+2026-06-24 14:07:08,401 | INFO | Forecast persisted | Store=2 | Dept=1 | Date=2026-07-15 14:07:08.401616
+2026-06-24 14:07:08,401 | INFO | Forecast completed | Store=2 | Dept=1
+2026-06-24 14:07:08,607 | INFO | Forecast generated | Store=2 | Dept=1 | Value=52601.3984375
+2026-06-24 14:07:08,609 | INFO | Forecast persisted | Store=2 | Dept=1 | Date=2026-07-22 14:07:08.607350
+2026-06-24 14:07:08,609 | INFO | Forecast completed | Store=2 | Dept=1

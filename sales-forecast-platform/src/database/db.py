@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.models import Base
+from src.database.tables import metadata
 
 load_dotenv()
 
@@ -45,4 +45,4 @@ def get_db():
 
 def init_db():
 
-    Base.metadata.create_all(bind=engine)
+    metadata.create_all(bind=engine)

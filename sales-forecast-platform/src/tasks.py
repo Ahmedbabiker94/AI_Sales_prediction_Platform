@@ -1,37 +1,25 @@
-import pandas as pd
+from src.celery_app import celery_app
 
-from src.celery_app import (
-    celery_app
+from src.services.recursive_forecast_service import (
+    RecursiveForecastService
 )
 
-from src.services.forecast_service import (
-    ForecastService
+from src.core.logger import (
+    get_logger
 )
 
-from src.logger import (
-    log_forecast
+logger = get_logger("celery")
+
+forecast_service = (
+    RecursiveForecastService()
 )
 
-# ─────────────────────────────────────
-# GLOBAL SERVICE
-# ─────────────────────────────────────
-
-forecast_service = ForecastService(
-    model_type="production"
-)
-
-# ─────────────────────────────────────
-# TEST TASK
-# ─────────────────────────────────────
 
 @celery_app.task
 def test_task(x, y):
 
     return x + y
 
-# ─────────────────────────────────────
-# FORECAST TASK
-# ─────────────────────────────────────
 
 @celery_app.task
 def forecast_next_week_task(
@@ -39,37 +27,41 @@ def forecast_next_week_task(
     dept
 ):
 
-    df = pd.DataFrame([
-        {
-            "Store": store,
-            "Dept": dept
-        }
-    ])
+    logger.info(
+        f"Async forecast started | Store={store} | Dept={dept}"
+    )
 
-    prediction = (
-        forecast_service.forecast_single(df)
+    predictions = (
+        forecast_service.forecast(
+            store=store,
+            dept=dept,
+            weeks=1
+        )
+    )
+
+    prediction = float(
+        predictions[0]
     )
 
     result = {
+
         "Store": store,
+
         "Dept": dept,
+
         "predicted_units": round(
-            max(0, float(prediction)),
+            max(
+                0,
+                prediction
+            ),
             2
         ),
+
         "model_version": "production"
     }
 
-    log_forecast(
-        forecast_date=str(
-            pd.Timestamp.today().date()
-        ),
-        store=store,
-        dept=dept,
-        predicted_units=result[
-            "predicted_units"
-        ],
-        model_version="production"
+    logger.info(
+        f"Async forecast completed | Store={store} | Dept={dept}"
     )
 
     return result

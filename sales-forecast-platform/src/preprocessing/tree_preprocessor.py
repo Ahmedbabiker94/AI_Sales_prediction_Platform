@@ -1,6 +1,18 @@
-from src.features.feature_pipeline import prepare_features
-from src.preprocessing.base_preprocessor import BasePreprocessor
+from src.features.feature_pipeline import (
+    prepare_features,
+    prepare_inference_features
+)
 
+from src.preprocessing.base_preprocessor import (
+    BasePreprocessor
+)
+
+import pandas as pd
+
+from src.features.feature_pipeline import (
+    prepare_features,
+    prepare_inference_features
+)
 
 class TreePreprocessor(BasePreprocessor):
 
@@ -8,4 +20,11 @@ class TreePreprocessor(BasePreprocessor):
         return prepare_features(df)
 
     def transform(self, df):
-        return prepare_features(df)
+
+        df = df.copy()
+
+        df["Date"] = pd.to_datetime(
+            df["Date"]
+        )
+
+        return prepare_inference_features(df)

@@ -183,12 +183,14 @@ def run_training_pipeline(
       )
 
     run_id =log_model_to_mlflow(
-    model=model,
-    metrics=metrics,
-    outlier_report_path=(
-        outlier_results["report_path"]
+
+        model=model,
+        metrics=metrics,
+        model_type = model_type,
+        outlier_report_path=(
+            outlier_results["report_path"]
+        )
     )
-)
     print(f"MLflow Run ID: {run_id}")
     print("Training pipeline completed.")
 

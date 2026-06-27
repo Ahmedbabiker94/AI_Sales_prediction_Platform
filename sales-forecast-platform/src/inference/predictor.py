@@ -1,6 +1,8 @@
 from src.ml.models.model_factory import get_model
 from src.preprocessing.preprocessing_factory import get_preprocessor
-
+from src.services.feature_enrichment_service import (
+    FeatureEnrichmentService
+)
 
 class Predictor:
 
@@ -8,19 +10,23 @@ class Predictor:
 
         self.model_type = model_type
 
+        from src.ml.production_resolver import (
+            get_production_model_type
+        )
         if model_type == "production":
-            resolved_model_type = "xgboost"
-
-        elif model_type == "staging":
-            resolved_model_type = "xgboost"
-
+            resolved_model_type = (
+                get_production_model_type ()
+            )
         else:
-            resolved_model_type = model_type
+                resolved_model_type = model_type
 
         self.model = get_model(resolved_model_type)
 
         self.preprocessor = get_preprocessor(
             resolved_model_type
+        )
+        self.feature_enrichment_service = (
+            FeatureEnrichmentService()
         )
 
         self.load()
@@ -31,7 +37,13 @@ class Predictor:
 
     def predict_dataframe(self, df):
 
-        X, _ = self.preprocessor.transform(df)
+        enriched_df = (
+            self.feature_enrichment_service.enrich(df)
+        )
+
+        X = self.preprocessor.transform(
+            enriched_df
+        )
 
         predictions = self.model.predict(X)
 

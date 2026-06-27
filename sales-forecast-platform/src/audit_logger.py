@@ -1,5 +1,5 @@
 
-from src.db import SessionLocal
+from src.database.db import SessionLocal
 
 from src.models import Prediction, ForecastLog
 
