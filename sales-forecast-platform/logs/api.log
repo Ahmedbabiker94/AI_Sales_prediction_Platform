@@ -61,3 +61,12 @@
 2026-06-26 08:49:03,367 | INFO | GET /openapi.json Status=200 Duration=0.361s
 2026-06-26 08:49:28,384 | INFO | GET /monitoring/health Status=200 Duration=3.357s
 2026-06-26 08:49:39,039 | INFO | GET /metrics Status=200 Duration=0.003s
+2026-06-28 08:00:25,428 | INFO | GET /docs Status=200 Duration=0.011s
+2026-06-28 08:00:34,527 | INFO | GET /docs Status=200 Duration=0.000s
+2026-06-28 08:00:55,426 | INFO | GET /openapi.json Status=200 Duration=4.501s
+2026-06-28 08:29:26,539 | INFO | GET /docs Status=200 Duration=0.160s
+2026-06-28 08:29:53,609 | INFO | GET /docs Status=200 Duration=0.000s
+2026-06-28 08:30:07,695 | INFO | GET /openapi.json Status=200 Duration=2.889s
+2026-06-28 08:31:59,506 | INFO | GET /dashboard/job-history Status=200 Duration=15.831s
+2026-06-28 17:59:38,503 | INFO | GET /docs Status=200 Duration=0.002s
+2026-06-28 17:59:57,863 | INFO | GET /openapi.json Status=200 Duration=3.655s

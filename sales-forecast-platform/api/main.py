@@ -48,7 +48,9 @@ from api.schemas import (
     AccuracySummaryResponse,
     ForecastInsightsResponse,
     HealthMonitoringResponse,
-    MetricsResponse
+    MetricsResponse,
+    JobExecutionHistoryResponse,
+    JobExecutionItem
 )
 import time
 
@@ -541,6 +543,52 @@ def prometheus_metrics():
     return Response(
         generate_latest(),
         media_type=CONTENT_TYPE_LATEST
+    )
+#_____________________
+#job history API  
+#_____________________
+
+@app.get(
+    "/dashboard/job-history",
+    response_model=JobExecutionHistoryResponse
+)
+def dashboard_job_history():
+
+    rows = (
+        dashboard_service
+        .get_job_history()
+    )
+
+    return JobExecutionHistoryResponse(
+
+        executions=[
+
+            JobExecutionItem(
+
+                job_name=row["job_name"],
+
+                started_at=str(
+                    row["started_at"]
+                ),
+
+                finished_at=(
+                    str(row["finished_at"])
+                    if row["finished_at"]
+                    else None
+                ),
+
+                duration_seconds=row["duration_seconds"],
+
+                status=row["status"],
+
+                error_message=row["error_message"]
+
+            )
+
+            for row in rows
+
+        ]
+
     )
 
 from fastapi import Request

@@ -165,3 +165,25 @@ class HealthMonitoringResponse(BaseModel):
 class MetricsResponse(BaseModel):
 
     metrics: dict
+# =========================
+# Job Execution History
+# =========================
+
+class JobExecutionItem(BaseModel):
+
+    job_name: str
+
+    started_at: str
+
+    finished_at: str | None = None
+
+    duration_seconds: float | None = None
+
+    status: str
+
+    error_message: str | None = None
+
+
+class JobExecutionHistoryResponse(BaseModel):
+
+    executions: list[JobExecutionItem]

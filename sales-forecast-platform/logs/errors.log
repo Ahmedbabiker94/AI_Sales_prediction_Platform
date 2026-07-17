@@ -1357,3 +1357,397 @@ Traceback (most recent call last):
   File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\src\services\monitoring_service.py", line 59, in get_metrics
     metrics_service
 NameError: name 'metrics_service' is not defined
+2026-06-28 08:01:15,264 | ERROR | Unhandled Exception: 'JobExecutionService' object has no attribute 'get_recent_executions'
+Traceback (most recent call last):
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 191, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+  File "C:\Users\ababi\AppData\Local\Programs\Python\Python312\Lib\contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_utils.py", line 87, in collapse_excgroups
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 193, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\api\main.py", line 119, in dispatch
+    response = await call_next(
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 168, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 330, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\concurrency.py", line 32, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\to_thread.py", line 63, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 2518, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1002, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\api\main.py", line 559, in dashboard_job_history
+    .get_job_history()
+     ^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\src\services\dashboard_service.py", line 64, in get_job_history
+    .get_recent_executions(limit)
+     ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'JobExecutionService' object has no attribute 'get_recent_executions'
+2026-06-28 08:01:18,036 | ERROR | Unhandled Exception: 'JobExecutionService' object has no attribute 'get_recent_executions'
+Traceback (most recent call last):
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 191, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+  File "C:\Users\ababi\AppData\Local\Programs\Python\Python312\Lib\contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_utils.py", line 87, in collapse_excgroups
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 193, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\api\main.py", line 119, in dispatch
+    response = await call_next(
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 168, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 330, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\concurrency.py", line 32, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\to_thread.py", line 63, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 2518, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1002, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\api\main.py", line 559, in dashboard_job_history
+    .get_job_history()
+     ^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\src\services\dashboard_service.py", line 64, in get_job_history
+    .get_recent_executions(limit)
+     ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'JobExecutionService' object has no attribute 'get_recent_executions'
+2026-06-28 08:31:13,615 | ERROR | Unhandled Exception: (psycopg2.OperationalError) connection to server at "localhost" (::1), port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+Traceback (most recent call last):
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 712, in checkout
+    rec = pool._do_get()
+          ^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\impl.py", line 177, in _do_get
+    with util.safe_reraise():
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\impl.py", line 175, in _do_get
+    return self._create_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 674, in __init__
+    self.__connect()
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 900, in __connect
+    with util.safe_reraise():
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+psycopg2.OperationalError: connection to server at "localhost" (::1), port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 191, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+  File "C:\Users\ababi\AppData\Local\Programs\Python\Python312\Lib\contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_utils.py", line 87, in collapse_excgroups
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 193, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\api\main.py", line 119, in dispatch
+    response = await call_next(
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 168, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 330, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\concurrency.py", line 32, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\to_thread.py", line 63, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 2518, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1002, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\api\main.py", line 559, in dashboard_job_history
+    .get_job_history()
+     ^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\src\services\dashboard_service.py", line 64, in get_job_history
+    .get_recent_executions(limit)
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\src\services\job_execution_service.py", line 66, in get_recent_executions
+    self.repo.get_recent_executions(limit)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\src\repositories\job_execution_repository.py", line 83, in get_recent_executions
+    with engine.connect() as conn:
+         ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 145, in __init__
+    Connection._handle_dbapi_exception_noconnection(
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 2448, in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 712, in checkout
+    rec = pool._do_get()
+          ^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\impl.py", line 177, in _do_get
+    with util.safe_reraise():
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\impl.py", line 175, in _do_get
+    return self._create_connection()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 674, in __init__
+    self.__connect()
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 900, in __connect
+    with util.safe_reraise():
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\pool\base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\sqlalchemy\engine\default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\psycopg2\__init__.py", line 135, in connect
+    conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "localhost" (::1), port 5432 failed: server closed the connection unexpectedly
+	This probably means the server terminated abnormally
+	before or while processing the request.
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+2026-06-28 18:00:13,027 | ERROR | Unhandled Exception: 'JobExecutionService' object has no attribute 'get_recent_executions'
+Traceback (most recent call last):
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 191, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+  File "C:\Users\ababi\AppData\Local\Programs\Python\Python312\Lib\contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_utils.py", line 87, in collapse_excgroups
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 193, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\api\main.py", line 119, in dispatch
+    response = await call_next(
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 168, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\cors.py", line 88, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\routing.py", line 276, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 134, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 120, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 674, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\fastapi\routing.py", line 330, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\starlette\concurrency.py", line 32, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\to_thread.py", line 63, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 2518, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\.venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1002, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\api\main.py", line 559, in dashboard_job_history
+    .get_job_history()
+     ^^^^^^^^^^^^^^^^^
+  File "C:\Users\ababi\Desktop\AI_Sales_prediction_Platform\sales-forecast-platform\src\services\dashboard_service.py", line 64, in get_job_history
+    .get_recent_executions(limit)
+     ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'JobExecutionService' object has no attribute 'get_recent_executions'

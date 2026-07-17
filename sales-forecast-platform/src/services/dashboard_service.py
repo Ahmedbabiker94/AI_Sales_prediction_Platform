@@ -5,7 +5,9 @@ from src.repositories.accuracy_repository import (
 from src.services.insights_service import (
     InsightsService
 )
-
+from src.services.job_execution_service import (
+    JobExecutionService
+)
 
 class DashboardService:
 
@@ -17,6 +19,9 @@ class DashboardService:
 
         self.insights_service = (
             InsightsService()
+        )
+        self.job_execution_service = (
+            JobExecutionService()
         )
 
     def get_accuracy_summary(self):
@@ -49,3 +54,12 @@ class DashboardService:
                 dept=dept
             )
         )
+    def get_job_history(
+        self,
+        limit: int = 50
+    ):
+
+        return (
+            self.job_execution_service
+            .get_recent_executions(limit)
+        )    

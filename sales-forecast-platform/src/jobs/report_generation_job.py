@@ -1,5 +1,3 @@
-import time
-
 from report_service.report_generator import (
     ReportGenerator
 )
@@ -10,6 +8,10 @@ from src.pdf_report import (
 
 from src.services.job_tracker_service import (
     JobTrackerService
+)
+
+from src.services.job_execution_service import (
+    JobExecutionService
 )
 
 from src.core.metrics import (
@@ -26,60 +28,68 @@ class ReportGenerationJob:
 
         self.tracker = JobTrackerService()
 
+        self.execution_service = JobExecutionService()
+
     def run(self):
 
-        start = time.time()
+        started_at = self.execution_service.start()
 
-        try:
+        with JOB_DURATION.labels(
+            job_name="report_job"
+        ).time():
 
-            report_text = (
+            try:
 
-                self.generator
-                .generate_text_report()
-
-            )
-
-            pdf_path = (
-
-                save_report_as_pdf(
-                    report_text
+                report_text = (
+                    self.generator
+                    .generate_text_report()
                 )
 
-            )
+                pdf_path = (
+                    save_report_as_pdf(
+                        report_text
+                    )
+                )
 
-            REPORT_GENERATED.inc()
+                REPORT_GENERATED.inc()
 
-            JOB_DURATION.labels(
-                "report_job"
-            ).observe(
+                self.tracker.mark_success(
+                    "report_job"
+                )
 
-                time.time() - start
+                self.execution_service.finish_success(
 
-            )
+                    job_name="report_job",
 
-            self.tracker.mark_success(
+                    started_at=started_at,
 
-                "report_job"
+                    records_processed=1
 
-            )
+                )
 
-            print(
+                print(
+                    f"Report Generated: {pdf_path}"
+                )
 
-                f"Report Generated: {pdf_path}"
+                return pdf_path
 
-            )
+            except Exception as e:
 
-            return pdf_path
+                self.tracker.mark_failed(
+                    "report_job"
+                )
 
-        except Exception:
+                self.execution_service.finish_failed(
 
-            self.tracker.mark_failed(
+                    job_name="report_job",
 
-                "report_job"
+                    started_at=started_at,
 
-            )
+                    error_message=str(e)
 
-            raise
+                )
+
+                raise
 
 
 if __name__ == "__main__":

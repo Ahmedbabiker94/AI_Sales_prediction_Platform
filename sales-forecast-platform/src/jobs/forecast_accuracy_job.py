@@ -1,11 +1,13 @@
-import time
-
 from src.services.forecast_accuracy_service import (
     ForecastAccuracyService
 )
 
 from src.services.job_tracker_service import (
     JobTrackerService
+)
+
+from src.services.job_execution_service import (
+    JobExecutionService
 )
 
 from src.core.metrics import (
@@ -23,58 +25,66 @@ class ForecastAccuracyJob:
 
         self.tracker = JobTrackerService()
 
+        self.execution_service = JobExecutionService()
+
     def run(self):
 
-        start = time.time()
+        started_at = self.execution_service.start()
 
-        try:
+        ACCURACY_JOB_COUNTER.inc()
 
-            results = (
+        with JOB_DURATION.labels(
+            job_name="accuracy_job"
+        ).time():
 
-                self.service
-                .evaluate_all_pending_forecasts()
+            try:
 
-            )
+                results = (
+                    self.service
+                    .evaluate_all_pending_forecasts()
+                )
 
-            ACCURACY_EVALUATIONS.inc(
+                ACCURACY_EVALUATIONS.inc(
+                    len(results)
+                )
 
-                len(results)
+                self.tracker.mark_success(
+                    "accuracy_job"
+                )
 
-            )
+                self.execution_service.finish_success(
 
-            ACCURACY_JOB_COUNTER.inc()
+                    job_name="accuracy_job",
 
-            JOB_DURATION.labels(
-                "accuracy_job"
-            ).observe(
+                    started_at=started_at,
 
-                time.time() - start
+                    records_processed=len(results)
 
-            )
+                )
 
-            self.tracker.mark_success(
+                print(
+                    f"Processed {len(results)} forecasts"
+                )
 
-                "accuracy_job"
+                return results
 
-            )
+            except Exception as e:
 
-            print(
+                self.tracker.mark_failed(
+                    "accuracy_job"
+                )
 
-                f"Processed {len(results)} forecasts"
+                self.execution_service.finish_failed(
 
-            )
+                    job_name="accuracy_job",
 
-            return results
+                    started_at=started_at,
 
-        except Exception:
+                    error_message=str(e)
 
-            self.tracker.mark_failed(
+                )
 
-                "accuracy_job"
-
-            )
-
-            raise
+                raise
 
 
 if __name__ == "__main__":

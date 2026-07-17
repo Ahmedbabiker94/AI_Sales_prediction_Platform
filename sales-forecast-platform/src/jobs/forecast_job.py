@@ -1,11 +1,13 @@
-import time
-
 from src.services.recursive_forecast_service import (
     RecursiveForecastService
 )
 
 from src.repositories.job_status_repository import (
     JobStatusRepository
+)
+
+from src.services.job_execution_service import (
+    JobExecutionService
 )
 
 from src.core.metrics import (
@@ -22,60 +24,91 @@ class ForecastJob:
 
         self.status_repo = JobStatusRepository()
 
+        self.execution_service = JobExecutionService()
+
     def run(self):
 
-        start = time.time()
+        started_at = self.execution_service.start()
 
-        try:
+        FORECAST_JOB_COUNTER.inc()
 
-            print("Running Forecast Job...")
+        with JOB_DURATION.labels(
+            job_name="forecast_job"
+        ).time():
 
-            forecast_targets = [
+            try:
 
-                {"store": 1, "dept": 1},
-                {"store": 2, "dept": 1},
+                print(
+                    "Running Forecast Job..."
+                )
 
-            ]
+                forecast_targets = [
 
-            for item in forecast_targets:
+                    {
+                        "store": 1,
+                        "dept": 1
+                    },
 
-                self.service.forecast(
+                    {
+                        "store": 2,
+                        "dept": 1
+                    }
 
-                    store=item["store"],
-                    dept=item["dept"],
-                    weeks=4
+                ]
+
+                total_predictions = 0
+
+                for item in forecast_targets:
+
+                    predictions = self.service.forecast(
+
+                        store=item["store"],
+                        dept=item["dept"],
+                        weeks=4
+
+                    )
+
+                    total_predictions += len(predictions)
+
+                FORECAST_JOB_COUNTER.inc()
+
+                self.status_repo.update_status(
+
+                    "forecast_job",
+                    "success"
 
                 )
 
-            self.status_repo.update_status(
+                self.execution_service.finish_success(
 
-                "forecast_job",
-                "success"
+                    job_name="forecast_job",
+                    started_at=started_at,
+                    records_processed=total_predictions
 
-            )
+                )
 
-            FORECAST_JOB_COUNTER.inc()
+                print(
+                    "Forecast Job Completed"
+                )
 
-            JOB_DURATION.labels(
-                "forecast_job"
-            ).observe(
+            except Exception as e:
 
-                time.time() - start
+                self.status_repo.update_status(
 
-            )
+                    "forecast_job",
+                    "failed"
 
-            print("Forecast Job Completed")
+                )
 
-        except Exception:
+                self.execution_service.finish_failed(
 
-            self.status_repo.update_status(
+                    job_name="forecast_job",
+                    started_at=started_at,
+                    error_message=str(e)
 
-                "forecast_job",
-                "failed"
+                )
 
-            )
-
-            raise
+                raise
 
 
 if __name__ == "__main__":
