@@ -509,11 +509,19 @@ def monitoring_health():
     )
 
     return HealthMonitoringResponse(
+
         api=result["api"],
+
         database=result["database"],
+
+        scheduler=result["scheduler"],
+
         forecast_job=result["forecast_job"],
+
         accuracy_job=result["accuracy_job"],
+
         report_job=result["report_job"]
+
     )
 #_______________________________
 #matrics monitering API  

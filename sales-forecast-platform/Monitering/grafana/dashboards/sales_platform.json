@@ -1,0 +1,267 @@
+{
+    "annotations": {
+      "list": []
+    },
+    "editable": true,
+    "graphTooltip": 0,
+    "panels": [
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "title": "Forecast API Requests",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(forecast_requests_total[5m])",
+            "legendFormat": "Requests/sec",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "id": 2,
+        "title": "Forecast API Duration",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(forecast_duration_seconds_sum[5m]) / rate(forecast_duration_seconds_count[5m])",
+            "legendFormat": "Average duration",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 8
+        },
+        "id": 3,
+        "title": "Forecast Jobs",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "forecast_jobs_total",
+            "legendFormat": "Forecast jobs",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 8
+        },
+        "id": 4,
+        "title": "Accuracy Jobs",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "accuracy_jobs_total",
+            "legendFormat": "Accuracy jobs",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 8
+        },
+        "id": 5,
+        "title": "Reports Generated",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "reports_generated_total",
+            "legendFormat": "Reports",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": 16
+        },
+        "id": 6,
+        "title": "Background Job Duration",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "job_duration_seconds_sum / job_duration_seconds_count",
+            "legendFormat": "Average job duration",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        },
+        "id": 7,
+        "title": "Model Predictions",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(model_predictions_total[5m])",
+            "legendFormat": "Predictions/sec",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 24
+        },
+        "id": 8,
+        "title": "System Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "database_status",
+            "legendFormat": "Database",
+            "refId": "A"
+          },
+          {
+            "expr": "api_status",
+            "legendFormat": "API",
+            "refId": "B"
+          }
+        ]
+      }
+    ],
+    "schemaVersion": 39,
+    "tags": [
+      "sales-forecast",
+      "monitoring",
+      "mlops"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {},
+          "hide": 0,
+          "includeAll": false,
+          "label": "Prometheus",
+          "name": "DS_PROMETHEUS",
+          "options": [],
+          "query": "prometheus",
+          "refresh": 1,
+          "type": "datasource"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timezone": "browser",
+    "title": "Sales Forecast Platform",
+    "uid": "sales-forecast-platform",
+    "version": 1
+  }

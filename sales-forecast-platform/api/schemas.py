@@ -150,11 +150,14 @@ class ForecastInsightsResponse(BaseModel):
 
     stats: dict
 
+
 class HealthMonitoringResponse(BaseModel):
 
     api: str
 
     database: str
+
+    scheduler: str
 
     forecast_job: str
 
