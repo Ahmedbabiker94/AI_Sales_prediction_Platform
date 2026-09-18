@@ -1,0 +1,9 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/sales-forecast-platform/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/sales-forecast-platform"
+  ],
+  "cursorpyright.analysis.extraPaths": [
+    "${workspaceFolder}/sales-forecast-platform"
+  ]
+}

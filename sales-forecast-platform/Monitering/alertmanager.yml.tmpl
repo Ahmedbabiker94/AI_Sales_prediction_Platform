@@ -1,0 +1,121 @@
+global: {}
+
+route:
+  receiver: default-receiver
+
+  group_by:
+    - alertname
+    - service
+    - component
+    - environment
+
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+
+    # NOTIFICATION_ROUTES_START
+
+    - matchers:
+        - severity="critical"
+      receiver: critical-receiver
+
+    - matchers:
+        - severity="warning"
+      receiver: warning-receiver
+
+    # NOTIFICATION_ROUTES_END
+inhibit_rules:
+
+  - source_matchers:
+      - alertname="SalesForecastAPIDown"
+    target_matchers:
+      - alertname="SalesForecastAPIHighLatency"
+    equal:
+      - service
+      - environment
+
+receivers:
+
+  - name: default-receiver
+
+  - name: critical-receiver
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/secrets/telegram_bot_token
+        chat_id: 7863571426
+        send_resolved: true
+        parse_mode: HTML
+
+
+        message: |
+          {{ if eq .Status "firing" }}
+          🚨 <b>CRITICAL ALERT</b>
+          {{ else }}
+          ✅ <b>CRITICAL ALERT RESOLVED</b>
+          {{ end }}
+
+          <b>Status:</b> {{ .Status | toUpper }}
+
+          <b>Summary:</b>
+          {{ .CommonAnnotations.summary }}
+
+          <b>Alert:</b> {{ .CommonLabels.alertname }}
+          <b>Severity:</b> {{ .CommonLabels.severity }}
+
+          <b>Service:</b> {{ .CommonLabels.service }}            <b>Component:</b> {{ .CommonLabels.component }}
+          <b>Environment:</b> {{ .CommonLabels.environment }}
+
+          <b>Impact:</b>
+          {{ .CommonLabels.impact }}
+
+          <b>Description:</b>
+          {{ .CommonAnnotations.description }}
+
+          <b>Owner:</b> {{ .CommonLabels.owner }}
+          <b>Runbook:</b> {{ .CommonLabels.runbook }}
+
+  - name: warning-receiver
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/secrets/telegram_bot_token
+        chat_id: 7863571426
+        send_resolved: true
+        parse_mode: HTML
+        message: |
+          {{ if eq .Status "firing" }}
+          ⚠️ <b>WARNING ALERT</b>
+          {{ else }}
+          ✅ <b>WARNING ALERT RESOLVED</b>
+          {{ end }}
+
+          <b>Status:</b> {{ .Status | toUpper }}
+
+          <b>Summary:</b>
+          {{ .CommonAnnotations.summary }}
+
+          <b>Alert:</b> {{ .CommonLabels.alertname }}
+          <b>Severity:</b> {{ .CommonLabels.severity }}
+
+          <b>Service:</b> {{ .CommonLabels.service }}
+          <b>Component:</b> {{ .CommonLabels.component }}
+          <b>Environment:</b> {{ .CommonLabels.environment }}
+
+          <b>Impact:</b>
+          {{ .CommonLabels.impact }}
+
+          <b>Description:</b>
+          {{ .CommonAnnotations.description }}
+
+          <b>Owner:</b> {{ .CommonLabels.owner }}
+          <b>Runbook:</b> {{ .CommonLabels.runbook }}
+  # EMAIL_RECEIVER_START
+  - name: email-receiver
+    email_configs:
+      - to: "${SMTP_TO}"
+        from: "${SMTP_FROM}"
+        smarthost: "${SMTP_HOST}:${SMTP_PORT}"
+        auth_username: "${SMTP_USERNAME}"
+        auth_password_file: /etc/alertmanager/secrets/email_smtp_password
+        send_resolved: true
+        require_tls: true
+  # EMAIL_RECEIVER_END

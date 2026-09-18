@@ -10,41 +10,49 @@ class SchedulerLockRepository:
         scheduler_name,
         hostname
     ):
+        # Create the lock row if it does not exist yet.
+        insert_query = text("""
+            INSERT INTO scheduler_lock (
+                scheduler_name,
+                locked,
+                locked_at,
+                hostname
+            )
+            VALUES (
+                :scheduler_name,
+                FALSE,
+                NULL,
+                NULL
+            )
+            ON CONFLICT (scheduler_name) DO NOTHING
+        """)
 
-        query = text("""
-
+        # Acquire the lock only if it is currently free.
+        update_query = text("""
             UPDATE scheduler_lock
-
             SET
-
                 locked = TRUE,
-
                 locked_at = NOW(),
-
                 hostname = :hostname
-
             WHERE
-
                 scheduler_name = :scheduler_name
-
                 AND locked = FALSE
-
         """)
 
         with engine.begin() as conn:
+            conn.execute(
+                insert_query,
+                {
+                    "scheduler_name": scheduler_name
+                }
+            )
 
             result = conn.execute(
-
-                query,
-
+                update_query,
                 {
-
                     "scheduler_name": scheduler_name,
-
                     "hostname": hostname
-
                 }
-
             )
 
         return result.rowcount == 1

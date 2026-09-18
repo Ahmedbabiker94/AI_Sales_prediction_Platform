@@ -13,3 +13,13 @@ mlruns/
 *.pth
 *.onnx
 !models/production_xgboost/**
+Monitering/secrets/
+Monitering/email/email.env
+sales-forecast-platform/Monitering/secrets/
+sales-forecast-platform/Monitering/email/email.env
+
+sales-forecast-platform/Monitering/alertmanager.yml
+sales-forecast-platform/logs/
+sales-forecast-platform/artifacts/
+sales-forecast-platform/mlartifacts/
+sales-forecast-platform/reports/

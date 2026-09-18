@@ -90,3 +90,57 @@ class JobExecutionRepository:
             ).mappings().all()
 
         return rows
+
+    def get_last_success(self, job_name):
+        query = text("""
+            SELECT finished_at
+            FROM job_execution_history
+            WHERE job_name = :job_name
+              AND status = 'success'
+              AND finished_at IS NOT NULL
+            ORDER BY finished_at DESC
+            LIMIT 1
+        """)
+
+        with engine.connect() as conn:
+            return conn.execute(
+                query,
+                {"job_name": job_name}
+            ).scalar()
+
+    def get_last_failure(self, job_name):
+        query = text("""
+            SELECT finished_at
+            FROM job_execution_history
+            WHERE job_name = :job_name
+              AND status = 'failed'
+              AND finished_at IS NOT NULL
+            ORDER BY finished_at DESC
+            LIMIT 1
+        """)
+
+        with engine.connect() as conn:
+            return conn.execute(
+                query,
+                {"job_name": job_name}
+            ).scalar()
+
+    def get_last_execution(self, job_name):
+        query = text("""
+            SELECT
+                finished_at,
+                status
+            FROM job_execution_history
+            WHERE job_name = :job_name
+              AND finished_at IS NOT NULL
+            ORDER BY finished_at DESC
+            LIMIT 1
+        """)
+
+        with engine.connect() as conn:
+            row = conn.execute(
+                query,
+                {"job_name": job_name}
+            ).mappings().first()
+
+        return row

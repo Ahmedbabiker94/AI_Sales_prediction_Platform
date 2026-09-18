@@ -88,7 +88,9 @@ from prometheus_client import (
     generate_latest,
     CONTENT_TYPE_LATEST
 )
-
+from src.services.job_health_metrics_service import (
+    JobHealthMetricsService
+)
 # ─────────────────────────────────────
 # PATH SETUP
 # ─────────────────────────────────────
@@ -173,6 +175,8 @@ report_service = ReportService()
 monitoring_service = (
     MonitoringService()
 )
+job_health_metrics_service = JobHealthMetricsService()
+
 # ─────────────────────────────────────
 # STARTUP
 # ─────────────────────────────────────
@@ -547,6 +551,8 @@ def monitoring_health():
 
 @app.get("/metrics")
 def prometheus_metrics():
+
+    job_health_metrics_service.refresh()
 
     return Response(
         generate_latest(),

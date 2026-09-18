@@ -1,0 +1,103 @@
+groups:
+
+  - name: sales-platform-critical
+    interval: 30s
+
+    rules:
+
+      - alert: SalesForecastAPIHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(forecast_duration_seconds_bucket[5m])
+            ) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: sales-forecast-platform
+          component: api
+          environment: development
+          owner: ml-platform
+          impact: forecast-latency
+          runbook: forecast-api-high-latency
+        annotations:
+          summary: "Forecast API latency is high"
+          description: "P95 forecast API latency has exceeded 2 seconds for 5 minutes."
+
+      - alert: SalesForecastAPIDown
+        expr: up{job="sales-forecast-platform"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sales-forecast-platform
+          component: api
+          environment: development
+          owner: ml-platform
+          impact: forecast-api-unavailable
+          runbook: forecast-api-down
+        annotations:
+          summary: "Sales Forecast API is down"
+          description: "Prometheus cannot scrape the Sales Forecast API."
+
+      - alert: ForecastJobNotRunning
+        expr: |
+          job_last_success_timestamp{job_name="forecast_job"} > 0
+          and
+          (
+            time() - job_last_success_timestamp{job_name="forecast_job"}
+          ) > 4200
+        for: 5m
+        labels:
+          severity: critical
+          service: sales-forecast-platform
+          component: forecast-job
+          environment: development
+          owner: ml-platform
+          impact: forecast-generation-delayed
+          runbook: forecast-job-not-running
+        annotations:
+          summary: "Forecast job is not running"
+          description: "The forecast job has not completed successfully within the expected 70-minute execution window."
+
+      - alert: AccuracyJobNotRunning
+        expr: |
+          job_last_success_timestamp{job_name="accuracy_job"} > 0
+          and
+          (
+            time() - job_last_success_timestamp{job_name="accuracy_job"}
+          ) > 1200
+        for: 5m
+        labels:
+          severity: warning
+          service: sales-forecast-platform
+          component: accuracy-job
+          environment: development
+          owner: ml-platform
+          impact: forecast-monitoring-delayed
+          runbook: accuracy-job-not-running
+        annotations:
+          summary: "Accuracy job is not running"
+          description: "The accuracy job has not completed successfully within the expected 20-minute execution window."
+
+      - alert: BackgroundJobHighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(job_duration_seconds_bucket[10m])
+            ) by (le, job_name)
+          ) > 60
+        for: 5m
+        labels:
+          severity: warning
+          service: sales-forecast-platform
+          component: background-job
+          environment: development
+          owner: ml-platform
+          impact: background-processing-slow
+          runbook: background-job-high-latency
+        annotations:
+          summary: "Background job latency is high"
+          description: "P95 duration for background job {{ $labels.job_name }} is above 60 seconds."

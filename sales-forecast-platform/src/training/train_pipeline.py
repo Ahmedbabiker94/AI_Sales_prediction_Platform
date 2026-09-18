@@ -30,9 +30,9 @@ from src.training.cross_validation import (
     run_time_series_cv
 )
 
-from src.ml.mlflow_logger import (
-    log_model_to_mlflow
-)
+# from src.ml.mlflow_logger import (
+#     log_model_to_mlflow
+# )
 
 from src.ml.model_registry import (
     register_model
@@ -42,6 +42,19 @@ from src.preprocessing.preprocessing_factory import (
     get_preprocessor
 )
 from src.ml.models.model_factory import get_model
+from src.ml.model_registry import (
+    register_model,
+    promote_model_to_production
+)
+from src.ml.mlflow_logger import (
+    log_model_to_mlflow
+)
+
+from src.ml.model_registry import (
+    register_model,
+    promote_model_to_production
+)
+from src.features.feature_pipeline import prepare_features
 
 def clean_dataframe(df):
 
@@ -99,26 +112,37 @@ def run_training_pipeline(
     )
 
     print(
-        "Running feature engineering "
-        "on training data..."
+    "Running feature engineering "
+        "with historical context..."
     )
 
     preprocessor = get_preprocessor(model_type)
 
-    X_train, y_train = preprocessor.fit_transform(
-       train_df
+    # Keep the original indexes so we can separate
+    # train and test after feature engineering.
+    train_indices = train_df.index
+    test_indices = test_df.index
+
+    # Combine train and test chronologically so that
+    # test rows can use previous train/test observations
+    # for lag and rolling features.
+    combined_df = pd.concat(
+        [train_df, test_df]
+    ).sort_values(
+        by=["Store", "Dept", "Date"]
     )
 
-
-    print(
-        "Running feature engineering "
-        "on testing data..."
+    # Build all history-dependent features once.
+    X_all, y_all = preprocessor.fit_transform(
+        combined_df
     )
 
-    X_test, y_test = preprocessor.transform(
-        test_df
-    )    
- 
+    # Separate train and test again using their original indexes.
+    X_train = X_all.loc[train_indices]
+    y_train = y_all.loc[train_indices]
+
+    X_test = X_all.loc[test_indices]
+    y_test = y_all.loc[test_indices]
     print(
         "Cleaning NaN and infinite values..."
     )
@@ -152,9 +176,9 @@ def run_training_pipeline(
     print("Training model...")
 
     model = train_model(
-       X_train,
-       y_train,
-       model_type="xgboost"
+        X_train,
+        y_train,
+        model_type=model_type
     )    
     print("Generating predictions...")
 
@@ -182,15 +206,34 @@ def run_training_pipeline(
        )
       )
 
-    run_id =log_model_to_mlflow(
-
+    run_id = log_model_to_mlflow(
         model=model,
         metrics=metrics,
-        model_type = model_type,
+        model_type=model_type,
         outlier_report_path=(
             outlier_results["report_path"]
         )
     )
-    print(f"MLflow Run ID: {run_id}")
-    print("Training pipeline completed.")
+    print(
+        f"MLflow Run ID: {run_id}"
+    )
 
+    version = register_model(
+        run_id
+    )
+
+    print(
+        f"Registered model version: {version}"
+    )
+
+    promote_model_to_production(
+        version
+    )
+
+    print(
+        f"Model version {version} is now @production"
+    )
+
+    print(
+        "Training pipeline completed."
+    )

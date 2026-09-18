@@ -2,9 +2,18 @@ import mlflow
 import mlflow.xgboost
 
 
-mlflow.set_tracking_uri("http://127.0.0.1:5000")
-mlflow.set_experiment("sales_forecasting")
+MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
 
+EXPERIMENT_NAME = "sales_forecasting"
+
+
+mlflow.set_tracking_uri(
+    MLFLOW_TRACKING_URI
+)
+
+mlflow.set_experiment(
+    EXPERIMENT_NAME
+)
 
 
 def log_model_to_mlflow(
@@ -14,19 +23,15 @@ def log_model_to_mlflow(
     outlier_report_path=None
 ):
 
-    mlflow.set_tracking_uri("http://127.0.0.1:5000")
-
-    mlflow.set_experiment(
-        "sales_forecasting"
-    )
-
     with mlflow.start_run() as run:
-        mlflow.set_tag(
 
+        # Model metadata
+        mlflow.set_tag(
             "model_type",
             model_type
         )
 
+        # Metrics
         mlflow.log_metric(
             "mae",
             metrics["mae"]
@@ -41,16 +46,19 @@ def log_model_to_mlflow(
             "r2",
             metrics["r2"]
         )
-        if outlier_report_path:
-            mlflow.log_artifact(
-            outlier_report_path
-        )
 
+        # Outlier report
+        if outlier_report_path:
+
+            mlflow.log_artifact(
+                outlier_report_path
+            )
+
+        # Log model only.
+        # Registration is handled by model_registry.py.
         mlflow.xgboost.log_model(
             xgb_model=model.model,
-            artifact_path="model",
-            registered_model_name=
-            "sales_forecasting_model"
+            artifact_path="model"
         )
 
         return run.info.run_id

@@ -74,3 +74,29 @@ API_STATUS = Gauge(
     "api_status",
     "API status"
 )
+#  ==================================================
+#  Job Last Execution
+#  ==================================================
+JOB_LAST_SUCCESS_TIMESTAMP = Gauge(
+    "job_last_success_timestamp",
+    "Unix timestamp of the last successful job execution",
+    ["job_name"]
+)
+
+JOB_LAST_FAILURE_TIMESTAMP = Gauge(
+    "job_last_failure_timestamp",
+    "Unix timestamp of the last failed job execution",
+    ["job_name"]
+)
+
+JOB_LAST_EXECUTION_TIMESTAMP = Gauge(
+    "job_last_execution_timestamp",
+    "Unix timestamp of the last job execution",
+    ["job_name"]
+)
+
+JOB_LAST_EXECUTION_STATUS = Gauge(
+    "job_last_execution_status",
+    "Current status of the last job execution. 1 means the labeled status is current.",
+    ["job_name", "status"]
+)
