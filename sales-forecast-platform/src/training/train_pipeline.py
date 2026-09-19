@@ -1,17 +1,14 @@
 import pandas as pd
 import numpy as np
+
+from xgboost import XGBRegressor
+
 from src.monitoring.outlier_analysis import (
     analyze_prediction_outliers
 )
 
-from xgboost import XGBRegressor
-
 from src.pipelines.data_validation import (
     validate_dataframe
-)
-
-from src.features.feature_pipeline import (
-    run_feature_pipeline
 )
 
 from src.data.splitter import (
@@ -30,31 +27,22 @@ from src.training.cross_validation import (
     run_time_series_cv
 )
 
-# from src.ml.mlflow_logger import (
-#     log_model_to_mlflow
-# )
-
-from src.ml.model_registry import (
-    register_model
-)
-
 from src.preprocessing.preprocessing_factory import (
     get_preprocessor
 )
-from src.ml.models.model_factory import get_model
+
 from src.ml.model_registry import (
     register_model,
     promote_model_to_production
 )
+
 from src.ml.mlflow_logger import (
     log_model_to_mlflow
 )
 
-from src.ml.model_registry import (
-    register_model,
-    promote_model_to_production
+from src.deployment.production_artifact_sync import (
+    ProductionArtifactSync
 )
-from src.features.feature_pipeline import prepare_features
 
 def clean_dataframe(df):
 
@@ -228,6 +216,19 @@ def run_training_pipeline(
 
     promote_model_to_production(
         version
+    )
+
+    sync_result = (
+        ProductionArtifactSync()
+        .sync()
+    )
+
+    print(
+        "Production artifact synchronized:"
+    )
+
+    print(
+        sync_result
     )
 
     print(

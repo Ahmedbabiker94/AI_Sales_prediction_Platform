@@ -1,100 +1,105 @@
 from pathlib import Path
-
-import yaml
+import json
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
-PRODUCTION_MODEL_DIR = (
+PRODUCTION_ROOT = (
     ROOT
     / "models"
-    / "production_xgboost"
+    / "production"
 )
 
-MLMODEL_PATH = (
-    PRODUCTION_MODEL_DIR
-    / "MLmodel"
+CURRENT_MANIFEST_PATH = (
+    PRODUCTION_ROOT
+    / "current.json"
 )
 
 
-def _load_model_metadata():
+def _load_current_manifest():
 
-    if not MLMODEL_PATH.exists():
+    if not CURRENT_MANIFEST_PATH.exists():
 
         raise FileNotFoundError(
-            f"Production MLmodel not found: "
-            f"{MLMODEL_PATH}"
+            f"Production manifest not found: "
+            f"{CURRENT_MANIFEST_PATH}"
         )
 
     with open(
-        MLMODEL_PATH,
+        CURRENT_MANIFEST_PATH,
         "r",
         encoding="utf-8"
     ) as file:
 
-        return yaml.safe_load(file)
+        return json.load(file)
 
 
 def get_production_model_type():
 
-    metadata = _load_model_metadata()
+    manifest = _load_current_manifest()
 
-    flavors = metadata.get(
-        "flavors",
-        {}
+    model_type = manifest.get(
+        "model_type"
     )
 
-    if "xgboost" in flavors:
+    if not model_type:
 
-        return "xgboost"
+        raise ValueError(
+            "Production model_type "
+            "not found in current manifest."
+        )
 
-    raise ValueError(
-        "Unsupported production model type. "
-        f"Available flavors: {list(flavors.keys())}"
-    )
+    return model_type
+
+
 def get_production_model_artifact_path():
 
-    metadata = _load_model_metadata()
+    manifest = _load_current_manifest()
 
-    flavors = metadata.get(
-        "flavors",
-        {}
+    artifact_path = manifest.get(
+        "artifact_path"
     )
+
+    if not artifact_path:
+
+        raise ValueError(
+            "Production artifact_path "
+            "not found in current manifest."
+        )
+
+    path = (
+        ROOT
+        / Path(artifact_path)
+    ).resolve()
+
+    if not path.exists():
+
+        raise FileNotFoundError(
+            f"Production artifact directory "
+            f"not found: {path}"
+        )
 
     model_type = get_production_model_type()
 
-    flavor_metadata = flavors.get(
-        model_type
-    )
+    if model_type == "xgboost":
 
-    if flavor_metadata is None:
-
-        raise ValueError(
-            f"No metadata found for "
-            f"production model type: {model_type}"
+        model_path = (
+            path
+            / "model.ubj"
         )
 
-    model_filename = flavor_metadata.get(
-        "data"
-    )
-
-    if not model_filename:
+    else:
 
         raise ValueError(
-            f"Model artifact filename not found "
-            f"for model type: {model_type}"
+            f"Unsupported production model type: "
+            f"{model_type}"
         )
 
-    artifact_path = (
-        PRODUCTION_MODEL_DIR
-        / model_filename
-    )
-
-    if not artifact_path.exists():
+    if not model_path.exists():
 
         raise FileNotFoundError(
             f"Production model artifact not found: "
-            f"{artifact_path}"
+            f"{model_path}"
         )
 
-    return artifact_path
+    return model_path

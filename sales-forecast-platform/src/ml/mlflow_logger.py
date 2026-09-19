@@ -7,21 +7,20 @@ MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
 EXPERIMENT_NAME = "sales_forecasting"
 
 
-mlflow.set_tracking_uri(
-    MLFLOW_TRACKING_URI
-)
-
-mlflow.set_experiment(
-    EXPERIMENT_NAME
-)
-
-
 def log_model_to_mlflow(
     model,
     metrics,
     model_type,
     outlier_report_path=None
 ):
+
+    mlflow.set_tracking_uri(
+        MLFLOW_TRACKING_URI
+    )
+
+    mlflow.set_experiment(
+        EXPERIMENT_NAME
+    )
 
     with mlflow.start_run() as run:
 

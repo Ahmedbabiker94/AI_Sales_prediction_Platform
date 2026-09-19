@@ -1,0 +1,9 @@
+{
+  "model_name": "sales_forecasting_model",
+  "model_version": 1,
+  "model_type": "xgboost",
+  "run_id": "e04447de9b6c45b491270d1ae614bd3f",
+  "model_id": "m-ddab659bf8204b1aaba96fef0269b62a",
+  "artifact_path": "models/production/sales_forecasting_model/version_1",
+  "synced_at": "2026-09-19T13:35:56.771780+00:00"
+}

@@ -1,3 +1,4 @@
+artifact_path: file:C:/Users/ababi/Desktop/AI_Sales_prediction_Platform-main/sales-forecast-platform/mlartifacts/1/models/m-ddab659bf8204b1aaba96fef0269b62a/artifacts
 flavors:
   python_function:
     data: model.ubj
