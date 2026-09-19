@@ -1,4 +1,3 @@
-import mlflow.xgboost
 import joblib
 
 from xgboost import XGBRegressor
@@ -7,9 +6,7 @@ from src.ml.models.base_model import (
     BaseForecastModel
 )
 
-from src.ml.model_registry import (
-    get_production_model_uri
-)
+
 
 
 class XGBoostForecastModel(
@@ -64,16 +61,10 @@ class XGBoostForecastModel(
             path
         )
 
-    def load(self):
+    def load(self, path):
 
-        model_uri = (
-            get_production_model_uri()
-        )
-
-        self.model = (
-            mlflow.xgboost.load_model(
-                model_uri
-            )
+        self.model.load_model(
+            path
         )
 
         return self.model

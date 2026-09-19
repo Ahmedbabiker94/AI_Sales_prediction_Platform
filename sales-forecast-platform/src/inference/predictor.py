@@ -1,8 +1,10 @@
 from src.ml.models.model_factory import get_model
 from src.preprocessing.preprocessing_factory import get_preprocessor
+
 from src.services.feature_enrichment_service import (
     FeatureEnrichmentService
 )
+
 
 class Predictor:
 
@@ -10,30 +12,55 @@ class Predictor:
 
         self.model_type = model_type
 
-        from src.ml.production_resolver import (
-            get_production_model_type
-        )
-        if model_type == "production":
-            resolved_model_type = (
-                get_production_model_type ()
-            )
-        else:
-                resolved_model_type = model_type
+        model_path = None
 
-        self.model = get_model(resolved_model_type)
+        if model_type == "production":
+
+            from src.ml.production_resolver import (
+                get_production_model_type,
+                get_production_model_artifact_path
+            )
+
+            resolved_model_type = (
+                get_production_model_type()
+            )
+
+            model_path = (
+                get_production_model_artifact_path()
+            )
+
+        else:
+
+            resolved_model_type = model_type
+
+        self.model = get_model(
+            resolved_model_type
+        )
 
         self.preprocessor = get_preprocessor(
             resolved_model_type
         )
+
         self.feature_enrichment_service = (
             FeatureEnrichmentService()
         )
 
-        self.load()
+        self.load(
+            path=model_path
+        )
 
-    def load(self):
+    def load(self, path=None):
 
-        self.model.load()
+        if path is None:
+
+            raise ValueError(
+                "A local model artifact path "
+                "is required for model loading."
+            )
+
+        return self.model.load(
+            path
+        )
 
     def predict_dataframe(self, df):
 
@@ -51,6 +78,10 @@ class Predictor:
 
     def predict_single(self, row_df):
 
-        predictions = self.predict_dataframe(row_df)
+        predictions = self.predict_dataframe(
+            row_df
+        )
 
-        return float(predictions[0])
+        return float(
+            predictions[0]
+        )

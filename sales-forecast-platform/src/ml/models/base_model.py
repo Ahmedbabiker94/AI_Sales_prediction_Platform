@@ -16,5 +16,5 @@ class BaseForecastModel(ABC):
         pass
 
     @abstractmethod
-    def load(self):
+    def load(self, path):
         pass
