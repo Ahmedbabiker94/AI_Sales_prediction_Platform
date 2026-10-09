@@ -70,7 +70,6 @@ class ForecastJob:
 
                     total_predictions += len(predictions)
 
-                FORECAST_JOB_COUNTER.inc()
 
                 self.status_repo.update_status(
 

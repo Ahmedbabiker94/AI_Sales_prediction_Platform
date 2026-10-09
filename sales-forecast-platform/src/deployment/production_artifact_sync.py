@@ -1,11 +1,11 @@
 import json
 import shutil
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import mlflow
 import yaml
+from mlflow.tracking import MlflowClient
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,6 +22,11 @@ CURRENT_MANIFEST_PATH = (
 )
 
 MODEL_NAME = "sales_forecasting_model"
+
+MLFLOW_TRACKING_URI = (
+    "http://127.0.0.1:5000"
+)
+
 PRODUCTION_URI = (
     f"models:/{MODEL_NAME}@production"
 )
@@ -42,186 +47,269 @@ class ProductionArtifactSync:
 
     def sync(self):
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        mlflow.set_tracking_uri(
+            MLFLOW_TRACKING_URI
+        )
 
-            temp_path = Path(temp_dir)
+        production_identity = (
+            self._get_production_identity()
+        )
 
-            artifact_root = Path(
-                mlflow.artifacts.download_artifacts(
-                    artifact_uri=PRODUCTION_URI
+        current_manifest = (
+            self._get_current_manifest()
+        )
+
+        if current_manifest:
+
+            same_version = (
+                str(
+                    current_manifest.get(
+                        "model_version"
+                    )
                 )
+                == production_identity[
+                    "model_version"
+                ]
             )
 
-            mlmodel_path = (
+            same_run = (
+                current_manifest.get("run_id")
+                == production_identity["run_id"]
+            )
+
+            current_model_id = (
+                current_manifest.get("model_id")
+            )
+
+            production_model_id = (
+                production_identity["model_id"]
+            )
+
+            same_model_id = (
+                not current_model_id
+                or not production_model_id
+                or current_model_id
+                == production_model_id
+            )
+
+            if (
+                same_version
+                and same_run
+                and same_model_id
+            ):
+
+                return current_manifest
+
+        artifact_root = Path(
+            mlflow.artifacts.download_artifacts(
+                artifact_uri=PRODUCTION_URI
+            )
+        )
+
+        mlmodel_path = (
+            artifact_root
+            / "MLmodel"
+        )
+
+        if not mlmodel_path.exists():
+
+            raise FileNotFoundError(
+                f"MLmodel not found: {mlmodel_path}"
+            )
+
+        with open(
+            mlmodel_path,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            metadata = yaml.safe_load(
+                file
+            )
+
+        model_type = (
+            self._resolve_model_type(
+                metadata
+            )
+        )
+
+        model_version = (
+            self._read_model_version(
                 artifact_root
-                / "MLmodel"
+            )
+        )
+
+        run_id = metadata.get(
+            "run_id"
+        )
+
+        model_id = metadata.get(
+            "model_id"
+        )
+
+        if not model_version:
+
+            raise ValueError(
+                "Production model version "
+                "not found."
             )
 
-            if not mlmodel_path.exists():
+        target_root = (
+            self.production_root
+            / MODEL_NAME
+            / f"version_{model_version}"
+        )
 
-                raise FileNotFoundError(
-                    f"MLmodel not found: {mlmodel_path}"
+        target_parent = (
+            target_root.parent
+        )
+
+        target_parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        existing_mlmodel = (
+            target_root
+            / "MLmodel"
+        )
+
+        if target_root.exists():
+
+            if existing_mlmodel.exists():
+
+                if current_manifest:
+
+                    if (
+                        str(
+                            current_manifest.get(
+                                "model_version"
+                            )
+                        )
+                        == str(model_version)
+                        and current_manifest.get(
+                            "run_id"
+                        )
+                        == run_id
+                        and current_manifest.get(
+                            "model_id"
+                        )
+                        == model_id
+                    ):
+
+                        return current_manifest
+
+                raise RuntimeError(
+                    f"Production version {model_version} "
+                    "already exists with different metadata."
                 )
 
-            with open(
-                mlmodel_path,
-                "r",
-                encoding="utf-8"
-            ) as file:
-
-                metadata = yaml.safe_load(
-                    file
-                )
-
-            model_type = (
-                self._resolve_model_type(
-                    metadata
-                )
+            shutil.copytree(
+                artifact_root,
+                target_root,
+                dirs_exist_ok=True
             )
 
-            model_version = (
-                self._read_model_version(
-                    artifact_root
-                )
-            )
+        else:
 
-            run_id = metadata.get(
-                "run_id"
-            )
-
-            model_id = metadata.get(
-                "model_id"
-            )
-
-            if not model_version:
-
-                raise ValueError(
-                    "Production model version "
-                    "not found."
-                )
-
-            target_root = (
-                self.production_root
-                / MODEL_NAME
-                / f"version_{model_version}"
-            )
-
-            target_parent = (
-                target_root.parent
-            )
-
-            target_parent.mkdir(
-                parents=True,
-                exist_ok=True
-            )
-
-            existing_mlmodel = (
+            shutil.copytree(
+                artifact_root,
                 target_root
-                / "MLmodel"
             )
 
-            if target_root.exists():
+        manifest = {
 
-                if existing_mlmodel.exists():
+            "model_name": MODEL_NAME,
 
-                    existing_manifest = (
-                        self.production_root
-                        / "current.json"
-                    )
+            "model_version": int(
+                model_version
+            ),
 
-                    if existing_manifest.exists():
+            "model_type": model_type,
 
-                        with open(
-                            existing_manifest,
-                            "r",
-                            encoding="utf-8"
-                        ) as file:
+            "run_id": run_id,
 
-                            current_manifest = json.load(
-                                file
-                            )
+            "model_id": model_id,
 
-                        if (
-                            str(
-                                current_manifest.get(
-                                    "model_version"
-                                )
-                            )
-                            == str(model_version)
-                            and current_manifest.get("run_id")
-                            == run_id
-                            and current_manifest.get("model_id")
-                            == model_id
-                        ):
+            "artifact_path": (
+                target_root
+                .relative_to(ROOT)
+                .as_posix()
+            ),
 
-                            return current_manifest
+            "synced_at": datetime.now(
+                timezone.utc
+            ).isoformat()
 
-                    raise RuntimeError(
-                        f"Production version {model_version} "
-                        "already exists with different metadata."
-                    )
+        }
 
-                else:
+        manifest_tmp = (
+            CURRENT_MANIFEST_PATH
+            .with_suffix(".tmp")
+        )
 
-                    shutil.copytree(
-                        artifact_root,
-                        target_root,
-                        dirs_exist_ok=True
-                    )
+        with open(
+            manifest_tmp,
+            "w",
+            encoding="utf-8"
+        ) as file:
 
-            else:
-
-                shutil.copytree(
-                    artifact_root,
-                    target_root
-                )
-            manifest = {
-
-                "model_name": MODEL_NAME,
-
-                "model_version": int(
-                    model_version
-                ),
-
-                "model_type": model_type,
-
-                "run_id": run_id,
-
-                "model_id": model_id,
-
-                "artifact_path": (
-                    target_root
-                    .relative_to(ROOT)
-                    .as_posix()
-                ),
-                "synced_at": datetime.now(
-                    timezone.utc
-                ).isoformat()
-
-            }
-
-            manifest_tmp = (
-                CURRENT_MANIFEST_PATH
-                .with_suffix(".tmp")
+            json.dump(
+                manifest,
+                file,
+                indent=2
             )
 
-            with open(
-                manifest_tmp,
-                "w",
-                encoding="utf-8"
-            ) as file:
+        manifest_tmp.replace(
+            CURRENT_MANIFEST_PATH
+        )
 
-                json.dump(
-                    manifest,
-                    file,
-                    indent=2
-                )
+        return manifest
 
-            manifest_tmp.replace(
-                CURRENT_MANIFEST_PATH
+    def _get_production_identity(self):
+
+        client = MlflowClient(
+            tracking_uri=MLFLOW_TRACKING_URI
+        )
+
+        production_version = (
+            client.get_model_version_by_alias(
+                MODEL_NAME,
+                "production"
+            )
+        )
+
+        return {
+
+            "model_version": str(
+                production_version.version
+            ),
+
+            "run_id": (
+                production_version.run_id
+            ),
+
+            "model_id": getattr(
+                production_version,
+                "model_id",
+                None
             )
 
-            return manifest
+        }
+
+    def _get_current_manifest(self):
+
+        if not CURRENT_MANIFEST_PATH.exists():
+
+            return None
+
+        with open(
+            CURRENT_MANIFEST_PATH,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            return json.load(file)
 
     @staticmethod
     def _resolve_model_type(
@@ -262,28 +350,19 @@ class ProductionArtifactSync:
                 "registered_model_meta not found."
             )
 
-        values = {}
+        metadata = yaml.safe_load(
+            metadata_path.read_text(
+                encoding="utf-8"
+            )
+        )
 
-        for line in metadata_path.read_text(
-            encoding="utf-8"
-        ).splitlines():
+        if not isinstance(metadata, dict):
 
-            if ":" not in line:
-
-                continue
-
-            key, value = (
-                line.split(
-                    ":",
-                    1
-                )
+            raise ValueError(
+                "Invalid registered_model_meta format."
             )
 
-            values[key.strip()] = (
-                value.strip()
-            )
-
-        return values.get(
+        return metadata.get(
             "model_version"
         )
 
