@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 
 
@@ -65,24 +67,18 @@ def validate_duplicate_rows(df: pd.DataFrame):
 
 
 def validate_dataframe(df: pd.DataFrame):
+    """Validate Walmart training admission without transforming raw targets."""
+    from src.data.processing.walmart_training_admission import admit_walmart_training
 
-    print("Starting data validation...")
-
-    validate_required_columns(df)
-
-    validate_missing_values(df)
-
-    validate_numeric_types(df)
-
-    df = create_separate_targets(df)
-
-    validate_duplicate_rows(df)
-
-    print("Data validation passed successfully.")
-
+    result = admit_walmart_training(df)
+    if result.metadata["approved_warning_exceptions"]:
+        logging.getLogger(__name__).warning(
+            "Walmart training admitted with preserved negative Weekly_Sales values."
+        )
     return df
 
 def create_separate_targets(df: pd.DataFrame):
+    """Explicit legacy target transformation; never invoked by validation."""
 
     print("Creating separate forecasting targets...")
 

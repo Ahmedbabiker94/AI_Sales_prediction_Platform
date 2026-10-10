@@ -89,6 +89,7 @@ def run_training_pipeline(
 
     print("Validating data...")
 
+    # Admission must finish before splitting, preprocessing, or training side effects.
     validate_dataframe(df)
 
     print(
