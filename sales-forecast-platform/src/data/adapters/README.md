@@ -1,7 +1,8 @@
 # R-02A integration foundation
 
 R-02B supplies CSV, XLSX, JSON and Parquet connectors through a caller-owned
-`file_connector_registry`. PostgreSQL/REST remain deferred. Factories are supplied explicitly to
+`file_connector_registry`. R-02C adds PostgreSQL/REST through
+`network_connector_registry`. Factories are supplied explicitly to
 `select_connector`; no dynamic imports, plugin discovery, credential discovery,
 or network probing occurs. Constructors and configuration/type validation must
 be inert. Accessibility tests, schema discovery and extraction are separate
@@ -20,7 +21,7 @@ names for separately approved configuration. Registry presence alone does not
 authorize PostgreSQL/REST selection: an affirmative caller-owned policy hook is
 required. That hook is not an authentication or authorization system.
 
-## Required future connector boundaries
+## Network connector boundaries
 
 PostgreSQL must use explicitly supplied configuration and a least-privilege
 read-only role/transaction, bounded fetches, statement timeouts, and parameterized
@@ -32,8 +33,8 @@ timeouts, public destination-address checks and DNS/rebinding protections.
 Redirects must be disabled or each destination independently validated. Reject
 loopback/private/link-local/metadata destinations. A URL or a successful DNS
 lookup is not access authorization. No environment credential discovery or
-unauthenticated probing is permitted. These controls are requirements for R-02C,
-not implemented network guarantees in R-02A.
+unauthenticated probing is permitted. R-02C implements the connector controls
+described below; caller authentication and deployment verification are separate.
 
 Credential values and endpoint URLs must never enter batch provenance, errors,
 logs or lineage. Source metadata must contain non-secret provenance only; future
@@ -189,4 +190,161 @@ unsupported archive compression are rejected before workbook parsing.
 
 R-03 still owns dataset staging/finalization, cross-batch admission and rejecting
 invalid Unicode surrogates safely before canonical publishing. R-02C owns
-PostgreSQL and REST security; these requirements are not implemented here.
+deployment verification of PostgreSQL and REST security; the R-02C connector
+implementation below does not complete those production integration requirements.
+
+## R-02C PostgreSQL and REST connectors
+
+Both use the existing `SourceAdapter`, `SourceBatch` and unchanged
+`CanonicalMapper`. SQL/storage extraction is confined to the PostgreSQL adapter;
+operational providers/repositories are not imported or modified. No source
+connector grants training admission, persistence permission or dataset completion.
+
+Constructors and selection remain inert. `network_connector_registry` registers
+only explicitly supplied configurations. Existing `select_connector` still needs
+an affirmative `authorize_network` callback. Each operational method additionally
+requires a trusted `authorize_scope(configuration, asset)` callback returning
+exactly `True`, and the configuration organization must match the asset. Neither
+callback is implemented authentication: the application must bind them to real
+permissions, approved destinations/relations, credentials and organization scope.
+Canonical metadata, resolution evidence and `metadata_ready` never authorize
+network access. Do not populate provenance with secrets.
+
+```python
+registry = network_connector_registry(
+    asset, authorize_scope=application_scope_policy,
+    postgres=database_settings, rest=api_settings,
+    resolve_postgres_credentials=database_secret_resolver,
+    resolve_rest_credentials=api_secret_resolver,
+)
+with select_connector(
+    SourceConfiguration(database_settings.source_reference, SourceType.POSTGRESQL),
+    registry, authorize_network=application_selection_policy,
+) as source:
+    for batch in source.extract(batch_size=1000):
+        mapped = CanonicalMapper(mapping).map_batch(batch)
+        stage_only(mapped)  # Future caller-owned R-03 boundary, not publication.
+```
+
+### PostgreSQL
+
+`PostgreSQLConfiguration` declares host/port/database, an opaque credential
+reference, organization, schema/table, selected columns, an explicit relation
+allowlist, unique ordering/key fields, optional equality filters and tenant
+column. There is no arbitrary SQL/DSN configuration. Identifiers use a conservative
+ASCII identifier vocabulary and `psycopg2.sql.Identifier`; values are placeholders.
+If configured, the tenant predicate always compares the configured column with
+the authorized organization UUID, independently of other filters. Without that
+predicate, the trusted scope policy must authorize an organization-exclusive
+table/view or explicitly permitted shared source. RLS is never assumed.
+
+Secret resolution returns `PostgreSQLCredentials(username, password)` only when
+an operation is authorized. Credentials are excluded from repr/provenance/errors.
+No operational database configuration or environment credentials are discovered.
+TLS `verify-full` is mandatory; an explicit CA path may be supplied. Connection
+timeout defaults to 10 seconds; statement and idle-transaction limits default to
+30 seconds, with configuration upper bounds. Extraction begins read-only and
+uses `REPEATABLE READ`, verifies transaction mode, rejects privileged role flags,
+schema CREATE permission, and relation/column write privileges. These checks
+cover the selected source, not a global audit of every role grant. Administrators
+must provision a genuinely least-privilege source role and trust approved view
+definitions; no role/schema mutations are performed by the connector.
+
+Regular/partitioned tables and materialized views require a valid, unconditional,
+non-expression unique index matching the configured key columns. Approved views
+have no index to verify: their unique ordering contract must be guaranteed by the
+trusted source owner. All extracted keys must be nonnull and unique; duplicate
+keys fail the overall extraction, possibly after earlier batches were yielded.
+The metadata catalog checks target modern PostgreSQL (index key/include metadata).
+Real server compatibility is not established by the controlled doubles.
+
+Ordering keys support only built-in SMALLINT/INTEGER/BIGINT (exact Python `int`,
+excluding booleans and outside-range values), NUMERIC/DECIMAL (finite `Decimal`),
+UUID (`UUID` or its exact lowercase hyphenated string), and TEXT/VARCHAR (exact
+`str`). The adapter queries the exposed table/view attributes in PostgreSQL's
+catalogs, verifies type OIDs/names/namespace, and checks fetched key type OIDs
+against that metadata. Unknown/extension types, domains, date/time keys, floating
+keys and incompatible Python representations fail closed. These checks apply to
+views as well as tables; returned Python types alone never establish SQL safety.
+Text keys require built-in `pg_catalog` C/POSIX libc deterministic collations;
+default, ICU, nondeterministic, custom and other unverified collations are rejected.
+No arbitrary collation normalization or CITEXT equality is implemented. Catalog
+checks require PostgreSQL 12 or newer; real server verification remains required.
+
+Decimal identities strip only insignificant coefficient zeros using tuple
+inspection, without Decimal arithmetic, float conversion or context-dependent
+rounding. Equivalent scales and signed zeros share identity, while distinct
+high-precision values remain distinct. UUID identity accepts both supported
+representations consistently. Original extracted values are not rewritten for
+identity; existing Arrow storage may use a common column scale without changing
+numeric values. Generic record identities still distinguish integer/Decimal/text
+types; PostgreSQL rejects representations incompatible with its verified type
+instead of guessing cross-type equality. Duplicate tracking retains one hash per
+record up to `max_rows`; this is a row-count guard, not a hard memory budget.
+
+A named non-holdable server cursor uses bounded `fetchmany` calls. Source IDs
+are typed structured-key hashes, stable across batch sizes for unchanged source
+records. Transactions always roll back and close; cancellation requires closing
+the iterator or exiting the adapter context. Snapshot consistency is within a
+single extraction transaction, not across separate calls. PostgreSQL NUMERIC
+values use exact Arrow Decimal storage where representable, never float casts;
+unsupported values fail through extraction or the existing mapper. There is no
+sign-based target transformation, currency/unit inference, repair or admission.
+
+### REST
+
+`RESTConfiguration` declares an explicit endpoint and allowed origins (scheme,
+host, port), organization, source record keys, response envelope and pagination.
+HTTPS is required by default; userinfo, fragments and endpoint query strings are
+rejected. Only GET is supported. Authentication is none, Bearer or Basic via
+an opaque secret reference and explicit `RESTCredentials` resolver. There are no
+environment proxies, automatic cookies, destination guessing or implicit secrets.
+
+Each request/retry resolves the configured host and rejects any prohibited answer,
+including loopback/private/link-local/metadata/reserved/multicast/unspecified and
+IPv4-mapped prohibited addresses. The transport connects directly to one validated
+numeric address, retaining TLS hostname verification and SNI for the configured
+host. It does not resolve the hostname again during connection. Redirect responses
+always fail, and credentials are resolved only after scope/destination approval.
+The default DNS resolver bounds caller waiting by the configured connect timeout
+and allows at most four outstanding native lookups. A timed-out libc lookup cannot
+be cancelled; its daemon worker retains a slot until it returns, and exhausted
+capacity fails closed. PostgreSQL connection timing relies on libpq's configured
+timeout; real DNS/TLS/server timing still requires isolated deployment verification.
+Injected transports/resolvers are trusted test dependencies and can invalidate
+these guarantees if substituted with unsafe implementations.
+
+`RESTNetworkPolicy` permits explicit controlled loopback tests only. HTTP also
+requires the loopback test exception and can never target a public address. These
+switches are not for production source declarations. The suite includes a real
+isolated loopback HTTP transport test, not a live customer API or real HTTPS test.
+
+Supported responses are strict UTF-8 JSON arrays (unpaginated), exact configured
+single-key envelopes, page-number envelopes with a boolean continuation field,
+or cursor envelopes with an opaque token/null. Cursor tokens are URL-encoded
+parameters on the same endpoint, never followed as URLs. Empty pages, changed
+schemas, duplicate keys/record IDs, repeated tokens, unsupported shapes and
+nonfinite numbers fail closed. Record references are hashed keys; metadata stores
+page ordinals, never endpoint URLs, credentials or cursor tokens.
+
+Defaults: 1,000 records/page, 1,000 pages, 1,000,000 records total, 10,000 rows/batch,
+256 columns, 4 MiB response, 16 KiB request, depth 32 (maximum 64), and 131,072
+characters/cell. Connect timeout and header/body read deadline default to 10
+seconds. Framing/header lines are capped at 8 KiB and cumulative framing lines
+at 64 KiB. Compressed responses are unsupported. Bodies are materialized within
+the response-byte cap; this is not a hard process-RSS bound.
+
+Only connection/timeouts and HTTP 429/502/503/504 are retried, at most three retries
+(default two), solely for GET. Retry-After seconds/dates are honored within
+per-delay and extraction-wide sleep budgets (defaults 30/60 seconds); excessive
+rate limits fail instead of sleeping indefinitely. Other statuses, malformed
+responses, TLS verification failures and redirects are not retried. Every request
+owns and closes its connection; completion, failure and iterator cancellation
+close the transport. Unexpected failures use sanitized public errors.
+
+R-03 still owns immutable source/snapshot policy, staging/finalization, cross-batch
+canonical admission, bounded duplicate storage and invalid Unicode-surrogate
+rejection before publishing. Repeated API calls cannot manufacture snapshot
+consistency unless the upstream service provides it. No production workflow uses
+these connectors yet. Existing dependencies suffice: psycopg2, pandas, PyArrow and
+the Python standard library. No packages are added for R-02C.
