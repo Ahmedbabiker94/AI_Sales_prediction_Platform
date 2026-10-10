@@ -13,12 +13,18 @@ from .common import (
 )
 from .forecast import ForecastConfig, ForecastFrequency
 from .document import DocumentDatasetContent, DocumentElement, DocumentMetadata
-from .lineage import LineageRecord
+from .lineage import LineageRecord, MetadataResolution
+from .mapping import SourceMapping
+from .features import FeatureCalculation, FeatureConfiguration
 from .observation import Observation
 from .quality import DataQualityReport
 from .series import SeriesDefinition
 
 __all__ = [
+    "MetadataResolution",
+    "SourceMapping",
+    "FeatureCalculation",
+    "FeatureConfiguration",
     "AssetMetadata",
     "AssetType",
     "ContractModel",
