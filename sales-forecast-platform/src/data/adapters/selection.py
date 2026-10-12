@@ -129,11 +129,11 @@ def select_connector(configuration: SourceConfiguration,
     """Only explicitly supplied factories are eligible. Nothing connects here.
 
     authorize_network is a caller-owned policy hook, not built-in authentication.
-    No PostgreSQL or REST selection is possible without an affirmative policy.
+    No PostgreSQL, REST or OData selection is possible without an affirmative policy.
     Future connectors must independently enforce read-only SQL and SSRF controls.
     """
     kind = configuration.source_type
-    if kind in (SourceType.POSTGRESQL, SourceType.REST):
+    if kind in (SourceType.POSTGRESQL, SourceType.REST, SourceType.ODATA):
         if authorize_network is None or authorize_network(configuration) is not True:
             raise SourceSelectionError("network connector requires explicit caller authorization")
     else:

@@ -1,7 +1,6 @@
 """Explicit GET-only JSON extraction with address-pinned HTTPS transport."""
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 import base64
 import http.client
 import ipaddress
@@ -14,6 +13,7 @@ from threading import BoundedSemaphore, Thread
 import time
 from urllib.parse import urlencode, urlsplit
 
+from src.data.adapters.http_client import _allowed_address, _origin, resolve_destination, request_body
 from src.data.adapters.base import SourceType
 from src.data.adapters.file_common import positive_integer, validate_headers
 from src.data.adapters.json_adapter import _unique_object, _invalid_constant
@@ -22,31 +22,6 @@ from src.data.adapters.network_common import (
 )
 from src.data.adapters.selection import SourceConfiguration
 from src.data.contracts import DataFormat
-
-
-def _allowed_address(address, *, allow_loopback):
-    effective = getattr(address, 'ipv4_mapped', None) or address
-    if allow_loopback and effective.is_loopback:
-        return True
-    # Azure's platform virtual IP is classified as global by ipaddress.
-    return (effective.is_global and not effective.is_multicast and not effective.is_unspecified
-            and not effective.is_reserved and str(effective) != '168.63.129.16')
-
-
-def _origin(url):
-    try:
-        parts = urlsplit(url)
-        if (parts.scheme not in ('https', 'http') or not parts.hostname or parts.username is not None
-                or parts.password is not None or '#' in url or '%' in parts.netloc
-                or any(ord(c) < 33 or ord(c) > 126 for c in url) or '\\' in url):
-            raise ValueError()
-        host = parts.hostname.lower()
-        port = parts.port or (443 if parts.scheme == 'https' else 80)
-        if not 1 <= port <= 65535:
-            raise ValueError()
-        return parts, (parts.scheme, host, port)
-    except (ValueError, UnicodeError):
-        raise NetworkAdapterError("invalid configured REST endpoint") from None
 
 
 @dataclass(frozen=True)
@@ -361,38 +336,7 @@ class RESTAdapter(NetworkAdapter):
             raise NetworkAdapterError("invalid explicit REST dependencies")
 
     def _destination(self):
-        _, (scheme, host, port) = _origin(self.configuration.endpoint)
-        try:
-            try:
-                literal = ipaddress.ip_address(host)
-            except ValueError:
-                literal = None
-            if literal is not None:
-                effective = getattr(literal, 'ipv4_mapped', None) or literal
-                if not _allowed_address(literal, allow_loopback=self.policy.allow_loopback_for_tests):
-                    raise ValueError()
-                if scheme == 'http' and not effective.is_loopback:
-                    raise ValueError()
-            addresses = self.resolver(host, port)
-            if not addresses or len(addresses) > 16:
-                raise ValueError()
-            checked = []
-            for value in addresses:
-                if type(value) is not str or '%' in value:
-                    raise ValueError()
-                address = ipaddress.ip_address(value)
-                mapped = getattr(address, 'ipv4_mapped', None)
-                effective = mapped or address
-                if not _allowed_address(address, allow_loopback=self.policy.allow_loopback_for_tests):
-                    raise ValueError()
-                if literal is not None and address != literal:
-                    raise ValueError()
-                if scheme == 'http' and not effective.is_loopback:
-                    raise ValueError()
-                checked.append(str(address))
-            return checked[0]
-        except Exception:
-            raise NetworkAdapterError("REST destination resolution or address policy rejected") from None
+        return resolve_destination(self.configuration.endpoint, self.resolver, self.policy)
 
     def _headers(self):
         cfg = self.configuration
@@ -430,56 +374,10 @@ class RESTAdapter(NetworkAdapter):
         return url
 
     def _response(self, transport, page, cursor, budget):
-        cfg = self.configuration
-        for attempt in range(cfg.max_retries + 1):
-            self._authorize()
-            address = self._destination()  # Recheck DNS for every attempt/page.
-            headers = self._headers()  # Secrets resolved only after approval.
-            url = self._url(page, cursor)
-            if sum(len(k) + len(v) + 4 for k, v in headers.items()) + len(url) > cfg.max_request_bytes:
-                raise NetworkAdapterError("REST request size limit exceeded")
-            try:
-                response = transport.request(url, address=address, headers=headers,
-                    connect_timeout=cfg.connect_timeout, read_timeout=cfg.read_timeout,
-                    max_response_bytes=cfg.max_response_bytes)
-            except (TimeoutError, socket.timeout, ConnectionError):
-                if attempt == cfg.max_retries:
-                    raise NetworkAdapterError("REST request timed out or connection failed") from None
-                delay = min(2 ** attempt, cfg.max_retry_delay)
-            else:
-                if type(response) is not RESTResponse or type(response.body) is not bytes:
-                    raise NetworkAdapterError("invalid REST transport response")
-                if len(response.body) > cfg.max_response_bytes:
-                    raise NetworkAdapterError("REST response size limit exceeded")
-                headers_map = {k.lower(): v for k, v in response.headers}
-                if 300 <= response.status < 400:
-                    raise NetworkAdapterError("REST redirects are forbidden")
-                if response.status == 200:
-                    if headers_map.get('content-type', '').split(';')[0].strip().lower() != 'application/json':
-                        raise NetworkAdapterError("REST response must be JSON")
-                    if headers_map.get('content-encoding', 'identity').lower() != 'identity':
-                        raise NetworkAdapterError("compressed REST responses are unsupported")
-                    return response.body
-                if response.status not in (429, 502, 503, 504) or attempt == cfg.max_retries:
-                    raise NetworkAdapterError("REST status rejected or retry budget exhausted")
-                retry_after = headers_map.get('retry-after')
-                delay = min(2 ** attempt, cfg.max_retry_delay)
-                if retry_after is not None:
-                    try:
-                        if retry_after.isdigit():
-                            delay = int(retry_after)
-                        else:
-                            timestamp = parsedate_to_datetime(retry_after)
-                            if timestamp.tzinfo is None:
-                                raise ValueError()
-                            delay = max(0, math.ceil((timestamp - datetime.now(timezone.utc)).total_seconds()))
-                    except (ValueError, TypeError, OverflowError):
-                        raise NetworkAdapterError("invalid REST retry timing") from None
-            if delay > cfg.max_retry_delay or budget[0] + delay > cfg.max_total_retry_delay:
-                raise NetworkAdapterError("REST rate limit exceeds configured retry delay budget")
-            budget[0] += delay
-            self.sleep(delay)
-        raise NetworkAdapterError("REST retry budget exhausted")
+        return request_body(transport, limits=self.configuration, authorize=self._authorize,
+            destination=self._destination, build_headers=self._headers,
+            get_url=lambda: self._url(page, cursor), budget=budget, sleep=self.sleep,
+            now=lambda: datetime.now(timezone.utc), response_type=RESTResponse)
 
     def _validate_json(self, value, depth=0):
         cfg = self.configuration

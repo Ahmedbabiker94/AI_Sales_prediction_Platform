@@ -348,3 +348,111 @@ rejection before publishing. Repeated API calls cannot manufacture snapshot
 consistency unless the upstream service provides it. No production workflow uses
 these connectors yet. Existing dependencies suffice: psycopg2, pandas, PyArrow and
 the Python standard library. No packages are added for R-02C.
+
+## R-02D-2 OData V4 foundation
+
+`ODataAdapter` implements the existing `SourceAdapter` directly. It does not
+subclass `RESTAdapter`, map vendor business fields, or grant dataset completion,
+persistence permission or training admission. `SourceType.ODATA` requires the same
+explicit selection authorization as REST/PostgreSQL. Register it using the
+optional `odata` configuration in `network_connector_registry`.
+
+The HTTP seam is small: `http_client.py` shares destination validation and the
+bounded GET/retry loop. REST keeps its existing configuration, JSON decoder,
+credentials, pinned transport, DNS worker cap and compatibility imports. OData
+uses that same GET-only pinned transport; POST/token acquisition is not enabled.
+
+`ODataConfiguration` declares an opaque source/connection reference, organization,
+service root, origin allowlist, entity set, projected fields, entity key fields,
+ascending order fields, credential reference and opaque authorization context.
+All keys must be projected and included in ordering. Optional fixed
+`scope_parameters` are application-approved query parameters, not `$filter`
+expressions or proof of tenant authorization. Service root paths are explicit
+ASCII paths without percent encoding, dot segments, double slashes or queries.
+Entity/property names use conservative ASCII identifiers. No auto-discovery of
+unconfigured services or entities takes place.
+
+Both `authorize_scope(configuration, asset)` and
+`authorize_request(configuration, asset, purpose)` must affirm permission.
+Purposes are `metadata` and `entity`, on exact configured resource paths. The
+trusted credential provider receives the opaque reference plus keyword arguments
+`organization_id`, `authorization_context` and `purpose`, and returns existing
+`RESTCredentials(token=...)`. It must bind these to authenticated permissions and
+organization-scoped credentials; self-declared configuration is not authority.
+Tokens are resolved after destination approval on every attempt. Neither URLs,
+tokens nor pagination links enter generated provenance. HTTPS is mandatory except
+for the existing explicit caller-only loopback test policy.
+
+Supported protocol is **OData 4.0**, not V2 or 4.01. A `4.0` OData-Version response
+header is required. Metadata discovery fetches only the configured `$metadata`
+resource and parses XML with DefusedXML, forbidding DTDs/entities/external
+references. CSDL entity-set/type/property/key declarations are inspected locally;
+references are never fetched. Inherited, abstract/open selected entities and
+unsupported projected types/facets reject. Navigation properties are never
+projected or traversed. Discovery reports the configured projected properties.
+
+Defaults: metadata 2 MiB, 10,000 XML nodes, depth 32 (maximum configurable 64);
+256 properties on the selected type; entity responses 4 MiB; 1,000 rows/page;
+1,000 pages; 1,000,000 rows; 10,000 rows/batch; 131,072 characters/cell; 16 KiB
+requests. Timeouts and retry/sleep limits follow R-02C defaults. XML/JSON pages
+are parsed in memory within byte limits; these are not hard process-RSS bounds.
+Duplicate hashes grow to the configured row limit. R-03 owns bounded duplicate
+storage. Cancellation requires closing the iterator or exiting its adapter context.
+
+Supported projected scalars:
+
+- `Edm.String`: unchanged valid UTF-8 text with declared/configured length limits.
+- `Edm.Boolean`: JSON booleans only.
+- `Edm.Int32`/`Edm.Int64`: exact bounded integers; Int64 strings are decoded only
+  under `IEEE754Compatible=true`. No float intermediates or numeric guessing.
+- `Edm.Decimal`: exact Decimal with fixed precision up to 38 and fixed scale;
+  unspecified precision is capped at 38, and unspecified scale follows CSDL's
+  default zero. Variable/floating scale is unsupported. Typed Arrow decimal128
+  storage preserves numeric values, including signed/zero targets. Under
+  IEEE754Compatible, decimal strings use plain decimal notation; otherwise JSON
+  numbers are parsed directly as Decimal, without binary floating conversion.
+- `Edm.Date`: exact ISO calendar dates.
+- `Edm.DateTimeOffset`: explicit offsets/Z, declared precision up to seven digits,
+  normalized to UTC instants without loss of supported precision. Ambiguous
+  timezone forms and values outside pandas nanosecond range reject.
+- Explicit nulls only for nullable properties; missing projected fields reject.
+
+Collections, complex values, enums, binary values and unsupported EDM types reject
+when projected. Boolean keys are unsupported. Blank/overlong string keys fail the
+existing source identity constraints. Identities use entity set, sorted key names,
+declared key types and exact decoded values through existing structured hashing.
+Decimal scale variants/signed zeros share identity. String key equality is exact;
+this is not a database-collation or vendor-specific identity normalization engine.
+
+Entity responses require a strict `value` collection and matching `@odata.context`;
+optional annotations are count and nextLink only. Rows must expose exactly the
+projected fields. Empty pages reject. Relative and absolute continuations must
+remain on the exact configured entity path/origin and retain every fixed scope,
+projection, ordering and `$top` parameter. Only one `$skiptoken` or `$skip` may be
+added; services that omit those fixed options from their links are outside this
+initial supported subset. Encoded paths, scope changes, redirects, malformed
+queries and cycles reject. DNS/address approval and purpose authorization are
+repeated for every request/retry, including later pages.
+
+The SHA-256 fingerprint covers the exact metadata bytes. Optional
+`expected_metadata_fingerprint` pins an approved document; even formatting changes
+then require explicit approval. Metadata is fetched once per extraction, not on
+every page. Changed contexts, projected fields or incompatible values reject;
+unannounced metadata-only changes during extraction cannot be independently
+detected. Generated batch metadata retains the schema fingerprint/version and
+marks upstream snapshot consistency **unverified**. Ordering, count annotations
+and reaching the last page do not prove a snapshot or complete-dataset admission.
+
+The unchanged CanonicalMapper still requires explicit start/end periods, declared
+metric meaning and directly supplied unit/currency. No posting-date period
+construction, sign-based target splitting, measurement inference or aggregation
+is performed. Tests prove canonical equivalence with independent Parquet fixtures
+for exact Decimal records and existing REST extraction for exact binary numeric
+values. REST's existing float decoder is not claimed to preserve arbitrary Decimal
+precision. Synthetic mocks and a controlled loopback HTTP server do not establish
+SAP, Dynamics, Oracle or other vendor compatibility.
+
+Existing DefusedXML, pandas and PyArrow suffice; no dependencies are added.
+R-02D-3 owns V2, OAuth acquisition/refresh and verified enterprise profiles. R-03
+owns immutable snapshots, staging/finalization and quality admission. Production
+workflow integration, vendor sandbox verification and deployment remain deferred.

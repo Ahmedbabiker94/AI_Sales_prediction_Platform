@@ -35,6 +35,7 @@ class SourceType(str, Enum):
     PARQUET = "parquet"
     POSTGRESQL = "postgresql"
     REST = "rest"
+    ODATA = "odata"
 
 
 @dataclass(frozen=True)
