@@ -1,3 +1,4 @@
+from .dataset import (ConsistencyEvidence, DatasetManifest, StagingBudgets, StagingState, StoredDatasetReference)
 from .asset import DataAsset, DataAssetLike, DocumentDataset, StructuredDataset
 from .common import (
     AssetMetadata,
@@ -21,6 +22,7 @@ from .quality import DataQualityReport
 from .series import SeriesDefinition
 
 __all__ = [
+    "ConsistencyEvidence", "DatasetManifest", "StagingBudgets", "StagingState", "StoredDatasetReference",
     "MetadataResolution",
     "SourceMapping",
     "FeatureCalculation",
