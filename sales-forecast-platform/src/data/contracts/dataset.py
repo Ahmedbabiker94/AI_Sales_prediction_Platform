@@ -1,4 +1,4 @@
-"""Private staging envelopes. None is an admission or publication credential."""
+"""Capture and publication declarations; none authenticates a caller by itself."""
 from dataclasses import dataclass
 from enum import Enum
 import re
@@ -42,7 +42,7 @@ class ConsistencyEvidence:
     reference: str | None = None
 
     def __post_init__(self):
-        if self.kind not in ('upstream_unverified', 'transaction_scoped', 'external_snapshot'):
+        if self.kind not in ('upstream_unverified', 'transaction_scoped', 'external_snapshot', 'verified_reconciliation'):
             raise ValueError('unknown consistency evidence kind')
         if self.reference is not None:
             if type(self.reference) is not str or not self.reference.strip() or len(self.reference) > 512:
@@ -120,3 +120,162 @@ class DatasetManifest:
             if not self.rows or self.version_id is None:
                 raise ValueError('sealed dataset requires content and version')
             StoredDatasetReference(self.organization_id, self.dataset_id, self.attempt_id, self.version_id)
+
+
+class PublicationState(str, Enum):
+    """Publication state is separate from the immutable SEALED capture manifest."""
+    REJECTED = 'rejected'
+    FINALIZED = 'finalized'
+
+
+def _opaque(value):
+    from urllib.parse import urlsplit
+    if (type(value) is not str or not value.strip() or len(value) > 512
+            or urlsplit(value).scheme or '://' in value or re.search(r'(?i)(?:^|\s)(?:bearer|basic)\s+\S+',value) or any(ord(c) < 32 for c in value)):
+        raise ValueError('bounded opaque reference required')
+    value.encode('utf-8', errors='strict')
+
+
+@dataclass(frozen=True)
+class DatasetAccessContext:
+    reference: StoredDatasetReference
+    source_id: UUID
+    ingestion_batch_id: UUID
+    mapping_id: str
+    mapping_version: str
+    mapping_digest: str
+    metric: str
+    business_scope: str
+    source_scope: str
+    connection_reference: str
+    purpose: str
+
+    def __post_init__(self):
+        if type(self.reference) is not StoredDatasetReference or type(self.source_id) is not UUID or type(self.ingestion_batch_id) is not UUID:
+            raise ValueError('invalid dataset access identities')
+        for value in (self.mapping_id, self.metric, self.business_scope, self.source_scope, self.connection_reference, self.purpose):
+            _opaque(value)
+        ContractVersion.parse(self.mapping_version)
+        if not re.fullmatch(r'[0-9a-f]{64}', self.mapping_digest):
+            raise ValueError('invalid mapping digest')
+        if self.purpose != 'production_training':
+            raise ValueError('only explicit production_training publication is implemented')
+
+
+@dataclass(frozen=True)
+class VerifiedConsistencyEvidence:
+    """Declaration requiring a trusted verifier; it contains no self-authorizing tier.
+
+    snapshot_transaction_v1: source-supported transaction snapshot for extraction.
+    snapshot_external_v1: independently attested immutable source snapshot.
+    reconciliation_authoritative_v1: authoritative source reconciliation over
+    explicit bounds/change tracking, with documented method evidence. Not a snapshot.
+    No method is verified by counts, ordering, hashes or pagination alone.
+    """
+    scope: DatasetAccessContext
+    reference: str
+    method: str
+    method_reference: str
+    policy_version: str
+    window_start: object
+    window_end: object
+    verified_at: object
+    expires_at: object
+
+    def __post_init__(self):
+        from datetime import datetime
+        if type(self.scope) is not DatasetAccessContext:
+            raise ValueError('invalid evidence scope')
+        _opaque(self.reference); _opaque(self.method_reference)
+        if type(self.method) is not str or self.method not in ('snapshot_transaction_v1', 'snapshot_external_v1', 'reconciliation_authoritative_v1'):
+            raise ValueError('unsupported consistency verification method')
+        if type(self.policy_version) is not str or self.policy_version != '1.0':
+            raise ValueError('unsupported consistency policy version')
+        dates = (self.window_start, self.window_end, self.verified_at, self.expires_at)
+        if any(type(d) is not datetime or d.tzinfo is None or d.utcoffset() is None for d in dates):
+            raise ValueError('evidence requires timezone-aware bounds')
+        if not self.window_start <= self.window_end <= self.verified_at < self.expires_at:
+            raise ValueError('invalid evidence validity window')
+
+
+@dataclass(frozen=True)
+class ConsistencyPolicy:
+    scope: DatasetAccessContext
+    quality_policy_id: str
+    quality_policy_version: str
+    policy_id: str = 'canonical_consistency'
+    version: str = '1.0'
+    allow_reconciliation: bool = False
+    reconciliation_approval_reference: str | None = None
+    # B has exactly this quality condition: existing fail-closed admission passes,
+    # including only independently authorized warnings and no unexecuted actions.
+    quality_condition: str = 'fail_closed_quality_admission'
+
+    def __post_init__(self):
+        if type(self.scope) is not DatasetAccessContext or type(self.allow_reconciliation) is not bool:
+            raise ValueError('invalid consistency policy scope')
+        for value in (self.policy_id, self.quality_policy_id): _opaque(value)
+        ContractVersion.parse(self.quality_policy_version)
+        if type(self.version) is not str or type(self.quality_condition) is not str or self.version != '1.0' or self.quality_condition != 'fail_closed_quality_admission':
+            raise ValueError('unsupported consistency policy')
+        if self.allow_reconciliation:
+            _opaque(self.reconciliation_approval_reference)
+        elif self.reconciliation_approval_reference is not None:
+            raise ValueError('unexpected reconciliation approval')
+
+
+@dataclass(frozen=True)
+class ScopedWarningAuthorization:
+    """Candidate evidence, never permission without an independent trusted verifier."""
+    scope: DatasetAccessContext
+    issue_code: str
+    field: str
+    action: str
+    reference: str
+    issued_at: object
+    expires_at: object
+
+    def __post_init__(self):
+        from datetime import datetime
+        if type(self.scope) is not DatasetAccessContext or type(self.action) is not str or self.action != 'keep':
+            raise ValueError('only scoped KEEP warning authorizations are supported')
+        for value in (self.issue_code, self.field, self.reference): _opaque(value)
+        if any(type(d) is not datetime or d.tzinfo is None or d.utcoffset() is None for d in (self.issued_at, self.expires_at)):
+            raise ValueError('warning authorization requires aware timestamps')
+        if not self.issued_at < self.expires_at:
+            raise ValueError('invalid warning authorization validity')
+
+
+def operational_json(value):
+    """Deterministic closed operational serialization; never object deserialization."""
+    import json
+    from dataclasses import asdict, is_dataclass
+    from datetime import datetime
+    def encode(item):
+        if type(item) is UUID: return str(item)
+        if type(item) is datetime: return item.isoformat()
+        if is_dataclass(item): return asdict(item)
+        raise TypeError('unsupported operational evidence representation')
+    return json.dumps(value,default=encode,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)
+
+
+def access_context_from_dict(value):
+    data=dict(value);ref=dict(data.pop('reference'))
+    for name in ('organization_id','dataset_id','attempt_id'):ref[name]=UUID(ref[name])
+    data['reference']=StoredDatasetReference(**ref)
+    for name in ('source_id','ingestion_batch_id'):data[name]=UUID(data[name])
+    return DatasetAccessContext(**data)
+
+
+def consistency_evidence_from_dict(value):
+    from datetime import datetime
+    data=dict(value);data['scope']=access_context_from_dict(data['scope'])
+    for name in ('window_start','window_end','verified_at','expires_at'):data[name]=datetime.fromisoformat(data[name])
+    return VerifiedConsistencyEvidence(**data)
+
+
+def warning_authorization_from_dict(value):
+    from datetime import datetime
+    data=dict(value);data['scope']=access_context_from_dict(data['scope'])
+    for name in ('issued_at','expires_at'):data[name]=datetime.fromisoformat(data[name])
+    return ScopedWarningAuthorization(**data)

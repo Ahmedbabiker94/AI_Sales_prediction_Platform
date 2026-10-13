@@ -27,6 +27,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 import stat
 import re
 from urllib.parse import urlsplit
@@ -376,7 +377,8 @@ class LocalDatasetRepository(DatasetStoreProvider):
             conn.execute(f'PRAGMA max_page_count={pages}')
             conn.executescript('CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, state TEXT NOT NULL, base TEXT NOT NULL, manifest TEXT);'
                 'CREATE TABLE IF NOT EXISTS keys (attempt TEXT, kind TEXT, identity BLOB, PRIMARY KEY(attempt,kind,identity));'
-                'CREATE TABLE IF NOT EXISTS chunks (attempt TEXT, ordinal INTEGER, rows INTEGER, raw_hash TEXT, canonical_hash TEXT, raw_bytes INTEGER, canonical_bytes INTEGER, envelope TEXT, PRIMARY KEY(attempt,ordinal));')
+                'CREATE TABLE IF NOT EXISTS chunks (attempt TEXT, ordinal INTEGER, rows INTEGER, raw_hash TEXT, canonical_hash TEXT, raw_bytes INTEGER, canonical_bytes INTEGER, envelope TEXT, PRIMARY KEY(attempt,ordinal));'
+                'CREATE TABLE IF NOT EXISTS publications (version TEXT PRIMARY KEY, attempt TEXT UNIQUE, admission TEXT NOT NULL, digest TEXT NOT NULL);')
             with conn:
                 yield conn
         finally:
@@ -401,7 +403,7 @@ class LocalDatasetRepository(DatasetStoreProvider):
             _provenance(mapping.model_dump(mode='json'), budgets)
             if len(_json(base)) > budgets.max_metadata_bytes: raise StagingError('metadata budget exceeded')
             with self._connection(budgets) as conn:
-                if conn.execute("SELECT COUNT(*) FROM attempts WHERE state NOT IN ('staging','sealed','aborted')").fetchone()[0]:
+                if conn.execute("SELECT COUNT(*) FROM attempts WHERE state NOT IN ('staging','sealed','aborted','finalized','rejected')").fetchone()[0]:
                     raise StagingError('unknown persisted staging state')
                 # Exclusive writer means old STAGING attempts have no live owner.
                 conn.execute("UPDATE attempts SET state='aborted' WHERE state='staging'")
@@ -561,6 +563,31 @@ class LocalDatasetRepository(DatasetStoreProvider):
         except Exception:
             raise StagingError('staged lineage envelope validation failed') from None
 
+    def _verified_chunk(self, attempt, chunk, checkpoint):
+        ordinal,rows,rh,ch,rb,cb,envelope = chunk
+        checkpoint()
+        frames = {}
+        for kind,digest,size in [('raw',rh,rb),('canonical',ch,cb)]:
+            path = self.root / str(attempt.id) / f'{ordinal}-{kind}.parquet'
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd,'rb') as stream:
+                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode) or os.fstat(stream.fileno()).st_size != size:
+                    raise StagingError('staged chunk size mismatch')
+                payload=stream.read(attempt.budgets.max_chunk_bytes+1)
+            if hashlib.sha256(payload).hexdigest()!=digest: raise StagingError('staged chunk checksum mismatch')
+            table=pq.read_table(pa.BufferReader(payload))
+            if table.num_rows!=rows: raise StagingError('staged row count mismatch')
+            if table.schema.metadata.get(b'envelope_sha256') != hashlib.sha256(envelope.encode('utf-8')).hexdigest().encode():
+                raise StagingError('staged lineage envelope checksum mismatch')
+            restored=_frame(table)
+            frames[kind] = restored
+            verified = _table(restored,attempt.budgets)
+            verified = verified.replace_schema_metadata({**verified.schema.metadata, b'envelope_sha256': table.schema.metadata[b'envelope_sha256']})
+            if not verified.equals(table,check_metadata=True):
+                raise StagingError('storage round-trip changes values')
+        self._validate_envelope(attempt, envelope, frames, rows)
+        return frames, payload
+
     def _seal(self, attempt, *, owner=None, checkpoint=lambda: None):
         if type(attempt) is not _Attempt or owner is not attempt.owner:
             raise StagingError('completion owner mismatch')
@@ -571,27 +598,7 @@ class LocalDatasetRepository(DatasetStoreProvider):
             chunks = conn.execute('SELECT ordinal,rows,raw_hash,canonical_hash,raw_bytes,canonical_bytes,envelope FROM chunks WHERE attempt=? ORDER BY ordinal',(str(attempt.id),)).fetchall()
             if not chunks: raise StagingError('empty dataset cannot seal')
             for ordinal,rows,rh,ch,rb,cb,envelope in chunks:
-                checkpoint()
-                frames = {}
-                for kind,digest,size in [('raw',rh,rb),('canonical',ch,cb)]:
-                    path = self.root / str(attempt.id) / f'{ordinal}-{kind}.parquet'
-                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-                    with os.fdopen(fd,'rb') as stream:
-                        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode) or os.fstat(stream.fileno()).st_size != size:
-                            raise StagingError('staged chunk size mismatch')
-                        payload=stream.read(attempt.budgets.max_chunk_bytes+1)
-                    if hashlib.sha256(payload).hexdigest()!=digest: raise StagingError('staged chunk checksum mismatch')
-                    table=pq.read_table(pa.BufferReader(payload))
-                    if table.num_rows!=rows: raise StagingError('staged row count mismatch')
-                    if table.schema.metadata.get(b'envelope_sha256') != hashlib.sha256(envelope.encode('utf-8')).hexdigest().encode():
-                        raise StagingError('staged lineage envelope checksum mismatch')
-                    restored=_frame(table)
-                    frames[kind] = restored
-                    verified = _table(restored,attempt.budgets)
-                    verified = verified.replace_schema_metadata({**verified.schema.metadata, b'envelope_sha256': table.schema.metadata[b'envelope_sha256']})
-                    if not verified.equals(table,check_metadata=True):
-                        raise StagingError('storage round-trip changes values')
-                self._validate_envelope(attempt, envelope, frames, rows)
+                self._verified_chunk(attempt, (ordinal,rows,rh,ch,rb,cb,envelope), checkpoint)
             rows=sum(c[1] for c in chunks)
             if conn.execute('SELECT COUNT(*) FROM keys WHERE attempt=?',(str(attempt.id),)).fetchone()[0] != 2*rows:
                 raise StagingError('staged key count mismatch')
@@ -631,3 +638,172 @@ class LocalDatasetRepository(DatasetStoreProvider):
         if not attempt.released:
             attempt.released=True
             attempt.lock.close()
+
+    @contextmanager
+    def _publication_session(self, budgets):
+        """Single-host exclusive lock also protects verification and read snapshots.
+
+        All cooperative staging/finalization/read operations use the same lock.
+        An administrator with arbitrary filesystem writes remains outside trust.
+        """
+        fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        stream = os.fdopen(fd,'rb')
+        try:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode): raise StagingError('unsafe publication lock')
+            fcntl.flock(stream,fcntl.LOCK_EX | fcntl.LOCK_NB)
+            yield
+        except StagingError:
+            raise
+        except OSError:
+            raise StagingError('dataset store operation failed') from None
+        finally:
+            stream.close()
+
+    def _candidate(self, reference, budgets):
+        """Resolve exact opaque scope; verify immutable SEALED manifest binding."""
+        from src.data.contracts.dataset import StoredDatasetReference
+        if type(reference) is not StoredDatasetReference: raise StagingError('invalid dataset reference')
+        with self._connection(budgets) as conn:
+            row=conn.execute('SELECT state,base,manifest FROM attempts WHERE id=?',(str(reference.attempt_id),)).fetchone()
+            if row is None or row[0] not in ('sealed','finalized'): raise StagingError('dataset is not an eligible sealed candidate')
+            if row[2] is None or len(row[2].encode()) > budgets.max_metadata_bytes: raise StagingError('missing or oversized capture manifest')
+            try:
+                from src.data.adapters.json_adapter import _unique_object
+                data=json.loads(row[2],object_pairs_hook=_unique_object)
+                version=data.pop('version_id')
+                if hashlib.sha256(_json(data)).hexdigest()!=version: raise ValueError()
+                data['version_id']=version
+                manifest=self._manifest(data)
+                if (manifest.state is not StagingState.SEALED or manifest.organization_id!=reference.organization_id
+                        or manifest.dataset_id!=reference.dataset_id or manifest.attempt_id!=reference.attempt_id or version!=reference.version_id):
+                    raise ValueError()
+                base=json.loads(row[1],object_pairs_hook=_unique_object)
+                if any(data.get(k)!=v for k,v in base.items()): raise ValueError()
+                _provenance(data,budgets)
+                chunks=conn.execute('SELECT ordinal,rows,raw_hash,canonical_hash,raw_bytes,canonical_bytes,envelope FROM chunks WHERE attempt=? ORDER BY ordinal',(str(reference.attempt_id),)).fetchall()
+                if (len(chunks)!=manifest.batches or [c[0] for c in chunks]!=list(range(manifest.batches))
+                        or sum(c[1] for c in chunks)!=manifest.rows or sum(c[4] for c in chunks)!=manifest.raw_bytes
+                        or sum(c[5] for c in chunks)!=manifest.canonical_bytes
+                        or tuple(c[6] for c in chunks)!=manifest.envelopes
+                        or tuple((c[0],c[2],c[3],c[1]) for c in chunks)!=manifest.chunks):raise ValueError()
+                if manifest.rows > budgets.max_rows or manifest.batches > budgets.max_batches or manifest.raw_bytes > budgets.max_raw_bytes or manifest.canonical_bytes > budgets.max_canonical_bytes:
+                    raise ValueError()
+                if conn.execute('SELECT COUNT(*) FROM keys WHERE attempt=?',(str(reference.attempt_id),)).fetchone()[0]!=2*manifest.rows:raise ValueError()
+            except Exception:
+                raise StagingError('capture manifest or content binding failed') from None
+        return SimpleNamespace(reference=reference,manifest=manifest,base=base,chunks=chunks,budgets=budgets,
+                               state=row[0],mapping_json='',id=reference.attempt_id)
+
+    def _verified_batches(self, candidate, checkpoint):
+        if not candidate.mapping_json: raise StagingError('verified mapping configuration required')
+        for chunk in candidate.chunks:
+            frames,_=self._verified_chunk(candidate,chunk,checkpoint)
+            yield frames['canonical']
+
+    @contextmanager
+    def _quality_key_index(self, budgets):
+        """Bounded SQLite TEMP B-tree, never a whole-stream Python key set."""
+        with self._connection(budgets) as conn:
+            pages=max(1,budgets.max_index_bytes//conn.execute('PRAGMA page_size').fetchone()[0])
+            conn.execute(f'PRAGMA temp.max_page_count={pages}')
+            conn.execute('CREATE TEMP TABLE dq_keys(kind TEXT, identity TEXT, occurrences INTEGER, PRIMARY KEY(kind,identity))')
+            unique_count=0
+            def record(kind,identity):
+                nonlocal unique_count
+                row=conn.execute('SELECT occurrences FROM dq_keys WHERE kind=? AND identity=?',(kind,identity)).fetchone()
+                if row:
+                    conn.execute('UPDATE dq_keys SET occurrences=occurrences+1 WHERE kind=? AND identity=?',(kind,identity))
+                    return 2 if row[0]==1 else 1
+                if unique_count>=budgets.max_unique_keys:
+                    raise StagingError('dataset quality key budget exceeded')
+                conn.execute('INSERT INTO dq_keys VALUES (?,?,1)',(kind,identity))
+                unique_count+=1
+                return 0
+            yield record
+
+    def _publication(self, reference, budgets):
+        with self._connection(budgets) as conn:
+            row=conn.execute('SELECT admission,digest FROM publications WHERE version=? AND attempt=?',
+                             (reference.version_id,str(reference.attempt_id))).fetchone()
+            if row is None:return None
+            if len(row[0].encode()) > budgets.max_metadata_bytes or hashlib.sha256(row[0].encode()).hexdigest()!=row[1]:
+                raise StagingError('publication evidence integrity failed')
+            return row[0]
+
+    def _publish(self, candidate, admission, owner, checkpoint):
+        from src.providers.dataset_store_provider import _validate_finalization_owner
+        _validate_finalization_owner(owner,self)
+        if type(admission) is not str or len(admission.encode())>candidate.budgets.max_metadata_bytes:
+            raise StagingError('invalid bounded admission evidence')
+        _provenance(json.loads(admission),candidate.budgets)
+        digest=hashlib.sha256(admission.encode()).hexdigest()
+        fresh=self._candidate(candidate.reference,candidate.budgets)
+        if fresh.state!='sealed':raise StagingError('invalid publication state transition')
+        fresh.mapping_json=candidate.mapping_json
+        for _ in self._verified_batches(fresh,checkpoint):pass
+        owner._claim_publication(candidate.reference,digest)
+        checkpoint()
+        with self._connection(candidate.budgets) as conn:
+            row=conn.execute('SELECT state,manifest FROM attempts WHERE id=?',(str(candidate.id),)).fetchone()
+            if row is None or row[0]!='sealed' or json.loads(row[1]).get('version_id')!=candidate.reference.version_id:
+                raise StagingError('invalid publication state transition')
+            if conn.execute('SELECT 1 FROM publications WHERE version=?',(candidate.reference.version_id,)).fetchone():
+                raise StagingError('immutable publication already exists')
+            checkpoint()
+            conn.execute('INSERT INTO publications VALUES (?,?,?,?)',(candidate.reference.version_id,str(candidate.id),admission,digest))
+            conn.execute("UPDATE attempts SET state='finalized' WHERE id=? AND state='sealed'",(str(candidate.id),))
+        return candidate.reference
+
+    def _reject(self, reference, budgets, owner):
+        from src.providers.dataset_store_provider import _validate_finalization_owner
+        _validate_finalization_owner(owner,self)
+        owner._claim_rejection(reference)
+        with self._connection(budgets) as conn:
+            row=conn.execute('SELECT state,manifest FROM attempts WHERE id=?',(str(reference.attempt_id),)).fetchone()
+            if row is None or row[0]!='sealed':return
+            # Only a matching capture reference may change a candidate's status.
+            data=json.loads(row[1])
+            if data.get('version_id')!=reference.version_id or data.get('organization_id')!=str(reference.organization_id) or data.get('dataset_id')!=str(reference.dataset_id):
+                raise StagingError('rejection scope mismatch')
+            conn.execute("UPDATE attempts SET state='rejected' WHERE id=? AND state='sealed'",(str(reference.attempt_id),))
+
+    @contextmanager
+    def _read_snapshot(self, candidate, checkpoint):
+        """Verify ALL chunks before visibility; copy bounded canonical bytes privately.
+
+        Original files may be altered after verification without changing this
+        consumer's snapshot. One reader at a time shares the writer lock. Abrupt
+        process death can leave a quota-consuming private UUID snapshot directory;
+        retention/rotation remains an explicit operational responsibility.
+        """
+        directory=self.root/str(uuid4());directory.mkdir(mode=0o700)
+        paths=[];total=0
+        try:
+            existing=self._disk_totals()[1]
+            if existing+candidate.manifest.canonical_bytes > 2*candidate.budgets.max_canonical_bytes:
+                raise StagingError('retained read snapshot budget exhausted')
+            for chunk in candidate.chunks:
+                frames,payload=self._verified_chunk(candidate,chunk,checkpoint)
+                total+=len(payload)
+                if total>candidate.budgets.max_canonical_bytes:raise StagingError('read snapshot budget exceeded')
+                path=directory/f'{chunk[0]}-canonical.parquet'
+                fd=os.open(path,os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,0o600)
+                with os.fdopen(fd,'wb') as stream:
+                    stream.write(payload);stream.flush();os.fsync(stream.fileno())
+                path.chmod(0o400);paths.append(path)
+            checkpoint()
+            def batches():
+                for path in paths:
+                    checkpoint()
+                    # Only this repository-owned snapshot, never an external path.
+                    with open(path,'rb') as stream:body=stream.read(candidate.budgets.max_chunk_bytes+1)
+                    yield _frame(pq.read_table(pa.BufferReader(body)))
+            yield batches
+        finally:
+            # Delete only the just-created private snapshot, never dataset chunks.
+            for path in paths:
+                path.unlink(missing_ok=True)
+            # An unregistered partial file on failure is still repository-owned.
+            for path in directory.iterdir():
+                if path.is_file() and not path.is_symlink():path.unlink()
+            directory.rmdir()

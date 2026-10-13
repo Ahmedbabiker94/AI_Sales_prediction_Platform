@@ -1,6 +1,7 @@
 """Private storage seam; underscore operations are trusted ingestion internals.
 
-No public seal, dataset publication or training-read operation is provided.
+Staging has no public completion assertion. R-03C adds owner-checked atomic
+publication internals; authorized read access is a separate provider boundary.
 Authorization is owned by the integration service, not stored identifiers.
 Completion is claimed once from the registered lifecycle owner; no receipt or
 reusable key is issued. Services, repositories and injected collaborators are
@@ -29,6 +30,30 @@ class DatasetStoreProvider(ABC):
     @abstractmethod
     def _release(self, attempt): ...
 
+    @abstractmethod
+    def _publication_session(self, budgets): ...
+
+    @abstractmethod
+    def _candidate(self, reference, budgets): ...
+
+    @abstractmethod
+    def _verified_batches(self, candidate, checkpoint): ...
+
+    @abstractmethod
+    def _quality_key_index(self, budgets): ...
+
+    @abstractmethod
+    def _publication(self, reference, budgets): ...
+
+    @abstractmethod
+    def _publish(self, candidate, admission, owner, checkpoint): ...
+
+    @abstractmethod
+    def _reject(self, reference, budgets, owner): ...
+
+    @abstractmethod
+    def _read_snapshot(self, candidate, checkpoint): ...
+
 
 # The trusted service registers its concrete lifecycle implementation at import.
 # This avoids a repository -> service import and issues no caller-mintable proof.
@@ -38,3 +63,11 @@ _lifecycle_owner_type = None
 def _validate_lifecycle_owner(owner, store):
     if _lifecycle_owner_type is None or type(owner) is not _lifecycle_owner_type or owner.store is not store:
         raise StagingError('registered ingestion lifecycle owner required')
+
+
+_finalization_owner_type = None
+
+
+def _validate_finalization_owner(owner, store):
+    if _finalization_owner_type is None or type(owner) is not _finalization_owner_type or owner.store is not store:
+        raise StagingError('registered finalization lifecycle owner required')
