@@ -7,6 +7,7 @@ dimensions; this module neither creates nor admits a canonical dataset.
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from fractions import Fraction
 import hashlib
 import math
 from uuid import UUID
@@ -20,6 +21,7 @@ from src.data.contracts.dataset import operational_json, _opaque
 from src.data.contracts.versioning import ContractVersion
 
 EXECUTOR_VERSION = "1.0.0"
+POLICY_EXECUTOR_VERSION = "1.1.0"
 _STRUCTURAL = ("organization_id", "series_id", "metric", "unit", "currency", "frequency")
 _PERIODS = ("period_start", "period_end")
 _DTYPES = {"float64", "int64", "int32", "int16", "int8", "bool"}
@@ -80,7 +82,28 @@ def _missing(value):
     return value is None or value is pd.NA or value is pd.NaT or (type(value) in (float, np.float64, np.float32) and np.isnan(value))
 
 
-def _number(value):
+def _number(value, policy=None):
+    if policy is not None and policy.mode == "BOUNDED_FLOAT64":
+        if type(value) is Decimal:
+            if (not value.is_finite() or len(value.as_tuple().digits) > 4096
+                    or abs(value.as_tuple().exponent) > 10000):
+                raise FeatureExecutionError("unsupported numeric input")
+            original = Fraction(value)
+        elif type(value) in _NUMERIC:
+            if type(value) in (float, np.float16, np.float32, np.float64):
+                if not math.isfinite(float(value)): raise FeatureExecutionError("nonfinite numeric input")
+                original = Fraction(float(value))
+            else: original = Fraction(int(value))
+        else:
+            raise FeatureExecutionError("unsupported numeric input")
+        try: result = float(value)
+        except (ValueError, OverflowError): raise FeatureExecutionError("unsupported numeric magnitude") from None
+        if not math.isfinite(result): raise FeatureExecutionError("nonfinite numeric input")
+        if result == 0 and original != 0: raise FeatureExecutionError("numeric underflow rejected")
+        error = abs(Fraction.from_float(result) - original)
+        tolerance = Fraction(policy.absolute_tolerance) + Fraction(policy.relative_tolerance) * abs(original)
+        if error > tolerance: raise FeatureExecutionError("numeric conversion tolerance exceeded")
+        return result
     if type(value) is Decimal:
         if not value.is_finite():
             raise FeatureExecutionError("nonfinite numeric input")
@@ -121,8 +144,16 @@ class CanonicalFeaturePipeline:
         except Exception:
             raise FeatureExecutionError("unsupported executable feature configuration") from None
         self.rules = self.configuration.execution
+        self.executor_version = POLICY_EXECUTOR_VERSION if self.rules.numeric_conversion == "versioned_float64" else EXECUTOR_VERSION
         self.temporal = self.rules.temporal
         self.step = 1 if self.temporal.frequency.value == "daily" else 7
+
+    def convert_numeric(self, value, field="value"):
+        policy = None
+        if self.rules.numeric_conversion == "versioned_float64":
+            policy = next((p for p in self.rules.numeric_policies if p.field == field), None)
+            if policy is None: raise FeatureExecutionError("undeclared numeric conversion field")
+        return _number(value, policy)
 
     def _validate_configuration(self):
         c = self.configuration; b = self.budgets; r = c.execution
@@ -230,7 +261,7 @@ class CanonicalFeaturePipeline:
                 if end != self._advance(start, 1): raise FeatureExecutionError("invalid canonical period bounds")
                 if not predictions and available < end: raise FeatureExecutionError("actual value cannot precede its completed period")
                 row = {**row, "period_start":start, "period_end":end, "available_at":available}
-                _number(row["value"])
+                self.convert_numeric(row["value"])
                 key += (start,)
             if key in seen: raise FeatureExecutionError("duplicate scoped feature records")
             seen.add(key); result.append(row)
@@ -273,7 +304,7 @@ class CanonicalFeaturePipeline:
                     if len(values) > self.budgets.max_categories: raise FeatureExecutionError("category budget exceeded")
             vocabulary[rule.field] = sorted(values)
         try:
-            state = FeatureState(executor_version=EXECUTOR_VERSION, configuration_id=self.configuration.configuration_id,
+            state = FeatureState(executor_version=self.executor_version, configuration_id=self.configuration.configuration_id,
                 configuration_version=self.configuration.version, configuration_digest=self.digest,
                 training_schema_digest=self._schema(training_observations), training_partition_reference=partition_reference,
                 training_cutoff=cutoff.to_pydatetime(), organization_ids=tuple(sorted({r["organization_id"] for r in rows}, key=str)),
@@ -301,7 +332,7 @@ class CanonicalFeaturePipeline:
         except Exception: raise FeatureExecutionError("invalid fitted feature state") from None
         if len(operational_json(state.model_dump(mode="json")).encode()) > self.budgets.max_state_bytes:
             raise FeatureExecutionError("fitted state budget exceeded")
-        if (state.executor_version != EXECUTOR_VERSION or state.configuration_id != self.configuration.configuration_id
+        if (state.executor_version != self.executor_version or state.configuration_id != self.configuration.configuration_id
                 or state.configuration_version != self.configuration.version or state.configuration_digest != self.digest
                 or set(state.vocabularies) != {r.field for r in self.rules.categories}):
             raise FeatureExecutionError("fitted state binding mismatch")
@@ -349,7 +380,10 @@ class CanonicalFeaturePipeline:
             if len(scopes) > self.budgets.max_series: raise FeatureExecutionError("exogenous series budget exceeded")
             if not _missing(row["value"]):
                 if row["field"] in self.configuration.category_encoding: self._text(row["value"])
-                elif type(row["value"]) not in (bool,np.bool_): _number(row["value"])
+                elif type(row["value"]) not in (bool,np.bool_): self.convert_numeric(row["value"],row["field"])
+            rule = next(r for r in self.rules.exogenous if r.field == row["field"])
+            if rule.measurement is not None and (row.get("unit") != rule.measurement.unit or row.get("currency") != rule.measurement.currency):
+                raise FeatureExecutionError("exogenous measurement scope mismatch")
             start = self._time(row["period_start"]); self._aligned(start)
             if self._time(row["period_end"]) != self._advance(start, 1): raise FeatureExecutionError("exogenous period mismatch")
             row = {**row, "period_start":start, "period_end":self._advance(start, 1), "available_at":self._time(row["available_at"])}
@@ -374,7 +408,7 @@ class CanonicalFeaturePipeline:
         else:
             if categorical: value = self._text(row["value"])
             elif type(row["value"]) in (bool,np.bool_): value = bool(row["value"])
-            else: value = _number(row["value"])
+            else: value = self.convert_numeric(row["value"],rule.field)
         if rule.availability == "external_forecast":
             try:
                 reference = row["evidence_reference"]; _opaque(reference)
@@ -462,7 +496,7 @@ class CanonicalFeaturePipeline:
         result = []; identities = []
         for context in sorted(contexts, key=lambda r:(str(r["organization_id"]),str(r["series_id"]))):
             key = (context["organization_id"],context["series_id"])
-            history = {r["period_start"]:_number(r["value"]) for r in rows
+            history = {r["period_start"]:self.convert_numeric(r["value"]) for r in rows
                        if (r["organization_id"],r["series_id"])==key and r["period_end"]<=origin and r["available_at"]<=origin}
             if len(history) > self.budgets.max_history_periods: raise FeatureExecutionError("history budget exceeded")
             if history and self.temporal.gap_policy == "reject":
@@ -470,7 +504,7 @@ class CanonicalFeaturePipeline:
                 days = (origin.date()-first.date()).days
                 if days//self.step > self.budgets.max_history_periods or days % self.step or len(history) != days//self.step:
                     raise FeatureExecutionError("missing configured history periods")
-            recursive = {r["period_start"]:_number(r["value"]) for r in predictions if (r["organization_id"],r["series_id"])==key}
+            recursive = {r["period_start"]:self.convert_numeric(r["value"]) for r in predictions if (r["organization_id"],r["series_id"])==key}
             for horizon in range(forecast.forecast_horizon):
                 target = self._advance(origin,horizon)
                 if horizon:

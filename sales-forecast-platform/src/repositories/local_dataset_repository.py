@@ -559,7 +559,12 @@ class LocalDatasetRepository(DatasetStoreProvider):
             expected = CanonicalMapper(mapping).map_batch(raw)
             if expected.dataset.model_dump(mode='json') != dataset.model_dump(mode='json'):
                 raise StagingError('staged canonical lineage mismatch')
-            _verify_original(expected.records, frames['canonical'], attempt.budgets)
+            # Field mappings are a dictionary, not an ordered feature schema.
+            # Canonical admission JSON may reorder its auxiliary mapping keys;
+            # physical column order remains bound by the stored chunk checksum.
+            if set(expected.records.columns) != set(frames['canonical'].columns):
+                raise StagingError('staged canonical field mismatch')
+            _verify_original(expected.records.loc[:,frames['canonical'].columns], frames['canonical'], attempt.budgets)
         except Exception:
             raise StagingError('staged lineage envelope validation failed') from None
 

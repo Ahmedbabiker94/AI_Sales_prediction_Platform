@@ -1,5 +1,6 @@
 """Feature declarations and immutable fitted state; no admission or registry."""
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 from typing import Literal
 
@@ -64,6 +65,38 @@ class CategoryFeatureRule(ContractModel):
         return self
 
 
+class NumericConversionPolicy(ContractModel):
+    """A conversion declaration, never business authorization or units conversion."""
+    model_config = ConfigDict(frozen=True, revalidate_instances="always")
+
+    version: Literal["1.0"] = "1.0"
+    field: str = Field(min_length=1)
+    measurement: _DeclaredMeasurement
+    mode: Literal["STRICT_EXACT", "BOUNDED_FLOAT64"] = "STRICT_EXACT"
+    absolute_tolerance: Decimal = Decimal(0)
+    relative_tolerance: Decimal = Decimal(0)
+    rounding: Literal["ieee754_nearest_even"] = "ieee754_nearest_even"
+    underflow: Literal["reject"] = "reject"
+
+    @field_validator("absolute_tolerance", "relative_tolerance", mode="before")
+    @classmethod
+    def explicit_decimal_tolerance(cls, value):
+        if type(value) not in (Decimal, str, int):
+            raise ValueError("tolerances require exact decimal declarations")
+        return value
+
+    @model_validator(mode="after")
+    def valid_conversion(self):
+        _nonblank(self.field)
+        for value in (self.absolute_tolerance, self.relative_tolerance):
+            if (not value.is_finite() or value < 0 or len(value.as_tuple().digits) > 128
+                    or abs(value.as_tuple().exponent) > 1000):
+                raise ValueError("invalid bounded conversion tolerance")
+        if self.mode == "STRICT_EXACT" and (self.absolute_tolerance or self.relative_tolerance):
+            raise ValueError("strict conversion cannot declare error tolerance")
+        return self
+
+
 class ExogenousFeatureRule(ContractModel):
     model_config = ConfigDict(frozen=True, revalidate_instances="always")
 
@@ -72,6 +105,9 @@ class ExogenousFeatureRule(ContractModel):
     offset: StrictInt | None = None
     missing: Literal["reject", "zero"]
     substitute_reference: str | None = None
+    measurement: _DeclaredMeasurement | None = Field(default=None, exclude_if=lambda v: v is None)
+    availability_field: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    evidence_field: str | None = Field(default=None, exclude_if=lambda v: v is None)
 
     @model_validator(mode="after")
     def explicit_availability(self):
@@ -86,6 +122,9 @@ class ExogenousFeatureRule(ContractModel):
                 raise ValueError("substitution requires a documented configuration reference")
         elif self.substitute_reference is not None:
             raise ValueError("unexpected substitution reference")
+        for field in (self.availability_field, self.evidence_field):
+            if field is not None:
+                _nonblank(field)
         return self
 
 
@@ -103,7 +142,9 @@ class FeatureExecutionRules(ContractModel):
     historical_value_availability: Literal["available_at"]
     categories: tuple[CategoryFeatureRule, ...] = ()
     exogenous: tuple[ExogenousFeatureRule, ...] = ()
-    numeric_conversion: Literal["lossless_float64"]
+    numeric_conversion: Literal["lossless_float64", "versioned_float64"]
+    # Omit absent additions to preserve the original R-04B strict digests.
+    numeric_policies: tuple[NumericConversionPolicy, ...] = Field(default=(), exclude_if=lambda v: not v)
 
     @field_validator("measurement", mode="before")
     @classmethod
@@ -123,6 +164,22 @@ class FeatureExecutionRules(ContractModel):
         categories = tuple(r.field for r in self.categories)
         if len(categories) != len(set(categories)) or not set(categories) <= set(fields):
             raise ValueError("categories must reference unique configured input roles")
+        if self.numeric_conversion == "lossless_float64":
+            if self.numeric_policies:
+                raise ValueError("legacy exact conversion cannot contain policy overrides")
+        else:
+            numeric = {"value": self.measurement}
+            for rule in self.exogenous:
+                if rule.field not in categories:
+                    if rule.measurement is None:
+                        raise ValueError("numeric covariates require explicit measurement")
+                    numeric[rule.field] = rule.measurement
+            policies = {p.field: p for p in self.numeric_policies}
+            if len(policies) != len(self.numeric_policies) or set(policies) != set(numeric):
+                raise ValueError("each numeric role requires exactly one explicit policy")
+            if any(p.measurement != numeric[p.field] or p.measurement.metric != self.measurement.metric
+                   for p in self.numeric_policies):
+                raise ValueError("numeric policy measurement scope mismatch")
         return self
 
 
@@ -217,7 +274,7 @@ class FeatureState(ContractModel):
     """Fit provenance and vocabulary, not authenticated training permission."""
     model_config = ConfigDict(frozen=True, revalidate_instances="always")
 
-    executor_version: Literal["1.0.0"]
+    executor_version: Literal["1.0.0", "1.1.0"]
     configuration_id: str = Field(min_length=1)
     configuration_version: str
     configuration_digest: str = Field(pattern=r"^[0-9a-f]{64}$")

@@ -9,7 +9,7 @@ from src.data.contracts.common import ContractModel
 from src.data.contracts.features import FeatureConfiguration, FeatureState
 from src.data.contracts.forecast import ForecastConfig
 from src.data.contracts.dataset import operational_json
-from src.features.canonical_feature_pipeline import CanonicalFeaturePipeline, configuration_digest, EXECUTOR_VERSION
+from src.features.canonical_feature_pipeline import CanonicalFeaturePipeline, configuration_digest
 
 
 class FeatureSchemaMismatch(ValueError):
@@ -36,9 +36,11 @@ class FeatureSchemaCompatibility(ContractModel):
 
     @model_validator(mode="after")
     def executable_binding(self):
-        if self.version != "1.1" or self.executor_version != EXECUTOR_VERSION:
+        if self.version != "1.1":
             raise ValueError("unsupported compatibility version")
         pipeline = CanonicalFeaturePipeline(self.configuration)
+        if self.executor_version != pipeline.executor_version:
+            raise ValueError("unsupported executor binding")
         if self.forecast_horizon > pipeline.budgets.max_horizon:
             raise ValueError("unsupported compatibility horizon")
         if configuration_digest(self.configuration) != self.configuration_digest:
@@ -70,7 +72,7 @@ def describe_feature_schema(configuration, state, *, forecast_config, forecast_o
         pipeline = CanonicalFeaturePipeline(configuration)
         state = pipeline.validate_fitted_state(state)
         forecast, _ = _forecast_request(pipeline, state, forecast_config, forecast_origin)
-        return FeatureSchemaCompatibility(version="1.1", executor_version=EXECUTOR_VERSION,
+        return FeatureSchemaCompatibility(version="1.1", executor_version=pipeline.executor_version,
             configuration=pipeline.configuration, configuration_digest=pipeline.digest,
             fitted_state_id=state.state_id, training_schema_digest=state.training_schema_digest,
             forecast_horizon=forecast.forecast_horizon)

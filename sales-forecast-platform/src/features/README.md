@@ -26,7 +26,8 @@ and own the reader lifecycle. This module does not implement that handoff.
 
 Existing R-01 declarations deserialize unchanged with `execution=None`. They
 cannot execute implicitly. New execution requires configuration major version 2,
-explicit FeatureExecutionRules version 1.0, and executor version 1.0.0.
+explicit FeatureExecutionRules version 1.0. The default executor is 1.0.0;
+explicit versioned numeric policies select executor 1.1.0.
 
 Supported calendars are Gregorian daily or weekly, with an IANA timezone and an
 explicit weekly weekday anchor. Periods are half-open local-midnight intervals:
@@ -80,7 +81,7 @@ sign-based returns classification, silent currency inference or anomaly repair.
 
 ## Precision, compatibility and budgets
 
-Numerics must be losslessly representable as float64; otherwise reject. This
+Default numerics must be losslessly representable as float64; otherwise reject. This
 includes rejecting Decimal('0.1') and non-representable large integers rather
 than silently rounding them. Exact supported signed/zero inputs are unchanged;
 rolling calculations use explicitly versioned float64 arithmetic. No target
@@ -114,3 +115,57 @@ not distributed streaming or a hard process RSS/CPU cap. Future supervised train
 must enforce deployment limits and cancellation. Engine computations have no
 POSIX locking dependency; dataset staging remains Linux/WSL-only and must not use
 OneDrive/synchronized roots. Native Windows engine behavior has not been tested.
+
+## Authorized single-origin preparation (R-04C1)
+
+`CanonicalTrainingPreparationService` accepts only an opaque FINALIZED reference
+through the trusted canonical provider. It has no CSV fallback, model loading,
+model fitting or active entry-point integration. `open_read` exposes detached,
+version-bound mapping and SeriesDefinition metadata after full integrity and
+admission verification. Existing `read_batches` consumers retain their generator
+interface. Normal read-session exit requires complete consumption; preparation
+owns iterator closure and releases the snapshot/store lock before transformation.
+Fresh read/admission authorization is checked after consumption and before return.
+
+Preparation supports one historical origin and **horizon one** only. It fits
+category state on the explicit past partition ending no later than that origin,
+binds its partition reference to the dataset/admission/configuration/cutoff/series,
+and separates an actual, completed target-period label from feature history.
+Incomplete labels reject. Multi-origin backtesting and recursive supervised
+training remain R-04C2 prerequisites; future actuals never supply predictions.
+
+Source mappings must preserve `available_at` and `availability_reference` auxiliary
+fields. Exogenous rules must explicitly declare their availability/evidence field
+names. A trusted verifier independently validates the scoped claims; timestamps,
+hashes and self-declared references alone are not authority. External forecast
+approval receives both dataset preparation context and the scoped feature request.
+Availability and external approvals are checked again before result handoff.
+These injected verifiers and authorization functions are trusted application code,
+not a Python security sandbox or implemented tenant authentication system.
+
+The default numeric mode remains `lossless_float64` / STRICT_EXACT, preserving
+original strict descriptor serialization and executor 1.0.0 identity. Explicit
+`versioned_float64` configurations use executor 1.1.0 and require one immutable
+NumericConversionPolicy for the target and each numeric covariate. Modes are
+STRICT_EXACT and BOUNDED_FLOAT64. Covariates require declared measurement scope;
+identifiers/categories cannot receive these policies. Bounded conversion uses
+exact rational error comparison against the original Decimal/integer:
+`error <= absolute_tolerance + relative_tolerance * abs(original)`.
+Finite IEEE nearest-even conversion is allowed only within the configured bound;
+overflow, nonfinite values and nonzero underflow-to-zero reject. No units conversion,
+clipping, sign reinterpretation or fixed-scale conversion is implemented.
+
+No universal or production tolerance is approved. The trusted preparation
+authorizer must approve the exact version/metric/fields/units/configuration digest
+and tolerances. Test tolerances are explicitly synthetic. Training and inference
+use the same conversion in the shared executor; the whole policy contributes to
+configuration/state/schema identity. Original stored Decimal values remain intact.
+
+Results store immutable tuples and serialized contracts; matrix/label accessors
+produce new detached frames. The preparation ID binds version, admission, state,
+schema, output values and original labels. Constructing a result is not permission
+to train. Preparation bounds total decoded bytes (default 16 MiB), input rows,
+series, availability/covariate entries, outputs and elapsed checkpoints. Assembly
+is bounded in memory, with temporary copies; these are not hard RSS/CPU caps or
+asynchronous process cancellation. Linux/WSL unsynchronized storage restrictions,
+snapshot retention and production authorization deployment requirements remain.
