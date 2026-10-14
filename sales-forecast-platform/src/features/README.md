@@ -143,6 +143,89 @@ Availability and external approvals are checked again before result handoff.
 These injected verifiers and authorization functions are trusted application code,
 not a Python security sandbox or implemented tenant authentication system.
 
+## Temporal supervised preparation (R-04C2-A)
+
+`CanonicalTrainingPreparationService.prepare_temporal(plan, configuration)` is an
+additive, model-independent **horizon-one** API. It accepts a versioned immutable
+`TemporalPreparationPlan` with explicit `TemporalFold` declarations and exact
+FINALIZED dataset/version, manifest/admission/mapping/policy/series-definition
+bindings. These declarations do not establish authorization. Trusted callbacks
+receive the complete plan and verified organization context; every dataset must
+already be admitted for the exact `production_training` purpose. Diagnostic or
+evaluation permissions are not substituted for that purpose.
+
+Only expanding history, `reject_overlap`, and zero embargo execute. Rolling,
+purging, and nonzero embargo declarations reject; no split option is ignored.
+Higher horizons can be structurally declared with `capability="planning_only"`,
+but do not execute or imply verified model capability. R-04C2-B owns predictor-
+dependent recursive rollout and any higher-horizon feature/label evaluation.
+
+Each fold explicitly declares ordered training/validation/test origins, the
+calibration interval `[calibration_start, C)`, model-fit cutoff M and assessment
+cutoff E. C must precede or equal the first training origin; M must follow the
+training origins and must not follow the first held-out origin. Target periods
+begin at the forecast origin O, and H1 labels describe `[O, advance(O, 1))`.
+Existing daily/weekly Gregorian local calendar arithmetic controls period bounds,
+weekday anchors and DST. No fixed-duration UTC interval approximation is used.
+Plan timestamps support microsecond precision; finer precision and numeric epoch
+declarations reject rather than silently becoming aligned origins. Cutoff order
+is checked by UTC instants, including ambiguous DST hours, without rewriting the
+declared timestamps. Stored canonical timestamp precision remains unchanged.
+
+Each fold and organization fits **one frozen categorical state** on its complete
+contiguous calibration prefix. All prefix targets and every time-varying category
+must have trusted availability no later than C. Missing or unavailable prefix
+records reject; they are not silently dropped. Static dimensions come exclusively
+from verified SeriesDefinition metadata. State binds the exact dataset, plan/fold,
+prefix, C, series and configuration/numeric policy. Later categories use the
+configured unknown-category rule; validation/test never refit state. Previously
+held-out origins may become training origins in a later fold only under its new
+cutoffs; held-out event origins themselves cannot be duplicated across folds.
+
+Features use only historical actuals completed and verified available by O.
+Training labels may arrive after O but must be completed and available by M;
+held-out labels must satisfy E. M/E cannot assert future availability beyond the
+trusted provider clock. A later origin may use an earlier actual only once its
+release is verified. An unavailable historical interval still rejects according
+to the existing engine's gap policy. Label eligibility never supplies future
+actual targets as predictions. Trusted verifiers must attest the actual stored
+value/revision and field release, not merely a source-period timestamp.
+
+One provider read per organization/version/request is fully consumed and closed
+before transformation. Dataset locks and private reader snapshots are released.
+The detached capture is reused only inside that request, never as an authorization
+cache. Fresh publication/read and preparation approvals run after reading, at
+fold boundaries, per origin, and before final handoff. Field/external evidence is
+rechecked. A final cancellation/deadline checkpoint follows the final callbacks.
+Final availability and preparation approvals retain every original fold/origin
+context and target-period bound; a global approval cannot replace them. Calibration
+category evidence is independently rechecked at C, and external forecasts retain
+their original scoped request identities.
+Calibration, external, global and read callbacks finish before the terminal
+per-origin checks; only the cancellation/deadline checkpoint and return follow.
+Any late fold, callback, integrity, cleanup or cancellation failure returns no
+temporal result and does not modify FINALIZED publication state.
+
+Results retain original labels and return detached matrix/label copies. Example
+identity is `(fold, organization, series, metric, origin, horizon_step, target)`;
+the same target in a different fold is a distinct forecast event. Result groups
+bind partition, numeric configuration, state and schema IDs and dataset evidence.
+The aggregate matrix is a grouped view: different fold/organization states must
+not be silently treated as one pooled model-fitting contract.
+Rows follow declared fold order, organization order, partition/origin order and
+then the existing executor's series order; the index is an identity, not a claim
+of global lexical sorting.
+
+Request-wide limits cover organizations/versions, series, folds, origin executions,
+captured rows/decoded bytes, output cells, serialized fitted states and measured
+frame-copy/assembly work. Per-execution FeatureBudgets remain enforced. Work-cell
+and assembly-byte counters estimate declared frame processing; they are not hard
+RSS/CPU limits, nor a complete accounting of Python/pandas overhead. Returning
+copies also consumes caller memory. Linux/WSL on an unsynchronized approved local
+filesystem remains the storage environment. Native Windows/OneDrive execution,
+hard process controls, real authentication and production tolerance approval
+remain deployment responsibilities. No model, registry or runtime cutover occurs.
+
 The default numeric mode remains `lossless_float64` / STRICT_EXACT, preserving
 original strict descriptor serialization and executor 1.0.0 identity. Explicit
 `versioned_float64` configurations use executor 1.1.0 and require one immutable
