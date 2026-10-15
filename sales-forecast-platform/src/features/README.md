@@ -436,3 +436,57 @@ limits remain deployment responsibilities. Trusted Python callbacks are not a
 security sandbox. The synthetic fault test substitutes a detached value after a
 legitimate complete verified read; it demonstrates captured-value attestation,
 not a bypass of physical Parquet/manifest integrity or an external client exploit.
+
+### C0 operator-owned baseline-ready evaluation composition
+
+`CanonicalBaselineEvaluationService` is constructed **only by trusted application
+bootstrap**. This is an explicit trust assumption, not Python authentication or a
+sandbox. Bootstrap supplies a canonical provider, a fixed synthetic producer,
+validated capabilities/configuration, read/feature budgets, authorization hooks,
+and three `BaselineAuthorityBinding` declarations: release availability v1,
+captured history value v1, and scoring-label revision at E v1. Binding IDs/versions
+are operator audit references, never proof that an authority is authentic. Each
+binding fixes the same exact approved dataset/version/manifest/admission/mapping/
+policy/series scopes and `offline_forecast_evaluation` purpose. Missing authorities,
+wrong protocols, contradictory scopes or incompatible representations reject at
+construction, before reads or prediction. Expected values/revisions must come from
+independent, operator-approved source/publication evidence.
+
+The supported **untrusted request** interface is only:
+
+```python
+service.evaluate(scoring_plan, producer_plan, configuration, cancelled=cancelled)
+```
+
+Requests cannot supply a provider, verifier, wrapper, authority selector, registry,
+rollout/evaluator, or trusted flag. Requests are fully revalidated and compared
+with the operator's immutable scope/configuration/capability snapshots before
+capture. Rollout/scoring request budgets may tighten operator-owned ceilings but
+cannot raise them; read and feature budgets also remain bootstrap-owned. Unknown
+attributes added to top-level request declarations by unchecked `model_copy`
+reject. Authorities
+are retained from bootstrap; modifying another legacy service or the bootstrap
+argument container does not reconfigure the owned instances. An arbitrary caller
+constructing their own service at Python bootstrap is not an authenticated client
+of this service. Malicious application operators and arbitrary in-process Python
+remain outside this boundary; deliberately installing an always-True authority
+can still lie and is explicitly not claimed to be detected cryptographically.
+
+C0 composes the real B1 and B2a classes and mandates
+`ValueAttestedAvailabilityVerifier` for historical targets. It adds no reader,
+feature arithmetic, prediction-event import or scoring pipeline. B1 closes the
+single owned history capture before features/prediction. B2a finishes prediction
+before its separately authorized scoring-label capture. Both retain their existing
+scoped original-claim checks, purpose/admission binding, cancellation/deadline
+checks, sanitized exceptions and all-or-nothing results. C0 returns directly from
+B2a without adding callbacks after its terminal verification. Legacy B1/B2a APIs
+are unchanged and remain release-only when their operator selects that old mode;
+that mode is never selected by a C0 request.
+
+There are **no baseline algorithms, baseline feature factory, grouping changes or
+multi-producer comparison** in C0. Tests use a fixed trusted dummy predictor only;
+they prove composition readiness, not last-observation/seasonal-naive correctness.
+B2b owns those algorithms and their independent acceptance. Authentic external
+revision integration, configuration/credential protection, process isolation,
+atomic/concurrent authorization semantics and hard CPU/RSS limits remain deployment
+responsibilities. No active runtime entry point is wired to this service.
