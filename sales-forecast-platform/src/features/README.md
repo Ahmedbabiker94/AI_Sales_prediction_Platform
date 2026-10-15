@@ -252,3 +252,75 @@ series, availability/covariate entries, outputs and elapsed checkpoints. Assembl
 is bounded in memory, with temporary copies; these are not hard RSS/CPU caps or
 asynchronous process cancellation. Linux/WSL unsynchronized storage restrictions,
 snapshot retention and production authorization deployment requirements remain.
+
+## R-04C2-B1: unreviewed model-independent rollout foundation
+
+`ForecastEvaluationPlan` and `PredictorCapabilities` are immutable versioned
+operational declarations. They do not authenticate fitted-model provenance or
+make a Python callback deterministic. The trusted application composition must
+supply a deterministic synthetic predictor and trustworthy availability/revision
+verifiers. Callbacks are ordinary Python code, not a security sandbox.
+
+`DeterministicForecastRolloutService.rollout()` is additive and unwired from
+active training/serving. B1 executes only `recursive_one_step` + `tabular_step`.
+Direct-horizon, sequence, canonical-history and statistical declarations do not
+activate executors. No legacy feature schema is imposed on future model families.
+
+Evaluation requires a separately admitted immutable publication with exact purpose
+`offline_forecast_evaluation`. Purpose vocabulary v1 adds that value alongside
+`production_training`; existing publication evidence is not relabeled. Both use
+the established quality/admission/consistency/integrity engine and trusted scoped
+callbacks. Production training access is not blanket evaluation access, and the
+reverse is also prohibited. B/C consistency policy is not relaxed for evaluation.
+
+For each fold and organization, the service fits one categorical state on the
+complete calibration prefix at C, with each category's own verified release.
+Static dimensions come from verified SeriesDefinitions. Histories are filtered to
+completed observations verified available at the original O. M and E bound complete
+training/held-out target intervals. No labels are retrieved for scoring or passed
+to predictors. Revisions require trustworthy historical evidence; a finalized
+latest-value dataset alone cannot establish point-in-time availability.
+
+Each step recomputes and verifies the complete k-period feature prefix at fixed O,
+using only validated previous predictions in private origin-specific feedback.
+The current-step matrix is independently checked against its keyed request.
+Total rollout H, prefix k, all prefix-schema identities, frozen state,
+configuration and numeric policy are bound separately. Keyed finite float64
+predictions must exactly cover the requested series and current target periods.
+Booleans, implicit integer/Decimal conversions and nonfinite outputs reject.
+Negative and signed-zero outputs remain intact. An explicit capability magnitude
+bound may restrict the finite float64 range. Original canonical values are not
+changed; existing numeric conversion rules apply to detached feature views only.
+
+Prediction events retain exact dataset/version, manifest/admission/mapping/policy,
+plan/fold/scope, original O, target period, predictor and representation identities,
+plus recursive parents for the same series/origin. Generic direct events have no
+invented recursive parents, but direct execution is unsupported. These in-process
+contracts are not a generalized sequence serialization or network protocol.
+Different immutable datasets have different content-bound IDs even if their
+causal feature views happen to be identical.
+
+One bounded verified capture per version is fully consumed and successfully
+closed before feature or predictor work; storage locks are released. Failures
+return no partial result. Final ordering is calibration/external/global/read
+verification, then result binding/assembly, then exact original per-origin
+availability and preparation authorization, then the cancellation/deadline check
+and return. There are no broader callbacks after the terminal scoped phase.
+Sequential scoped checks are not an atomic authorization snapshot: concurrent
+revocation, or a callback deliberately changing another scope after it was checked,
+requires deployment-level policy snapshot/lease semantics. Trusted callbacks must
+not be used to claim stronger freshness than this cooperative boundary provides.
+
+Request-wide budgets cover captured rows/decoded bytes, folds/organizations/series,
+horizons, predictor calls, prediction events, output cells, fitted-state bytes,
+representations, private feedback, assembly estimates and repeated feature-prefix
+work proportional to H(H+1)/2. Per-executor limits remain active. Accounting is not
+a hard RSS/CPU/disk-isolation guarantee. Cancellation is cooperative; elapsed >=
+budget rejects, including changes during terminal callbacks. Storage remains
+Linux/WSL on an approved unsynchronized local filesystem, not Windows/OneDrive.
+
+R-04C2-B2 owns authorized held-out label retrieval, baselines, scoring, overlap
+aggregation and zero-denominator metric policies. Real model adapters/training,
+production tolerance approval, artifact provenance, distributed execution, hard
+process limits and deployment authorization integration remain separate milestones.
+This rebuild requires independent acceptance before adoption.

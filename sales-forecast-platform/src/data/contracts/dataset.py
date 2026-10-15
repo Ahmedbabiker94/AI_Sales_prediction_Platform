@@ -136,6 +136,10 @@ def _opaque(value):
     value.encode('utf-8', errors='strict')
 
 
+# Purpose vocabulary v1: exact publication scope, never a cross-purpose grant.
+PUBLICATION_PURPOSES_V1 = ('production_training', 'offline_forecast_evaluation')
+
+
 @dataclass(frozen=True)
 class DatasetAccessContext:
     reference: StoredDatasetReference
@@ -158,8 +162,8 @@ class DatasetAccessContext:
         ContractVersion.parse(self.mapping_version)
         if not re.fullmatch(r'[0-9a-f]{64}', self.mapping_digest):
             raise ValueError('invalid mapping digest')
-        if self.purpose != 'production_training':
-            raise ValueError('only explicit production_training publication is implemented')
+        if self.purpose not in PUBLICATION_PURPOSES_V1:
+            raise ValueError('unsupported explicit publication purpose')
 
 
 @dataclass(frozen=True)

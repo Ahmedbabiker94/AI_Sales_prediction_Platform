@@ -2,7 +2,7 @@
 
 External verifiers are authenticated application integration boundaries, not
 implemented source snapshot/reconciliation engines. No live source is queried.
-Only production_training publication is implemented; diagnostics remain private.
+Only explicit supported publication purposes are implemented; unadmitted data remains private.
 """
 from datetime import datetime, timezone
 import hashlib
