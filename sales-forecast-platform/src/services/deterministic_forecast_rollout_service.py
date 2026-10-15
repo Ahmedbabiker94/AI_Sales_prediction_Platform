@@ -32,6 +32,19 @@ class RolloutContext(TemporalPreparationContext):
     rollout_compatibility_id: str | None = None
 
 
+@dataclass(frozen=True)
+class _OwnedExecution:
+    """Internal request-owned material, never an externally authenticatable token."""
+    owner: object
+    source: object
+    result: object
+    metadata: tuple
+    calibration: tuple
+    external: tuple
+    origins: tuple
+    usage: tuple
+
+
 def representation_schema_id(configuration):
     return identity(['tabular_step','1.0',configuration.model_dump(mode='json')])
 
@@ -58,17 +71,28 @@ class DeterministicForecastRolloutService:
         if result is not True: raise ForecastRolloutError('forecast rollout is not authorized')
 
     def rollout(self, plan, configuration, *, feature_budgets=None, read_budgets=None, cancelled=lambda:False):
+        return self._execute(plan,configuration,feature_budgets=feature_budgets,read_budgets=read_budgets,cancelled=cancelled)
+
+    def _owned_rollout(self, owner, plan, configuration, **kwargs):
+        # Supported interfaces require an active evaluator-owned request. Private
+        # names and Python object identity are not an adversarial code sandbox.
+        from src.services.canonical_forecast_evaluation_service import _EvaluationOwner
+        if type(owner) is not _EvaluationOwner or not owner.permits(self,plan):
+            raise ForecastRolloutError('active evaluator lifecycle required')
+        return self._execute(plan,configuration,_owner=owner,**kwargs)
+
+    def _execute(self,plan,configuration,*,feature_budgets=None,read_budgets=None,cancelled=lambda:False,_owner=None):
         try:
             if type(plan) is not ForecastEvaluationPlan: raise ValueError()
             plan=ForecastEvaluationPlan.model_validate(plan.model_dump())
             if plan.predictor.strategy!='recursive_one_step' or plan.predictor.representation_kind!='tabular_step':
                 raise ValueError()
             return self._rollout(plan,configuration,feature_budgets or FeatureBudgets(),
-                                 read_budgets or StagingBudgets(),cancelled)
+                                 read_budgets or StagingBudgets(),cancelled,_owner)
         except Exception:
             raise ForecastRolloutError('deterministic forecast rollout failed') from None
 
-    def _rollout(self,p,configuration,fb,rb,cancelled):
+    def _rollout(self,p,configuration,fb,rb,cancelled,_owner=None):
         engine=CanonicalFeaturePipeline(configuration,budgets=fb)
         b=p.budgets;h=p.forecast_horizon;cap=p.predictor;cfg=engine.configuration
         start=self.elapsed_clock();last=start
@@ -257,9 +281,14 @@ class DeterministicForecastRolloutService:
             self._approved(self.authorize,base,'return');self.provider.require_current(meta,budgets=rb)
         if len(origin_checks)!=len(compatibilities):raise ForecastRolloutError('origin verification coverage mismatch')
         result=DeterministicRolloutResult(plan=p,events=tuple(events),compatibilities=tuple(compatibilities))
+        handoff=None
+        if _owner is not None:
+            handoff=_OwnedExecution(_owner,self,result,tuple(c[1] for c in captures),
+                tuple(calibration),tuple(externals),tuple(origin_checks),tuple(sorted(used.items())))
+            _owner._record(handoff)
         # Only exact original origin-scoped callbacks and checkpoint may follow assembly.
         for ctx,claims in origin_checks:
             self._approved(self.verify_availability,ctx,claims)
             self._approved(self.authorize,ctx,'return')
         checkpoint()
-        return result
+        return result if handoff is None else handoff

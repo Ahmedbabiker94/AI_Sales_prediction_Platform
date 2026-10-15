@@ -324,3 +324,73 @@ aggregation and zero-denominator metric policies. Real model adapters/training,
 production tolerance approval, artifact provenance, distributed execution, hard
 process limits and deployment authorization integration remain separate milestones.
 This rebuild requires independent acceptance before adoption.
+
+## R-04C2-B2a: owned held-out scoring (unreviewed foundation)
+
+`CanonicalForecastEvaluationService.evaluate(scoring_plan, producer_plan,
+configuration)` owns one B1 synthetic rollout. It accepts no external events,
+serialized receipts or approval flags. A private active-request owner records the
+actual immutable B1 result before B1's terminal checks; replacement/replay cannot
+start label scoring. The expected full grid is rebuilt from the authorized plan,
+verified series definitions and existing calendar executor. Original calibration,
+external and origin contexts survive the handoff. Private Python names and trusted
+callbacks provide an application composition boundary, **not a sandbox** or fitted
+model authentication.
+
+The explicit versioned scoring plan selects validation/test origins and the same
+immutable `offline_forecast_evaluation` versions. Production-training admission is
+not evaluation admission. Mandatory trusted `authorize_label_use(context, phase)`
+and `verify_label_revision(context, claims)` callbacks have no default approval.
+Read permission alone is insufficient. The revision verifier must independently
+attest the exact captured value identity, source record/lineage, evidence reference,
+version and revision availability at the fold's E; declarations, timestamps and
+checksums alone cannot establish that historical truth. B2a rejects unavailable,
+ambiguous or missing labels, revisions later than E and E later than the trusted
+assessment clock. Production verifier/clock integration remains a deployment
+prerequisite. Cross-version truth reconciliation is unsupported.
+
+B1 finishes before the separately authorized second complete capture. Both capture
+costs count toward aggregate rows/bytes/work limits. Readers close and locks release
+before scoring. There is no predictor invocation after label access. Final ordering
+is original calibration/external checks, global scoring approval and publication
+reauthorization, result assembly/binding, then original scoped history/rollout
+checks and scoped revision/label-use/scoring approvals, followed only by the
+cancellation/deadline checkpoint and return. Any failure returns no partial result.
+Sequential checks are not an atomic authorization lease: concurrent revocation or
+a trusted callback deliberately revoking a previously checked scope requires a
+future policy snapshot/lease boundary. Cancellation is cooperative, not preemption.
+
+The separate scoring arithmetic policy interprets canonical Decimal/integer labels
+exactly and float64 predictions as their exact represented rationals. It bounds
+input digits/exponents, operand/accumulator bits, events, groups and assembly work.
+Immutable outputs preserve N, SAE, SSE, SAA, MAE, MSE and the exact RMSE radicand;
+RMSE is represented as the square root of that radicand, with no hidden decimal
+approximation. WAPE is SAE/SAA, explicitly undefined when SAA=0 (including SAE=0).
+There is no percentage-accuracy metric or change to model-input conversion.
+
+Default groups retain forecast origin and never pool folds, tenants, series,
+horizons, metrics, units or currencies. Combining distinct origins requires an
+explicit trusted approval of the versioned `forecast_event_weighted_v1` policy;
+every unique forecast event remains represented and receives equal event weight.
+No error-based event selection is supported. Pure scoring contracts/arithmetic
+confer neither producer authentication nor permission to access labels.
+
+The two new same-named test modules require pytest `--import-mode=importlib` when
+collected together. Use bytecode/cache suppression. Hard RSS/CPU/disk limits and
+real revision/authorization integration remain deployment responsibilities. B2b
+owns baselines and any broader aggregation/evaluation; B2a introduces no model
+fitting, artifact loading, registry or active pipeline integration.
+
+Reproducible relevant-suite command from `sales-forecast-platform/` (using the
+approved dependency environment's Python):
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 \
+PYTHONPATH="$PWD:$PWD/tests/features:$PWD/tests/data/staging" \
+python -m pytest --import-mode=importlib -p no:cacheprovider \
+  tests/features tests/data/adapters tests/data/contracts \
+  tests/data/processing tests/data/staging tests/training
+```
+
+The two explicit legacy test-directory paths preserve existing sibling-module
+imports while importlib mode distinguishes the two B2a test module filenames.
