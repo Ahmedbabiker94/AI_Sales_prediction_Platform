@@ -394,3 +394,45 @@ python -m pytest --import-mode=importlib -p no:cacheprovider \
 
 The two explicit legacy test-directory paths preserve existing sibling-module
 imports while importlib mode distinguishes the two B2a test module filenames.
+
+### Opt-in authoritative captured-history binding (B2b prerequisite)
+
+Historical target `AvailabilityClaim` now carries an additive, pre-conversion
+`value_identity` and `value_identity_version=captured_history_value_v1`. Identity
+uses exact Decimal (sign, digits, exponent), integer decimal digits or binary64
+bits. Decimal scale, Decimal signed zero, float signed zero and numeric types are
+distinct; Boolean, nonfinite and arbitrary object values reject. No conversion,
+rounding or scoring policy is changed. Existing target claims retain these tuples
+through their original scoped terminal verification; category/exogenous release
+claims keep their existing semantics.
+
+`ValueAttestedAvailabilityVerifier` is an opt-in adapter for the **existing**
+`verify_availability` callback slot. Trusted composition must supply both the
+existing release verifier and `verify_captured_values(context, claims)`. No missing
+verifier or non-True decision has a fallback. The latter receives immutable
+`CapturedHistoryClaim` declarations binding publication/version/manifest/admission,
+source/mapping, tenant/series/metric/measurement, record/lineage/period/field,
+original exact value identity, O, C, plan/fold and release evidence. A None O is
+only an initial capture check, never historical eligibility. Each original scoped
+check runs again at handoff, at the same point in the accepted callback ordering.
+No repository lock is retained and no new late callback phase is added.
+
+The value authority must compare against **independently held publication-bound
+expected values and revision validity at the requested cutoff**. A hash recomputed
+from a changed row, matching timestamps, a caller's identity declaration, or an
+always-True callback is not authoritative evidence. A record with a later revision
+must not be attested as the earlier value merely by retaining its old release
+metadata. Future rows in the full publication are not eligible historical inputs
+until period completion and verified release at O. Their presence in a claim tuple
+does not authorize their use. Authorities must validate exact scope and revisions,
+including calibration use at C, and fail closed for unsupported historical truth.
+
+Legacy B1/B2a callbacks remain accepted within their previous trusted integration
+boundary; they **do not satisfy the value-attested baseline prerequisite**. Future
+baseline composition must explicitly require this stronger protocol and an
+approved independent authority. No baseline is implemented here. Real authority
+integration, policy freshness/atomic leases, concurrent revocation and hard process
+limits remain deployment responsibilities. Trusted Python callbacks are not a
+security sandbox. The synthetic fault test substitutes a detached value after a
+legitimate complete verified read; it demonstrates captured-value attestation,
+not a bypass of physical Parquet/manifest integrity or an external client exploit.

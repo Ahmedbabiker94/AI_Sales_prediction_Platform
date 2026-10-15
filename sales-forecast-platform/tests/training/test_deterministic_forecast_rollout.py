@@ -460,3 +460,200 @@ def test_late_chunk_tampering_blocks_before_predictor(make_rollout):
     chunks[-1].write_bytes(b'corrupt-late-chunk')
     with pytest.raises(ForecastRolloutError):run(b)
     assert not b['calls']
+
+
+# Historical authorities below derive expected values from independent synthetic
+# source truth and publication metadata, never the current request's value/hash.
+from src.services.canonical_training_preparation_service import (
+    ValueAttestedAvailabilityVerifier, historical_value_identity, TrainingPreparationError)
+
+
+def bind_history_authority(b):
+    ledger={};seen=[];revoked=set()
+    for meta in b['metadata']:
+        raw=b['raws'][meta.reference.organization_id.int]
+        with b['provider'].open_read(meta.reference,purpose=meta.purpose) as session:
+            for frame in session.batches():
+                for row in frame.to_dict('records'):
+                    truth=raw.iloc[int(row['source_record_id'])]
+                    definition=next(s for s in meta.series if s.series_id==row['series_id'])
+                    assert definition.dimensions['location']==truth['branch']
+                    value=truth['reported']
+                    # Independently specified canonical identities (not copied
+                    # from an attestation or its hash).
+                    if type(value) is Decimal:
+                        p=value.as_tuple();identity=('decimal',p.sign,tuple(p.digits),p.exponent)
+                    else:
+                        import struct
+                        identity=('float64',struct.pack('>d',float(value)).hex())
+                    ledger[meta.reference.organization_id,row['source_record_id']]=dict(
+                        metadata=meta,series_id=row['series_id'],lineage_id=row['lineage_id'],
+                        period_start=truth['from'],period_end=truth['to'],available_at=truth['released'],
+                        evidence=truth['proof'],value_identity=identity,revision_available=truth['released'])
+    def authority(ctx,claims):
+        import hashlib
+        seen.append((ctx,claims))
+        binding=next((d for d in b['plan'].datasets if d.reference==ctx.metadata.reference),None)
+        if binding is None or ctx.plan_digest!=b['plan'].digest or ctx.series_ids!=binding.series_ids:return False
+        if ctx.fold_id is not None:
+            fold=next((f for f in b['plan'].folds if f.fold_id==ctx.fold_id),None)
+            if (fold is None or ctx.forecast_origin not in fold.origins
+                    or ctx.training_cutoff!=fold.categorical_cutoff):return False
+            step=1 if b['plan'].frequency=='daily' else 7
+            if (ctx.target_period_end is not None and ctx.target_period_end
+                    !=ctx.forecast_origin+pd.DateOffset(days=step*b['plan'].forecast_horizon)):return False
+        for c in claims:
+            a=c.availability;t=ledger.get((c.organization_id,a.source_record_id))
+            if t is None or (c.organization_id,ctx.fold_id,ctx.forecast_origin) in revoked:return False
+            m=t['metadata'];mapping=m.mapping
+            if (c.protocol_version!='captured_history_value_v1' or c.dataset_reference!=m.reference
+                or ctx.metadata!=m or c.manifest_digest!=m.manifest_digest or c.admission_digest!=m.admission_digest
+                or c.mapping_digest!=hashlib.sha256(m.mapping_json.encode()).hexdigest()
+                or c.mapping_id!=mapping.mapping_id or c.mapping_version!=mapping.version
+                or c.source_id!=m.source_id or c.metric!=mapping.target_metric
+                or (c.unit,c.currency)!=(mapping.measurement.unit,mapping.measurement.currency)
+                or c.purpose!='offline_forecast_evaluation' or c.series_ids!=ctx.series_ids
+                or a.series_id!=t['series_id'] or a.lineage_id!=t['lineage_id'] or a.field!='value'
+                or a.period_start!=t['period_start'] or a.period_end!=t['period_end']
+                or a.available_at!=t['available_at'] or a.evidence_reference!=t['evidence']
+                or a.value_identity!=t['value_identity']
+                or c.forecast_origin!=ctx.forecast_origin or c.calibration_cutoff!=ctx.training_cutoff
+                or c.plan_digest!=ctx.plan_digest or c.fold_id!=ctx.fold_id
+                or c.target_period_end!=ctx.target_period_end):return False
+            # Claims cover the full publication, including future rows. Only
+            # completed, released records can enter O's historical context.
+            if (c.forecast_origin is not None and a.period_end<=c.forecast_origin
+                and a.available_at<=c.forecast_origin and t['revision_available']>c.forecast_origin):return False
+            if (c.calibration_cutoff is not None and a.period_end<=c.calibration_cutoff
+                and a.available_at<=c.calibration_cutoff and t['revision_available']>c.calibration_cutoff):return False
+        return True
+    wrapped=ValueAttestedAvailabilityVerifier(verify_availability=b['service'].verify_availability,
+        verify_captured_values=authority)
+    b['service'].verify_availability=wrapped
+    return dict(ledger=ledger,seen=seen,revoked=revoked,authority=authority,wrapped=wrapped)
+
+
+def substitute_history(b,change):
+    opened=b['provider'].open_read
+    @contextmanager
+    def detached(*args,**kwargs):
+        with opened(*args,**kwargs) as session:
+            batches=session.batches
+            def frames():
+                for frame in batches():
+                    view=frame.copy(deep=True);change(view);yield view
+            session.batches=frames
+            yield session
+    b['provider'].open_read=detached
+
+
+def test_value_attested_original_eight_and_substitution_rejects_before_prediction(make_rollout):
+    b=make_rollout();proof=bind_history_authority(b)
+    result=run(b);assert result.events
+    north=next(s.series_id for s in b['metadata'][0].series if s.dimensions['location']=='north')
+    assert b['calls'][0].matrix.loc[(UUID(int=2),north,b['at'](4)),'lag1']==8.
+    original=next(c for _,cs in proof['seen'] for c in cs if c.availability.series_id==north
+        and c.availability.period_start==b['at'](3))
+    b['calls'].clear();proof['seen'].clear()
+    def change(frame):
+        mask=(frame.series_id==north)&(frame.period_start==b['at'](3))
+        frame.loc[mask,'value']=800.
+    substitute_history(b,change)
+    with pytest.raises(ForecastRolloutError):run(b)
+    assert not b['calls']
+    changed=next(c for _,cs in proof['seen'] for c in cs if c.availability.series_id==north
+        and c.availability.period_start==b['at'](3))
+    assert changed.availability.value_identity==historical_value_identity(800.)
+    assert changed.availability.value_identity!=original.availability.value_identity
+    assert replace(changed.availability,value_identity=original.availability.value_identity)==original.availability
+    print('CONTROL_LAG=8; SUBSTITUTED_800=REJECTED; RECOMPUTED_IDENTITY=REJECTED; PREDICTOR_CALLS=0')
+
+
+@pytest.mark.parametrize('fault',['missing','version','manifest','admission','mapping','metric','series','field','period',
+    'revision','backdated'])
+def test_value_authority_missing_mismatched_or_backdated_truth_rejects(make_rollout,fault):
+    b=make_rollout();proof=bind_history_authority(b)
+    key=next(k for k,t in proof['ledger'].items() if t['period_start']==b['at'](3))
+    t=proof['ledger'][key];m=t['metadata']
+    if fault=='missing':del proof['ledger'][key]
+    elif fault in ('version','manifest','admission','mapping','metric'):
+        if fault=='version':m=replace(m,reference=replace(m.reference,version_id='0'*64))
+        elif fault=='manifest':m=replace(m,manifest_digest='0'*64)
+        elif fault=='admission':m=replace(m,admission_digest='0'*64)
+        else:
+            mapping=m.mapping.model_dump()
+            if fault=='metric':
+                mapping['target_metric']='wrong';mapping['measurement']['metric']='wrong'
+            else:mapping['version']='9.0.0'
+            m=replace(m,mapping_json=type(m.mapping).model_validate(mapping).model_dump_json())
+        t['metadata']=m
+    elif fault=='series':t['series_id']=UUID(int=999)
+    elif fault=='field':
+        def bad(ctx,claims):
+            return proof['authority'](ctx,tuple(replace(c,availability=replace(c.availability,field='other')) for c in claims))
+        proof['wrapped']._values=bad
+    elif fault=='period':t['period_start']=b['at'](2)
+    else:t['revision_available']=b['at'](5)  # current value did not exist at O, despite old release declaration
+    with pytest.raises(ForecastRolloutError):run(b)
+    assert not b['calls']
+
+
+@pytest.mark.parametrize('value,expected',[(Decimal('-0.0000'),('decimal',1,(0,),-4)),
+    (Decimal('0.10'),('decimal',0,(1,0),-2)),(8,('integer','8')),
+    (-0.,('float64','8000000000000000')),(0.,('float64','0000000000000000'))])
+def test_historical_value_identity_is_exact_typed_and_immutable(value,expected):
+    assert historical_value_identity(value)==expected
+    assert historical_value_identity(Decimal('0.1'))!=historical_value_identity(Decimal('0.10'))
+    assert historical_value_identity(8)!=historical_value_identity(8.)
+
+
+@pytest.mark.parametrize('value',[True,'8',object(),Decimal('NaN'),Decimal('Infinity'),float('nan'),float('inf')])
+def test_historical_identity_never_coerces_unsupported_values(value):
+    with pytest.raises(TrainingPreparationError):historical_value_identity(value)
+
+
+def test_value_attestation_requires_authority_no_fallback():
+    def unavailable(*args):raise AssertionError('must not be invoked')
+    with pytest.raises(TrainingPreparationError):
+        ValueAttestedAvailabilityVerifier(verify_availability=unavailable,verify_captured_values=None)
+
+
+def test_original_history_claims_reused_at_terminal_scope_and_decimal_conversion(make_rollout):
+    b=make_rollout(decimal=True);proof=bind_history_authority(b);before=b['raws'][2].reported.tolist()
+    run(b)
+    scoped=[cs for ctx,cs in proof['seen'] if ctx.target_period_end is not None and ctx.forecast_origin==b['at'](4)]
+    assert len(scoped)==2
+    for first,last in zip(scoped[0],scoped[-1]):
+        assert first==last and first.availability is last.availability
+        assert first.availability.value_identity[0]=='decimal'
+        assert first.availability.value_identity[-1]==-4
+    with pytest.raises(Exception):scoped[0][0].availability.value_identity=()
+    assert b['raws'][2].reported.tolist()==before
+    # Jan27-Feb3 value is released exactly at O; no conservative off-by-one rejection.
+    assert any(c.availability.available_at==b['at'](4) for c in scoped[0])
+
+
+@pytest.mark.parametrize('fault',['revoke','cancel','deadline','exception'])
+def test_value_authority_terminal_failure_is_all_or_nothing(make_rollout,fault):
+    b=make_rollout();proof=bind_history_authority(b);seen={};cancel=[False];clock=[0.]
+    b['service'].elapsed_clock=lambda:clock[0]
+    def current(ctx,claims):
+        if ctx.target_period_end is not None:
+            key=(ctx.fold_id,ctx.forecast_origin);seen[key]=seen.get(key,0)+1
+            if seen[key]==2:
+                if fault=='revoke':return False
+                if fault=='cancel':cancel[0]=True
+                if fault=='deadline':clock[0]=b['plan'].budgets.max_elapsed_seconds
+                if fault=='exception':raise RuntimeError('synthetic-history-secret')
+        return proof['authority'](ctx,claims)
+    proof['wrapped']._values=current
+    with pytest.raises(ForecastRolloutError) as error:run(b,cancelled=lambda:cancel[0])
+    assert 'synthetic-history-secret' not in ''.join(traceback.format_exception(error.value))
+    assert b['calls']  # failure happened at fresh terminal verification, not initial approval
+
+
+def test_value_authority_missing_identity_rejects_even_with_legacy_approval(make_rollout):
+    b=make_rollout();proof=bind_history_authority(b)
+    # Supported stronger adapter requires identities even when old approval succeeds.
+    run(b);ctx,claims=proof['seen'][0]
+    with pytest.raises(TrainingPreparationError):proof['wrapped'](ctx,(replace(claims[0].availability,value_identity=None),))

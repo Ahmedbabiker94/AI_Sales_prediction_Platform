@@ -3,13 +3,14 @@ from dataclasses import dataclass
 from contextlib import closing
 from decimal import Decimal
 import hashlib
+import math
 import struct
 from time import monotonic
 from uuid import UUID
 
 import pandas as pd
 
-from src.data.contracts.dataset import StagingBudgets, operational_json, _opaque
+from src.data.contracts.dataset import StagingBudgets, StoredDatasetReference, operational_json, _opaque
 from src.data.contracts.forecast import ForecastConfig
 from src.data.contracts.features import FeatureState
 from src.data.contracts.temporal_preparation import TemporalPreparationPlan, TemporalDatasetBinding
@@ -43,6 +44,10 @@ class AvailabilityClaim:
     period_end: pd.Timestamp
     available_at: pd.Timestamp
     evidence_reference: str
+    # Additive declaration, not authoritative proof. Legacy verifiers may ignore
+    # it; ValueAttestedAvailabilityVerifier requires independent attestation.
+    value_identity: tuple | None = None
+    value_identity_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,100 @@ class TemporalPreparationContext:
     forecast_origin: pd.Timestamp | None = None
     training_cutoff: pd.Timestamp | None = None
     target_period_end: pd.Timestamp | None = None
+
+
+def historical_value_identity(value):
+    """Exact pre-conversion identity v1; never stringify arbitrary objects.
+
+    Decimal sign/digits/exponent (including scale and signed zero) and binary64
+    bits are distinct. Integers and floating values never share an identity.
+    The bounded capture already limits encoded payload size.
+    """
+    if type(value) is Decimal and value.is_finite():
+        parts=value.as_tuple()
+        return ('decimal',parts.sign,tuple(parts.digits),parts.exponent)
+    if type(value) is int:return ('integer',str(value))
+    if type(value) is float and math.isfinite(value):
+        return ('float64',struct.pack('>d',value).hex())
+    raise TrainingPreparationError('unsupported historical captured value')
+
+
+@dataclass(frozen=True)
+class CapturedHistoryClaim:
+    """Value/revision attestation request, NOT an issued trust credential.
+
+    All nested identities are immutable. The original availability object is
+    retained through terminal rechecks; an authority must compare it with its
+    independent publication-bound ledger, including revision validity at O.
+    None origin denotes capture verification, never historical eligibility.
+    """
+    availability: AvailabilityClaim
+    dataset_reference: StoredDatasetReference
+    manifest_digest: str
+    admission_digest: str
+    source_id: UUID
+    mapping_digest: str
+    mapping_id: str
+    mapping_version: str
+    organization_id: UUID
+    metric: str
+    unit: str
+    currency: str | None
+    purpose: str
+    series_ids: tuple[UUID, ...]
+    forecast_origin: pd.Timestamp | None
+    calibration_cutoff: pd.Timestamp | None
+    plan_digest: str | None
+    fold_id: str | None
+    target_period_end: pd.Timestamp | None
+    protocol_version: str = 'captured_history_value_v1'
+
+
+class ValueAttestedAvailabilityVerifier:
+    """Opt-in trusted composition over the EXISTING availability callback slot.
+
+    Both callbacks are mandatory and must return exactly True. The value
+    authority must own independent expected values/revisions, not trust hashes
+    recomputed from these declarations. No timestamps, matching digest or type
+    of this adapter authenticate an authority. Trusted Python is not sandboxed.
+    Existing callbacks keep legacy semantics until explicitly wrapped here.
+    """
+    protocol_version = 'captured_history_value_v1'
+
+    def __init__(self, *, verify_availability, verify_captured_values):
+        if not callable(verify_availability) or not callable(verify_captured_values):
+            raise TrainingPreparationError('authoritative historical verifier required')
+        self._availability=verify_availability
+        self._values=verify_captured_values
+
+    def __call__(self, context, claims):
+        # Run inside the original verifier boundary: no new late callback phase.
+        try:
+            if (not isinstance(context,(PreparationContext,TemporalPreparationContext))
+                    or type(context.metadata) is not VerifiedTrainingMetadata
+                    or type(claims) is not tuple or not claims
+                    or any(type(c) is not AvailabilityClaim for c in claims)):
+                raise ValueError()
+            if self._availability(context,claims) is not True:raise ValueError()
+            meta=context.metadata;mapping=meta.mapping
+            mapping_digest=hashlib.sha256(meta.mapping_json.encode()).hexdigest()
+            attested=[]
+            for claim in claims:
+                if claim.field!='value':continue
+                if (claim.series_id not in context.series_ids or claim.value_identity is None
+                        or claim.value_identity_version!=self.protocol_version):raise ValueError()
+                attested.append(CapturedHistoryClaim(claim,meta.reference,meta.manifest_digest,
+                    meta.admission_digest,meta.source_id,mapping_digest,
+                    mapping.mapping_id,mapping.version,meta.reference.organization_id,mapping.target_metric,
+                    mapping.measurement.unit,mapping.measurement.currency,meta.purpose,context.series_ids,
+                    context.forecast_origin,context.training_cutoff,getattr(context,'plan_digest',None),
+                    getattr(context,'fold_id',None),getattr(context,'target_period_end',None)))
+            # Category-only calls still require their normal field-release
+            # authority, but cannot substitute for target-value attestation.
+            if attested and self._values(context,tuple(attested)) is not True:raise ValueError()
+            return True
+        except Exception:
+            raise TrainingPreparationError('authoritative historical verification failed') from None
 
 
 @dataclass(frozen=True)
@@ -517,7 +616,9 @@ class CanonicalTrainingPreparationService:
             if available_field not in row or evidence_field not in row:raise TrainingPreparationError('verified availability evidence required')
             available=engine._time(row[available_field]);evidence=row[evidence_field];_opaque(evidence)
             claims.append(AvailabilityClaim(row['series_id'],row['source_record_id'],row['lineage_id'],field,
-                engine._time(row['period_start']),engine._time(row['period_end']),available,evidence))
+                engine._time(row['period_start']),engine._time(row['period_end']),available,evidence,
+                historical_value_identity(row['value']) if field=='value' else None,
+                'captured_history_value_v1' if field=='value' else None))
             return available,evidence
         exogenous=[]
         for row in frame.to_dict('records'):

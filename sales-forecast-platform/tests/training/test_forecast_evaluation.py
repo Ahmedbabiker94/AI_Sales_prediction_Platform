@@ -413,3 +413,51 @@ def test_original_rollout_scope_revoked_by_scoring_global_callback(make_evaluati
         return oldorigin(ctx,phase)
     b['evaluator'].authorize=global_check;b['service'].authorize=origin
     with pytest.raises(ForecastEvaluationError):evaluate(b)
+
+
+def test_value_attested_history_preserves_exact_b2a_label_scores(make_evaluation):
+    b=make_evaluation(decimal=True)
+    bind=runpy.run_path('tests/training/test_deterministic_forecast_rollout.py')['bind_history_authority']
+    proof=bind(b)
+    result=evaluate(b)
+    assert len(result.events)==6
+    assert sum(e.statistics.sae.fraction for e in result.events)==12
+    assert sum(e.statistics.sse.fraction for e in result.events)==28
+    assert sum(e.statistics.saa.fraction for e in result.events)==20
+    scoped=[(ctx,claims) for ctx,claims in proof['seen'] if ctx.target_period_end is not None]
+    # B1 and B2a terminal verification use the same retained availability objects.
+    first_ctx,first=scoped[0]
+    same=[cs for ctx,cs in scoped if ctx==first_ctx]
+    assert len(same)==3
+    assert all(c.availability is first[n].availability for cs in same for n,c in enumerate(cs))
+    assert all(c.availability.value_identity[0]=='decimal' for c in first)
+
+
+def test_value_attested_b2a_rejects_substituted_history_before_predictor_or_labels(make_evaluation):
+    b=make_evaluation();helpers=runpy.run_path('tests/training/test_deterministic_forecast_rollout.py')
+    helpers['bind_history_authority'](b);calls=[];labels=[]
+    original=b['service'].predictor
+    def predictor(req):calls.append(req);return original(req)
+    b['service'].predictor=predictor
+    previous=b['evaluator'].verify_revision
+    def revision(ctx,claims):labels.append(claims);return previous(ctx,claims)
+    b['evaluator'].verify_revision=revision
+    def changed(frame):
+        frame.loc[frame.period_start==b['at'](3),'value']=800.
+    helpers['substitute_history'](b,changed)
+    with pytest.raises(ForecastEvaluationError):evaluate(b)
+    assert not calls and not labels
+
+
+def test_value_authority_rechecked_after_b2a_global_approval_revocation(make_evaluation):
+    b=make_evaluation();bind=runpy.run_path('tests/training/test_deterministic_forecast_rollout.py')['bind_history_authority']
+    proof=bind(b);old=b['evaluator'].authorize
+    def approve(ctx,stage):
+        result=old(ctx,stage)
+        if stage=='return' and ctx.metadata is None:
+            proof['revoked'].add((UUID(int=2),'fold-1',b['at'](4)))
+        return result
+    b['evaluator'].authorize=approve
+    with pytest.raises(ForecastEvaluationError):evaluate(b)
+    assert any(e[0]=='revision' for e in b['trace'])  # B1 finished; B2a made the late fresh check
+    assert (UUID(int=2),'fold-1',b['at'](4)) in proof['revoked']
