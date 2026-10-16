@@ -30,6 +30,9 @@ class RolloutContext(TemporalPreparationContext):
     assessment_cutoff: object = None
     capabilities_json: str = ''
     rollout_compatibility_id: str | None = None
+    joint_plan_digest: str | None = None
+    producer_profile_id: str | None = None
+    capture_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -81,30 +84,30 @@ class DeterministicForecastRolloutService:
             raise ForecastRolloutError('active evaluator lifecycle required')
         return self._execute(plan,configuration,_owner=owner,**kwargs)
 
-    def _execute(self,plan,configuration,*,feature_budgets=None,read_budgets=None,cancelled=lambda:False,_owner=None):
+    def _owned_shared_rollout(self,owner,plan,configuration,shared,**kwargs):
+        """Private C1 route. A caller-provided frame or serialized seal is never accepted."""
+        from src.services.canonical_forecast_comparison_service import _JointRequest
+        from src.services.canonical_forecast_evaluation_service import _EvaluationOwner
+        if (type(shared) is not _JointRequest or type(owner) is not _EvaluationOwner
+                or not shared.permits(self,owner,plan,configuration) or not owner.permits(self,plan)):
+            raise ForecastRolloutError('active joint capture lifecycle required')
+        return self._execute(plan,configuration,_owner=owner,_shared=shared,**kwargs)
+
+    def _execute(self,plan,configuration,*,feature_budgets=None,read_budgets=None,cancelled=lambda:False,_owner=None,_shared=None):
         try:
             if type(plan) is not ForecastEvaluationPlan: raise ValueError()
             plan=ForecastEvaluationPlan.model_validate(plan.model_dump())
             if plan.predictor.strategy!='recursive_one_step' or plan.predictor.representation_kind!='tabular_step':
                 raise ValueError()
             return self._rollout(plan,configuration,feature_budgets or FeatureBudgets(),
-                                 read_budgets or StagingBudgets(),cancelled,_owner)
+                                 read_budgets or StagingBudgets(),cancelled,_owner,_shared)
         except Exception:
             raise ForecastRolloutError('deterministic forecast rollout failed') from None
 
-    def _rollout(self,p,configuration,fb,rb,cancelled,_owner=None):
-        engine=CanonicalFeaturePipeline(configuration,budgets=fb)
+    @staticmethod
+    def _validate_execution_plan(p,engine,fb):
+        """Shared declared-geometry/calendar checks, including the full H interval."""
         b=p.budgets;h=p.forecast_horizon;cap=p.predictor;cfg=engine.configuration
-        start=self.elapsed_clock();last=start
-        def checkpoint():
-            nonlocal last
-            stopped=cancelled();now=self.elapsed_clock()
-            if (type(stopped) is not bool or stopped or type(now) not in (int,float)
-                    or type(start) not in (int,float) or not math.isfinite(now) or not math.isfinite(start)
-                    or now<last or now-start>=b.max_elapsed_seconds):
-                raise ForecastRolloutError('rollout interrupted or elapsed budget exhausted')
-            last=now
-        checkpoint()
         if (p.configuration_id!=cfg.configuration_id or p.configuration_version!=cfg.version
                 or p.configuration_digest!=engine.digest
                 or (p.frequency,p.calendar,p.timezone,p.period_anchor)!=(engine.temporal.frequency.value,
@@ -137,6 +140,21 @@ class DeterministicForecastRolloutService:
                 heldout_end=engine._advance(engine._time(held[-1]),h)
                 if heldout_end>engine._time(fold.assessment_cutoff):
                     raise ForecastRolloutError('target interval exceeds assessment cutoff')
+
+    def _rollout(self,p,configuration,fb,rb,cancelled,_owner=None,_shared=None):
+        engine=CanonicalFeaturePipeline(configuration,budgets=fb)
+        b=p.budgets;h=p.forecast_horizon;cap=p.predictor;cfg=engine.configuration
+        start=self.elapsed_clock();last=start
+        def checkpoint():
+            nonlocal last
+            stopped=cancelled();now=self.elapsed_clock()
+            if (type(stopped) is not bool or stopped or type(now) not in (int,float)
+                    or type(start) not in (int,float) or not math.isfinite(now) or not math.isfinite(start)
+                    or now<last or now-start>=b.max_elapsed_seconds):
+                raise ForecastRolloutError('rollout interrupted or elapsed budget exhausted')
+            last=now
+        checkpoint()
+        self._validate_execution_plan(p,engine,fb)
         used=dict(rows=0,decoded=0,assembly=0,work=0,state=0,representation=0,feedback=0,prediction=0,calls=0,external=0)
         limits=dict(rows=b.max_captured_rows,decoded=b.max_decoded_bytes,assembly=b.max_assembly_bytes,
             work=b.max_work_cells,state=b.max_fitted_state_bytes,representation=b.max_representation_bytes,
@@ -145,6 +163,7 @@ class DeterministicForecastRolloutService:
         def charge(kind,amount):
             used[kind]+=amount
             if used[kind]>limits[kind]:raise ForecastRolloutError('aggregate rollout budget exceeded')
+            if _shared is not None:_shared.charge(kind,amount)
         def account(kind,rows,size):
             if kind=='capture':charge('rows',rows);charge('decoded',size)
             else:charge(kind,size)
@@ -157,9 +176,23 @@ class DeterministicForecastRolloutService:
                 if used['rows']+meta.rows>b.max_captured_rows:raise ForecastRolloutError('capture row budget exceeded')
                 charge('decoded',len(meta.mapping_json.encode())+sum(len(v.encode()) for v in meta.series_json))
                 return RolloutContext(meta,cfg.model_dump_json(),engine.digest,binding.series_ids,pj,pdigest,
-                                      capabilities_json=cap.model_dump_json())
-            meta,base,frame,definitions=self.preparation._capture(binding.reference,engine,binding.series_ids,p.purpose,
-                factory,fb,PreparationBudgets(b.max_decoded_bytes,b.max_elapsed_seconds),rb,checkpoint,account)
+                                      capabilities_json=cap.model_dump_json(),
+                    **(_shared.context_fields(self,_owner,p,meta) if _shared is not None else {}))
+            if _shared is None:
+                meta,base,frame,definitions=self.preparation._capture(binding.reference,engine,binding.series_ids,p.purpose,
+                    factory,fb,PreparationBudgets(b.max_decoded_bytes,b.max_elapsed_seconds),rb,checkpoint,account)
+            else:
+                meta,frame=_shared.materialize(self,_owner,p,cfg,binding)
+                base=factory(meta)
+                self._approved(self.authorize,base,'read')
+                checkpoint();self.provider.require_current(meta,budgets=rb)
+                self._approved(self.authorize,base,'after_read')
+                size=int(frame.memory_usage(deep=True).sum())
+                used['rows']+=len(frame);used['decoded']+=size
+                if used['rows']>limits['rows'] or used['decoded']>limits['decoded']:
+                    raise ForecastRolloutError('producer capture-view budget exceeded')
+                charge('assembly',2*size)
+                frame,definitions=self.preparation._project_capture(meta,frame,engine,binding.series_ids,b.max_decoded_bytes)
             claims,exo=self.preparation._availability(frame,engine,checkpoint)
             self._approved(self.verify_availability,base,claims)
             engine._rows(frame,observations=True)
@@ -175,7 +208,8 @@ class DeterministicForecastRolloutService:
                 def context(origin=None,end=None,compatibility=None):
                     return RolloutContext(meta,base.configuration_json,engine.digest,binding.series_ids,pj,pdigest,
                         fold.fold_id,origin,cutoff,end,engine._time(fold.model_fit_cutoff),
-                        engine._time(fold.assessment_cutoff),cap.model_dump_json(),compatibility)
+                        engine._time(fold.assessment_cutoff),cap.model_dump_json(),compatibility,
+                        **(_shared.context_fields(self,_owner,p,meta) if _shared is not None else {}))
                 calibration_context=context(engine._time(fold.origins[0]))
                 self.provider.require_current(meta,budgets=rb)
                 self._approved(self.authorize,calibration_context,'fold')
@@ -194,8 +228,9 @@ class DeterministicForecastRolloutService:
                     if sorted(fit[fit.series_id==s].period_start)!=expected:raise ForecastRolloutError('incomplete calibration')
                 categories=self.preparation._verify_categories(fit,engine,calibration_context,cutoff,checkpoint)
                 charge('work',len(fit)*len(fit.columns))
-                state=engine.fit_state(fit,training_cutoff=cutoff,partition_reference=identity([
-                    pdigest,fold.fold_id,binding.model_dump(mode='json'),cutoff.isoformat(),fold.calibration_start.isoformat()]))
+                partition=[pdigest,fold.fold_id,binding.model_dump(mode='json'),cutoff.isoformat(),fold.calibration_start.isoformat()]
+                if _shared is not None:partition.append(_shared.partition_binding(self,_owner,p))
+                state=engine.fit_state(fit,training_cutoff=cutoff,partition_reference=identity(partition))
                 charge('state',len(state.model_dump_json().encode()))
                 calibration.append((calibration_context,claims,categories))
                 for od in fold.origins:
@@ -231,8 +266,10 @@ class DeterministicForecastRolloutService:
                         matrix=engine.prepare_inference(history,requests,state,forecast_origin=origin,forecast_config=forecast,
                             exogenous=exo,prior_predictions=pd.DataFrame(feedback) if feedback else None)
                         verify_feature_schema(schema,cfg,state,matrix,requests=requests,forecast_config=forecast,forecast_origin=origin)
+                        if _shared is not None:_shared.charge('prefix',len(matrix)*len(matrix.columns))
                         target=engine._advance(origin,k-1);end=engine._advance(origin,k)
                         step=matrix.loc[matrix.index.get_level_values('period_start')==target].copy()
+                        if _shared is not None:_shared.charge('output_cells',len(step)*len(step.columns))
                         scopes=tuple(ForecastScope(plan_digest=pdigest,dataset_version=binding.reference.version_id,
                             fold_id=fold.fold_id,organization_id=meta.reference.organization_id,series_id=s,
                             metric=meta.mapping.target_metric,unit=meta.mapping.measurement.unit,currency=meta.mapping.measurement.currency,
@@ -265,7 +302,9 @@ class DeterministicForecastRolloutService:
                                 representation_schema_id=cap.representation_schema_id,configuration_digest=engine.digest,
                                 state_id=state.state_id,prefix_schema_id=schema.schema_id,rollout_compatibility_id=compatibility.compatibility_id,
                                 numeric_policy_id=cap.numeric_policy_id,parent_feedback_ids=tuple(parents[s.series_id]),value=value)
-                            charge('prediction',len(event.model_dump_json().encode()));events.append(event)
+                            charge('prediction',len(event.model_dump_json().encode()))
+                            if _shared is not None:_shared.charge('events',1)
+                            events.append(event)
                             parents[s.series_id].append(event.event_id)
                             row=dict(organization_id=s.organization_id,series_id=s.series_id,metric=s.metric,unit=s.unit,
                                 currency=s.currency,frequency=s.frequency,period_start=target,period_end=end,available_at=origin,

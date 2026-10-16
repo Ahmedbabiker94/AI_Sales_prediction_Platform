@@ -562,3 +562,83 @@ Trusted bootstrap is still an explicit assumption, not Python authentication;
 callbacks are not sandboxed. Linux/WSL unsynchronized staging remains required.
 B2c joint producer comparison, model fitting/loading, sequence/direct/ensemble
 adapters, production serving and active runtime migration are not implemented.
+
+### B2c-C1 shared, label-free prediction foundation
+
+`CanonicalForecastComparisonService.execute(JointPredictionPlan, cancelled=...)`
+executes exactly two operator-approved profiles: one fixed synthetic B1 candidate
+and one fixed B2b last-observation or seasonal-naive baseline. Despite the service
+name, C1 returns **only label-free diagnostic predictions**, not comparison scores,
+labels, signed deltas or model-selection decisions. No active runtime is wired.
+
+Bootstrap fixes the actual provider, candidate callback/capabilities/configuration,
+up to eight baseline alternatives, independent release and captured-value/revision
+authorities, authorizers and read/feature/rollout/joint resource ceilings. Requests
+cannot replace any dependency, inject events or capture handles, increase ceilings,
+register callbacks, or declare a trusted/completed seal. Baseline selection uses
+exact operator-generated identities, not feature-column-name conventions. Neither
+Python classes, private names nor hashes authenticate an operator or fitted model.
+
+A request opens one complete authorized FINALIZED `offline_forecast_evaluation`
+history capture per version. The existing preparation service's private read
+lifecycle is shared, not duplicated. All batches must exhaust and close, including
+snapshot cleanup, before projections, fitting states or prediction. Native read
+authorization/checkpoints remain inside the existing provider's read lifecycle;
+no storage lock is held during predictor or post-capture verification callbacks.
+
+The coordinator freezes supported scalar records, explicit dtype descriptors and
+verified publication metadata. Decimal digits/scale/sign, float64 signed-zero bits,
+UUIDs and timezone-aware periods retain exact identities. Parameterized Arrow
+Decimal dtypes retain their bit width, precision and scale. Mutable object cells
+and implicit pandas categorical snapshots reject. Detached producer DataFrames
+are materialized privately; no generic public capture constructor/input exists.
+The full first capture may physically include future observations. These remain
+coordinator-private and cannot enter a predictor's causal history before O.
+
+The approved B1 executor performs all feature arithmetic and independent recursive
+feedback. Each producer gets its own actual calibration-fitted state, with an
+additional joint-plan/profile/capture partition binding. C/O/M/E, field-specific
+category releases, exogenous availability, independent historical value attestation,
+numeric conversion and full-prefix schema verification remain mandatory. Candidate
+and baseline configurations, producer plans and state IDs may differ. Unsupported
+direct, sequence/statistical execution and P>=3 reject without fallback.
+
+The common grid is derived from verified metadata and explicit plans, excluding
+producer-specific plan/state/schema IDs. It binds exact publication, fold/partition,
+tenant, series/dimensions, measurement, calendar/timezone/anchor, O, horizon step,
+target bounds and E. Both actual in-memory B1 handoffs must independently cover
+that grid, preserve full producer provenance and recursive parents, and pass their
+recorded owner/fingerprint checks. Serialized/replayed events are never seals.
+Private phases are CAPTURING, PREDICTING, ALL_PREDICTIONS_SEALED and CLOSED.
+The existing private B2a owner has a prediction-only seal operation; C1 never
+invokes its legacy consume() transition into label use.
+Any second-producer or late-verification failure discards the whole result.
+
+Declaration geometry is checked before capture; observed rows, widths, bytes,
+configurations, calibration/category sizes and H(H+1)/2 prefix work are admitted
+jointly before either predictor. Shared runtime counters enforce rows/bytes,
+assembly, work, state, prefix cells, predictor calls, events/lineage representations,
+verification claims/calls/bytes and output bounds. Existing per-producer limits
+also apply. One request-wide clock/checkpoint prevents resetting the deadline at
+producer boundaries. Admission estimates and `usage_phase='before_terminal'`
+counters are diagnostic observations; final callbacks remain runtime-charged but
+cannot mutate an already assembled immutable diagnostic. These are cooperative
+operation/byte budgets, not hard process CPU/RSS guarantees. C1 reserves no C2
+label/scoring capacity and grants no label-use permission.
+
+After both producers seal, original calibration/external checks and broad joint
+and publication/read authorization precede diagnostic assembly. Then every original
+producer/origin claim and rollout permission is reverified, followed only by the
+final cancellation/deadline checkpoint and return. The wrapper only closes private
+owners and releases its non-storage call lock. Calls are sequential per service;
+concurrent/reentrant requests reject. No snapshot, approval or feedback survives
+request closure. Future C2 must reuse the active internal ownership phase, never
+accept a diagnostic returned by a previous execute() as a trusted handoff.
+
+Trusted callbacks are not sandboxed. Sequential verification does not make policy
+revocation atomic; concurrent changes or a later trusted terminal callback revoking
+an already checked scope require a deployment-owned lease/snapshot boundary.
+Production authority authenticity, protected bootstrap and hard limits remain
+operator/deployment duties. Existing B1/B2a/C0/B2b public APIs and B2a grouping IDs
+are preserved. Joint scoring, truth alignment, signed deltas, generic grouping
+normalization, model fitting/loading, promotion and serving are outside C1.

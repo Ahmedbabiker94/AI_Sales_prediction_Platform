@@ -563,37 +563,47 @@ class CanonicalTrainingPreparationService:
         return result
 
 
-    def _capture(self,reference,engine,selected,purpose,context_factory,
-                 feature_budgets,budgets,read_budgets,checkpoint,account=None):
-        """Shared owned read; no expensive transformation while store lock is held."""
+    def _consume_capture(self,reference,purpose,context_factory,validate_metadata,inspect_frame,
+                         row_limit,byte_limit,read_budgets,checkpoint,account=None):
+        """Private common read lifecycle. No transformation before successful close."""
         chunks=[];rows=decoded=0
         with self.provider.open_read(reference,purpose=purpose,budgets=read_budgets) as session:
-            metadata=session.metadata;mapping=metadata.mapping
-            rules=engine.rules
-            configuration=engine.configuration
-            if (metadata.rows>feature_budgets.max_rows or mapping.target_metric!=configuration.target_metric
-                    or mapping.measurement!=rules.measurement or mapping.frequency!=engine.temporal.frequency
-                    or mapping.timezone!=engine.temporal.timezone or set(mapping.identity_dimensions)!=set(rules.dimension_fields)
-                    or mapping.metric_meaning!=rules.metric_meaning or mapping.sign_semantics!=rules.sign_semantics):
-                raise TrainingPreparationError('publication and feature scope mismatch')
-            definitions={v.series_id:v for v in metadata.series}
-            if not set(selected)<=set(definitions):raise TrainingPreparationError('requested series missing')
+            metadata=session.metadata
+            validate_metadata(metadata)
             context=context_factory(metadata)
             self._approved(self.authorize,context,'read')
             with closing(session.batches()) as stream:
                 for frame in stream:
-                    checkpoint();engine._frame_budget(frame)
+                    checkpoint();inspect_frame(frame)
                     rows+=len(frame);decoded+=int(frame.memory_usage(deep=True).sum())
-                    if rows>feature_budgets.max_rows or decoded>budgets.max_decoded_bytes:
+                    if rows>row_limit or decoded>byte_limit:
                         raise TrainingPreparationError('decoded dataset budget exceeded')
                     if account is not None:account("capture",len(frame),int(frame.memory_usage(deep=True).sum()))
                     chunks.append(frame)
             if rows!=metadata.rows:raise TrainingPreparationError('incomplete dataset consumption')
-        # Reader exhaustion, snapshot cleanup and lock release have ALL succeeded.
         checkpoint();self.provider.require_current(metadata,budgets=read_budgets)
         self._approved(self.authorize,context,'after_read')
         if account is not None:account("assembly",0,decoded)
-        frame=pd.concat(chunks,ignore_index=True);chunks.clear();engine._frame_budget(frame)
+        frame=pd.concat(chunks,ignore_index=True);chunks.clear();inspect_frame(frame)
+        return metadata,context,frame
+
+    @staticmethod
+    def _validate_capture_scope(metadata,engine,selected):
+        mapping=metadata.mapping;rules=engine.rules
+        if (metadata.rows>engine.budgets.max_rows or mapping.target_metric!=engine.configuration.target_metric
+                or mapping.measurement!=rules.measurement or mapping.frequency!=engine.temporal.frequency
+                or mapping.timezone!=engine.temporal.timezone or set(mapping.identity_dimensions)!=set(rules.dimension_fields)
+                or mapping.metric_meaning!=rules.metric_meaning or mapping.sign_semantics!=rules.sign_semantics):
+            raise TrainingPreparationError('publication and feature scope mismatch')
+        if not set(selected)<={s.series_id for s in metadata.series}:
+            raise TrainingPreparationError('requested series missing')
+
+    @classmethod
+    def _project_capture(cls,metadata,frame,engine,selected,byte_limit):
+        """Detached producer-specific view; dimensions only from verified metadata."""
+        cls._validate_capture_scope(metadata,engine,selected)
+        engine._frame_budget(frame)
+        rules=engine.rules;definitions={v.series_id:v for v in metadata.series}
         if set(frame.series_id)!=set(definitions):raise TrainingPreparationError('series metadata coverage mismatch')
         if not frame.value_status.eq('actual').all():raise TrainingPreparationError('actual observations required')
         frame=frame[frame.series_id.isin(selected)].copy()
@@ -602,11 +612,33 @@ class CanonicalTrainingPreparationService:
         for field in rules.dimension_fields:
             if field in frame:raise TrainingPreparationError('unverified dimension shadowing')
             frame[field]=[definitions[s].dimensions[field] for s in frame.series_id]
-        if frame.memory_usage(deep=True).sum()>budgets.max_decoded_bytes:
+        if frame.memory_usage(deep=True).sum()>byte_limit:
             raise TrainingPreparationError('enriched dataset budget exceeded')
-        if len(frame)*(1+len(rules.exogenous))>feature_budgets.max_rows:
+        if len(frame)*(1+len(rules.exogenous))>engine.budgets.max_rows:
             raise TrainingPreparationError('availability and covariate budget exceeded')
+        return frame,definitions
+
+    def _capture(self,reference,engine,selected,purpose,context_factory,
+                 feature_budgets,budgets,read_budgets,checkpoint,account=None):
+        metadata,context,frame=self._consume_capture(reference,purpose,context_factory,
+            lambda meta:self._validate_capture_scope(meta,engine,selected),engine._frame_budget,
+            feature_budgets.max_rows,budgets.max_decoded_bytes,read_budgets,checkpoint,account)
+        frame,definitions=self._project_capture(metadata,frame,engine,selected,budgets.max_decoded_bytes)
         return metadata,context,frame,definitions
+
+    def _capture_neutral(self,reference,purpose,context_factory,*,row_limit,column_limit,
+                         byte_limit,read_budgets,checkpoint,account):
+        """Storage-only acquisition for the private joint owner, never a public input."""
+        def inspect(frame):
+            if (type(frame) is not pd.DataFrame or not frame.columns.is_unique
+                    or any(type(c) is not str for c in frame.columns) or len(frame.columns)>column_limit
+                    or len(frame)>row_limit or frame.memory_usage(deep=True).sum()>byte_limit):
+                raise TrainingPreparationError('neutral capture budget or schema invalid')
+        def metadata(meta):
+            if meta.rows>row_limit or meta.purpose!=purpose:
+                raise TrainingPreparationError('neutral publication scope invalid')
+        return self._consume_capture(reference,purpose,context_factory,metadata,inspect,row_limit,
+            byte_limit,read_budgets,checkpoint,account)
 
     def _availability(self,frame,engine,checkpoint):
         """Reuse field-scoped claims for single-origin and temporal preparation."""

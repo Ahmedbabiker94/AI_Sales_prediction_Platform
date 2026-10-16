@@ -89,12 +89,19 @@ class _EvaluationOwner:
             raise ForecastEvaluationError('invalid owned execution lifecycle')
         self.__handoff=handoff;self.__fingerprint=identity(handoff.result.model_dump(mode='json'))
 
-    def consume(self,handoff):
+    def _seal_predictions(self,handoff):
         if (handoff is not self.__handoff or not self.permits(self.source,self.plan)
                 or identity(handoff.result.model_dump(mode='json'))!=self.__fingerprint):
             raise ForecastEvaluationError('owned prediction origin could not be established')
-        self.__state='labels'
+        self.__state='sealed'
         return handoff
+
+
+    def consume(self,handoff):
+        # Legacy B2a alone advances a sealed owned prediction into label use.
+        result=self._seal_predictions(handoff)
+        self.__state='labels'
+        return result
 
     def close(self):
         self.__state='closed';self.__handoff=None;self.__fingerprint=None
