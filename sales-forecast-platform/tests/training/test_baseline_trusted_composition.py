@@ -490,3 +490,37 @@ def test_final_callback_elapsed_just_inside_operator_deadline_succeeds(make_comp
     service=build(b,elapsed_clock=lambda:clock[0],authorize_evaluation=approval,
         value_authority=replace(b['options']['value_authority'],verify=history))
     assert execute(service,b).events and clock[0]==299.999
+
+
+@pytest.mark.parametrize('fault',['callback','capability','duplicate','unbounded','mutable_registry'])
+def test_baseline_bootstrap_never_accepts_request_registered_producers(make_composition,fault):
+    from src.data.contracts.forecast_evaluation import BaselineDefinition
+    b=make_composition();reads,_=track_reads(b)
+    d=BaselineDefinition(algorithm='last_observation_v1',lookback=4,supported_horizon=4)
+    options={k:v for k,v in b['options'].items() if k not in ('predictor','capabilities')}
+    options['baseline_definitions']=(d,)
+    if fault=='callback':options['predictor']=lambda *_:True
+    elif fault=='capability':options['capabilities']=b['plan'].predictor
+    elif fault=='duplicate':options['baseline_definitions']=(d,d)
+    elif fault=='unbounded':options['baseline_definitions']=(d,)*9
+    else:options['baseline_definitions']=[d]
+    with pytest.raises(BaselineCompositionError):CanonicalBaselineEvaluationService(**options)
+    assert not reads and not b['predictor_calls']
+
+
+def test_fixed_c0_has_no_implicit_baseline_registration(make_composition):
+    from src.data.contracts.forecast_evaluation import BaselineDefinition
+    b=make_composition();service=build(b);reads,_=track_reads(b)
+    d=BaselineDefinition(algorithm='last_observation_v1',lookback=4,supported_horizon=4)
+    with pytest.raises(BaselineCompositionError):service.evaluate_baseline(d,b['scoring'],b['plan'])
+    assert not reads
+
+
+def test_baseline_mode_cannot_fall_back_to_generic_fixed_producer_api(make_composition):
+    from src.data.contracts.forecast_evaluation import BaselineDefinition
+    b=make_composition();reads,_=track_reads(b)
+    d=BaselineDefinition(algorithm='last_observation_v1',lookback=4,supported_horizon=4)
+    options={k:v for k,v in b['options'].items() if k not in ('predictor','capabilities')}
+    service=CanonicalBaselineEvaluationService(**options,baseline_definitions=(d,))
+    with pytest.raises(BaselineCompositionError):execute(service,b)
+    assert not reads and not b['predictor_calls']

@@ -1,4 +1,4 @@
-"""Operator-owned, baseline-ready B1/B2a composition; no baseline algorithms.
+"""Operator-owned B1/B2a composition with fixed optional baseline profiles.
 
 Application bootstrap is trusted to select authentic independent authorities and
 protect provider/configuration credentials. These Python declarations, private
@@ -7,14 +7,16 @@ Ordinary evaluate() requests cannot supply dependencies or select an authority.
 """
 from dataclasses import dataclass
 from time import monotonic
+from threading import Lock
 from typing import Callable
 
 from src.data.contracts.backtesting import ForecastEvaluationPlan, PredictorCapabilities, RolloutBudgets
 from src.data.contracts.dataset import StagingBudgets, _opaque, operational_json
 from src.data.contracts.features import FeatureConfiguration
-from src.data.contracts.forecast_evaluation import ForecastScoringPlan, EvaluationBudgets
+from src.data.contracts.forecast_evaluation import BaselineDefinition, ForecastScoringPlan, EvaluationBudgets
 from src.data.contracts.temporal_preparation import TemporalDatasetBinding
 from src.features.canonical_feature_pipeline import CanonicalFeaturePipeline, FeatureBudgets
+from src.features.forecast_baselines import build_baseline_profile
 from src.providers.canonical_training_data_provider import CanonicalTrainingDataProvider
 from src.services.canonical_forecast_evaluation_service import CanonicalForecastEvaluationService
 from src.services.canonical_training_preparation_service import (
@@ -81,15 +83,40 @@ class CanonicalBaselineEvaluationService:
     or preconstructed evaluator/rollout is accepted. An intentionally lying
     bootstrap verifier violates the trust assumption; Python cannot detect it.
 
-    C0 uses an operator-selected synthetic producer for composition tests only.
-    Last-observation/seasonal-naive factories and definitions do not exist here.
+    The original fixed synthetic producer API is unchanged. Optional baseline
+    mode builds a bounded immutable selection of the two trusted lag adapters;
+    requests never register callbacks or select authorities. No model fitting.
     """
     def __init__(self, provider, *, release_authority, value_authority, label_revision_authority,
-                 configuration, capabilities, predictor, authorize_rollout,
+                 configuration, capabilities=None, predictor=None, authorize_rollout,
                  authorize_evaluation, authorize_label_use, authorize_external_forecast=None,
                  read_budgets=None, feature_budgets=None, rollout_budgets=None,
-                 evaluation_budgets=None, elapsed_clock=monotonic):
+                 evaluation_budgets=None, elapsed_clock=monotonic, baseline_definitions=()):
         try:
+            self.__baseline_profiles = ()
+            if type(baseline_definitions) is not tuple or len(baseline_definitions) > 8:
+                raise ValueError('bounded operator baseline declarations required')
+            if baseline_definitions:
+                if capabilities is not None or predictor is not None:
+                    raise ValueError('baseline callbacks are selected only by the trusted factory')
+                profiles = []
+                for declaration in baseline_definitions:
+                    definition = _declaration(declaration, BaselineDefinition)
+                    profile = build_baseline_profile(definition, configuration, feature_budgets=feature_budgets)
+                    owned = CanonicalBaselineEvaluationService(provider,
+                        release_authority=release_authority, value_authority=value_authority,
+                        label_revision_authority=label_revision_authority, configuration=profile.configuration,
+                        capabilities=profile.capabilities, predictor=profile, authorize_rollout=authorize_rollout,
+                        authorize_evaluation=authorize_evaluation, authorize_label_use=authorize_label_use,
+                        authorize_external_forecast=authorize_external_forecast, read_budgets=read_budgets,
+                        feature_budgets=feature_budgets, rollout_budgets=rollout_budgets,
+                        evaluation_budgets=evaluation_budgets, elapsed_clock=elapsed_clock)
+                    profiles.append((definition.model_dump_json(), profile.configuration_json, owned))
+                if len({p[0] for p in profiles}) != len(profiles):
+                    raise ValueError('duplicate operator baseline declaration')
+                self.__baseline_profiles = tuple(profiles)
+                self.__baseline_lock = Lock()
+                return
             if type(provider) is not CanonicalTrainingDataProvider:
                 raise ValueError('operator canonical provider required')
             scopes, release = _authority(release_authority, 'release_availability_v1')
@@ -176,6 +203,8 @@ class CanonicalBaselineEvaluationService:
         transformations follow B2a's terminal scoped checks and checkpoint.
         """
         try:
+            if self.__baseline_profiles:
+                raise ValueError('baseline mode requires an approved baseline declaration')
             if (type(scoring_plan) is not ForecastScoringPlan
                     or type(producer_plan) is not ForecastEvaluationPlan
                     or type(configuration) is not FeatureConfiguration or not callable(cancelled)):
@@ -195,3 +224,28 @@ class CanonicalBaselineEvaluationService:
                 read_budgets=self.__read_budgets, feature_budgets=self.__feature_budgets, cancelled=cancelled)
         except Exception:
             raise BaselineCompositionError('canonical baseline-ready evaluation failed') from None
+
+    def evaluate_baseline(self, baseline, scoring_plan, producer_plan, *, cancelled=lambda: False):
+        """Select an operator-approved declaration; no request configuration/callback.
+
+        One active baseline call per composition; no waiting queue or shared
+        cross-request producer state. Cleanup after delegate return invokes no
+        verifier or other revocation-capable callback.
+        """
+        acquired = False
+        try:
+            declaration = _declaration(baseline, BaselineDefinition).model_dump_json()
+            selected = next((p for p in self.__baseline_profiles if p[0] == declaration), None)
+            if selected is None or not callable(cancelled):
+                raise ValueError('baseline is not operator approved')
+            acquired = self.__baseline_lock.acquire(blocking=False)
+            if not acquired:
+                raise ValueError('baseline evaluation already active')
+            _, configuration_json, owned = selected
+            return owned.evaluate(scoring_plan, producer_plan,
+                FeatureConfiguration.model_validate_json(configuration_json), cancelled=cancelled)
+        except Exception:
+            raise BaselineCompositionError('canonical baseline evaluation failed') from None
+        finally:
+            if acquired:
+                self.__baseline_lock.release()

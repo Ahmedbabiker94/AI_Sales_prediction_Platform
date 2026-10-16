@@ -490,3 +490,75 @@ B2b owns those algorithms and their independent acceptance. Authentic external
 revision integration, configuration/credential protection, process isolation,
 atomic/concurrent authorization semantics and hard CPU/RSS limits remain deployment
 responsibilities. No active runtime entry point is wired to this service.
+
+### B2b trusted deterministic period baselines
+
+B2b adds `BaselineDefinition` version 1.0 and a fixed trusted factory in
+`features/forecast_baselines.py`. The supported algorithms are
+`last_observation_v1` (period lag 1, no seasonal parameter) and
+`seasonal_naive_v1` (explicit positive integer season S). S must be at most 4096,
+the declared lookback and the configured history budget. There is no automatic
+business season. A weekly S=52 means 52 calendar weekly periods; it does not
+mean the same ISO week number in the preceding year. Unsupported declarations,
+missing predecessor/seasonal reference, gaps and insufficient history reject.
+
+Trusted application bootstrap can construct `CanonicalBaselineEvaluationService`
+with `baseline_definitions=(...)`, the approved feature template and its existing
+operator-owned release/history-value/label-revision authorities. In this mode
+`predictor` and `capabilities` must be omitted. At most eight distinct immutable
+profiles are constructed and retained; no dynamic imports, mutable registry or
+request-supplied callback is supported. Ordinary requests use only:
+
+```python
+service.evaluate_baseline(baseline_definition, scoring_plan, producer_plan,
+                          cancelled=cancelled)
+```
+
+The declaration must exactly match an operator-approved profile. Producer plans
+must contain its exact generated configuration/capability identities and remain
+independently authorized. `build_baseline_profile()` supplies declarations for
+planning; invoking that pure factory or its adapter directly grants no data,
+authority or scoring permission. The original fixed C0 `evaluate()` API remains
+unchanged for its original bootstrap mode; it cannot bypass baseline selection.
+Baseline mode permits one active evaluation per service, refusing concurrent or
+reentrant requests without an implicit waiting queue. No cross-request snapshot,
+feedback, fitted state or approval is cached.
+
+Each profile has one float64 period-lag output. It inherits the template's exact
+measurement, dimensions, calendar, sign semantics and target conversion policy.
+Its identity includes the full approved template and baseline definition. Only
+Gregorian daily/weekly start-anchored, gap-rejecting, cold-start-rejecting period
+semantics are supported. Templates with exogenous/time-varying categorical inputs
+reject rather than silently ignore availability rules. Unused static category and
+rolling outputs are absent from the new lag-only representation; dimensions still
+come from verified SeriesDefinition metadata. B1 fits the real fold-specific state
+and verifies full causal prefixes at the unchanged original origin O. The callback
+validates bound calculation semantics, schema, numeric policy, prefix and exact
+keyed scopes, then returns that lag. B1 owns recursive feedback: last-observation
+repeats the last actual; seasonal-naive uses prior predictions when t-S reaches the
+same origin's forecast interval. Source records are never modified.
+
+STRICT_EXACT remains the default. An explicit operator-approved target conversion
+policy is retained unchanged in configuration/schema identity; no business
+rounding or universal tolerance is introduced. Synthetic approximate-conversion
+tests do not approve production tolerances. Negative values, zero and float64
+signed zero retain their meaning/sign. Original canonical Decimals are unchanged.
+
+All contributing historical targets remain value-attested against independent
+operator authorities at O, including the real calibration partition. Recomputed
+identities cannot authorize substituted values. B1 prediction completes before
+B2a's separately authorized label capture and revision verification at E. There
+are two complete authorized captures per dataset version, no per-origin rereads,
+no serialized external-event admission and no second reader/scorer. Existing
+terminal original-claim checks, broad-before-scoped ordering, final checkpoint,
+cleanup, purpose authorization and all-or-nothing results are preserved. The only
+post-delegation operation is releasing the composition's non-storage call lock.
+
+Grouping-order normalization is deferred: changing event-id ordering can change
+accepted group identities. B2b does not alter B2a identities or grouping behavior.
+Earlier B2a aggregate admission, atomic authorization snapshots, independent real
+revision integration and hard CPU/RSS controls remain separate operational work.
+Trusted bootstrap is still an explicit assumption, not Python authentication;
+callbacks are not sandboxed. Linux/WSL unsynchronized staging remains required.
+B2c joint producer comparison, model fitting/loading, sequence/direct/ensemble
+adapters, production serving and active runtime migration are not implemented.

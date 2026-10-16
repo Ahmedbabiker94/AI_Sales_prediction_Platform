@@ -11,6 +11,32 @@ from .dataset import _opaque
 from .temporal_preparation import _TemporalContract, TemporalDatasetBinding, TemporalTimestamp
 
 
+class BaselineDefinition(_TemporalContract):
+    """Algorithm declaration only; approval comes from operator-owned C0 bootstrap."""
+    version: Literal['1.0'] = '1.0'
+    algorithm: Literal['last_observation_v1', 'seasonal_naive_v1']
+    season_length: StrictInt | None = Field(default=None, ge=1, le=4096)
+    lookback: StrictInt = Field(ge=1, le=4096)
+    supported_horizon: StrictInt = Field(ge=1, le=52)
+
+    @model_validator(mode='after')
+    def explicit_period_lag(self):
+        if self.algorithm == 'last_observation_v1':
+            if self.season_length is not None:
+                raise ValueError('last observation has no seasonal parameter')
+        elif self.season_length is None or self.season_length > self.lookback:
+            raise ValueError('explicit season within declared lookback required')
+        return self
+
+    @property
+    def period_lag(self):
+        return 1 if self.algorithm == 'last_observation_v1' else self.season_length
+
+    @property
+    def digest(self):
+        return identity(self.model_dump(mode='json'))
+
+
 class ScoringArithmeticPolicy(_TemporalContract):
     policy_id: str
     version: Literal['1.0'] = '1.0'
