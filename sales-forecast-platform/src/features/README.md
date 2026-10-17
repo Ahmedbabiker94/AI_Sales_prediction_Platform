@@ -642,3 +642,81 @@ Production authority authenticity, protected bootstrap and hard limits remain
 operator/deployment duties. Existing B1/B2a/C0/B2b public APIs and B2a grouping IDs
 are preserved. Joint scoring, truth alignment, signed deltas, generic grouping
 normalization, model fitting/loading, promotion and serving are outside C1.
+
+### B2c-C2 trusted joint validation scoring
+
+C1 `execute()` remains label-free. The opt-in `compare(JointComparisonPlan)` starts
+one new owned lifecycle at the beginning; a prior diagnostic, serialized events,
+labels, flags or handoffs are never accepted as inputs. Bootstrap must separately
+fix a `JointComparisonPolicy`, a publication-scoped `captured_value_as_of_E_v1`
+label authority, joint-comparison permission, per-producer evaluation/scoring
+permission and common-label-use permission. Existing history authorities and
+C1 authorizers are still mandatory. Python declarations do not authenticate those
+authorities; protected operator bootstrap is an explicit trust boundary.
+
+Only the fixed synthetic candidate and one approved Last-observation or
+Seasonal-naive profile execute. Supported comparison is validation-only, with
+expanding histories and the existing calendar/horizon/split checks. Test partitions,
+replayed outputs and unimplemented representations reject. Existing contracts
+allow one exact dataset version per organization, up to eight organizations;
+multiple versions for one organization and cross-version/measurement pooling are
+unsupported. Producer-specific configurations, numeric policies and real fold
+category states remain separate; no universal tabular schema is imposed.
+
+The private phases are CAPTURING → PREDICTING → ALL_PREDICTIONS_SEALED → LABELS →
+SCORING → TERMINAL → CLOSED. Exactly one complete history read per version serves
+both producers. Both owned handoffs must seal and independently cover the full
+common semantic grid before any separate scoring-label reader opens. Then exactly
+one complete authorized label read per version exhausts and closes successfully.
+B2a and C2 share the private label reader and canonical alignment helper. All
+predictor work precedes labels; no storage lock is held during predictor, revision
+or post-capture scoring callbacks. Historical captures can physically contain
+future rows, which stay coordinator-private and cannot enter causal history early.
+
+C2 derives the validation grid from verified publication metadata and the common
+plan. Exact original-origin events stay distinct, even when they target the same
+observation. Every selected key must have a candidate prediction, baseline
+prediction and independently verified canonical label revision at E. Unselected
+history rows in a full label read are not extra forecast events. Missing,
+duplicated, misassigned, late or unverifiable labels reject the entire request.
+The trusted assessment clock must satisfy E <= now. The same immutable truth and
+claim binding is used for both producers. Source values stay exact until the
+approved model conversion; scoring always uses the original canonical truth.
+
+B2a `score_point`, `group_scores`, statistics, exact rational arithmetic and group
+identities remain unchanged. C2 feeds them deterministic semantic order separately
+for each producer. Default grouping keeps fold, organization, series, measurement,
+horizon and original origin separate. `forecast_event_weighted_v1` pooling across
+origins is available only when fixed in the operator-approved policy before the
+request. Generic B2a grouping-order normalization is still deferred. C2's new
+versioned identity binds its plan/pairing/policy, common truth/revisions, separate
+producer evaluations and deterministic semantic group comparisons.
+
+`SignedRatio` is a bounded canonical reduced signed rational. Deltas are exactly
+candidate minus baseline for SAE, SSE, MAE, MSE, and WAPE when defined. Both
+zero-denominator WAPEs remain undefined with no delta. A denominator mismatch is
+an integrity failure. RMSE is retained as B2a's exact radicand; there is no RMSE
+delta, percentage-improvement claim, winner selection or promotion.
+
+After bounded history capture, aggregate admission reserves the complete second
+read, alignment, both score sets, groups/deltas, immutable serialization and final
+verification before either producer callback. Original C1 row/byte/work/call/state
+limits remain request-wide, including both captures. `JointScoringBudgets` adds
+capture, truth, scored-event, group and arithmetic-work ceilings. Arithmetic units
+are conservative bounded bit-square operation allowances, not CPU instructions.
+Runtime charging continues through label reading, exact arithmetic and final
+checks. One elapsed/cancellation budget covers the entire request. `usage_phase`
+is before terminal checks; those checks remain charged after output assembly.
+These guards are not hard process RSS/CPU isolation or forced cancellation.
+
+Final ordering is calibration/external checks → broad C1/joint-comparison and
+per-producer evaluation authorization → fresh publication/read authorization →
+complete immutable result validation/accounting → every original producer/origin
+history and rollout check → every common truth group's revision/label-use and
+both producers' scoped scoring checks → last cancellation/deadline checkpoint →
+direct return. Any failure discards the whole result. Private cleanup only follows;
+no broad verification callback or mutable scoring operation follows the terminal
+phase. Sequential checks still cannot provide an atomic revocation snapshot;
+authorization leases, authentic external authorities and hard process controls
+remain deployment-owned. No model fitting/loading, serving, operational access,
+MLflow, automatic selection or further milestone is wired by this foundation.

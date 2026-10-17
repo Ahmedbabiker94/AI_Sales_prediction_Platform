@@ -74,6 +74,53 @@ class LabelRevisionClaim:
             self.value_identity,self.assessment_cutoff.isoformat(),self.policy])
 
 
+def _capture_label_rows(provider, bindings, metadata, wanted, engine, budgets, checkpoint, charge):
+    """Shared B2a/C2 full reader lifecycle. No concat or numeric inference.
+
+    Whole versions are read and closed; only explicitly requested period keys
+    are retained. Unselected historical rows are not extra forecast events.
+    """
+    label_rows = {}; seen = set()
+    for binding in bindings:
+        meta = metadata[binding.reference.organization_id]; charge('captures', 1); rows = 0
+        definitions = {s.series_id for s in meta.series}
+        with provider.open_read(binding.reference, purpose=meta.purpose, budgets=budgets) as session:
+            if session.metadata != meta: raise ForecastEvaluationError('label publication metadata differs')
+            with closing(session.batches()) as stream:
+                for frame in stream:
+                    checkpoint(); engine._frame_budget(frame); size = int(frame.memory_usage(deep=True).sum())
+                    rows += len(frame)
+                    charge('rows', len(frame)); charge('decoded', size); charge('intermediate', 2*size)
+                    charge('work', len(frame)*len(frame.columns))
+                    if rows > meta.rows: raise ForecastEvaluationError('label capture count mismatch')
+                    for row in frame.to_dict('records'):
+                        key = (meta.reference.organization_id, row['series_id'], engine._time(row['period_start']))
+                        if key in seen or row['series_id'] not in definitions:
+                            raise ForecastEvaluationError('ambiguous or unexpected label observation')
+                        seen.add(key)
+                        if key in wanted:
+                            charge('intermediate', size)
+                            label_rows[key] = dict(row)
+        if rows != meta.rows: raise ForecastEvaluationError('incomplete label capture')
+        checkpoint(); provider.require_current(meta, budgets=budgets)
+    if set(label_rows) != wanted: raise ForecastEvaluationError('complete eligible labels required')
+    return label_rows
+
+
+def _verified_label_claim(row, scope, meta, binding, cutoff, engine):
+    """Exact canonical alignment shared with B2a; authority must attest revision."""
+    if (engine._time(row['period_end']) != engine._time(scope.target_period_end)
+            or row['metric'] != scope.metric or row['unit'] != scope.unit or row['currency'] != scope.currency
+            or row['frequency'] != scope.frequency or row['value_status'] != 'actual'
+            or engine._time(row['period_end']) > cutoff or engine._time(row['available_at']) > cutoff):
+        raise ForecastEvaluationError('label scope or cutoff mismatch')
+    _opaque(row['source_record_id']); _opaque(row['availability_reference'])
+    return LabelRevisionClaim(meta.reference, meta.manifest_digest, meta.admission_digest, meta.source_id,
+        binding.mapping_digest, scope.organization_id, scope.series_id, scope.metric, scope.unit, scope.currency,
+        engine._time(scope.target_period), engine._time(scope.target_period_end), row['source_record_id'], row['lineage_id'],
+        engine._time(row['available_at']), row['availability_reference'], numeric_identity(row['value']), cutoff)
+
+
 class _EvaluationOwner:
     """No public mint/accept path; issued and consumed by one active evaluator."""
     def __init__(self,issuer,source,plan):
@@ -251,29 +298,11 @@ class CanonicalForecastEvaluationService:
                         heldout[f.fold_id,meta.reference.organization_id,origin]=(make_context(meta,f,origin,events),events,part)
         # Authorization for label use is separate and precedes label read access.
         for ctx,events,part in heldout.values():self._approved(self.authorize_labels,ctx,'read')
-        label_rows={};seen=set()
-        for binding in pp.datasets:
-            meta=metadata[binding.reference.organization_id];charge('captures',1);rows=0
-            if used['rows']+meta.rows>b.max_captured_rows:raise ForecastEvaluationError('combined capture row budget exceeded')
-            wanted_keys={(s.series_id,engine._time(s.target_period)) for ctx,events,part in heldout.values()
-                if ctx.metadata.reference.organization_id==meta.reference.organization_id for e in events for s in (e.scope,)}
-            with self.provider.open_read(binding.reference,purpose=sp.purpose,budgets=rb) as session:
-                if session.metadata!=meta:raise ForecastEvaluationError('label publication metadata differs')
-                with closing(session.batches()) as stream:
-                    for frame in stream:
-                        checkpoint();engine._frame_budget(frame);size=int(frame.memory_usage(deep=True).sum())
-                        rows+=len(frame);charge('rows',len(frame));charge('decoded',size);charge('intermediate',size);charge('work',len(frame)*len(frame.columns))
-                        if rows>meta.rows:raise ForecastEvaluationError('label capture count mismatch')
-                        charge('intermediate',size)  # detached record assembly copy
-                        for row in frame.to_dict('records'):
-                            key=(meta.reference.organization_id,row['series_id'],engine._time(row['period_start']))
-                            if key in seen:raise ForecastEvaluationError('ambiguous label observation')
-                            seen.add(key)
-                            if (row['series_id'],key[2]) in wanted_keys:
-                                charge('intermediate',size)  # conservative per retained record/copy allowance
-                                label_rows[key]=dict(row)
-            if rows!=meta.rows:raise ForecastEvaluationError('incomplete label capture')
-            checkpoint();self.provider.require_current(meta,budgets=rb)
+        wanted_keys={(ctx.metadata.reference.organization_id,e.scope.series_id,engine._time(e.scope.target_period))
+            for ctx,events,part in heldout.values() for e in events}
+        if used['rows']+sum(m.rows for m in handoff.metadata)>b.max_captured_rows:
+            raise ForecastEvaluationError('combined capture row budget exceeded')
+        label_rows=_capture_label_rows(self.provider,pp.datasets,metadata,wanted_keys,engine,rb,checkpoint,charge)
         # All label readers exhausted and successfully closed. No predictors follow.
         aligned=[];terminal=[]
         for ctx,events,part in heldout.values():
@@ -286,17 +315,7 @@ class CanonicalForecastEvaluationService:
                 scope=event.scope;key=(scope.organization_id,scope.series_id,engine._time(scope.target_period))
                 row=label_rows.get(key)
                 if row is None:raise ForecastEvaluationError('complete eligible labels required')
-                if (engine._time(row['period_end'])!=engine._time(scope.target_period_end) or row['metric']!=scope.metric
-                        or row['unit']!=scope.unit or row['currency']!=scope.currency or row['frequency']!=scope.frequency
-                        or row['value_status']!='actual' or engine._time(row['period_end'])>ctx.assessment_cutoff
-                        or engine._time(row['available_at'])>ctx.assessment_cutoff):raise ForecastEvaluationError('label scope or cutoff mismatch')
-                _opaque(row['source_record_id']);_opaque(row['availability_reference'])
-                # No new revision timestamp is inferred. The trusted verifier must
-                # attest the exact value identity using independently held evidence.
-                claim=LabelRevisionClaim(meta.reference,meta.manifest_digest,meta.admission_digest,meta.source_id,
-                    event.dataset_binding.mapping_digest,scope.organization_id,scope.series_id,scope.metric,scope.unit,scope.currency,
-                    engine._time(scope.target_period),engine._time(scope.target_period_end),row['source_record_id'],row['lineage_id'],
-                    engine._time(row['available_at']),row['availability_reference'],numeric_identity(row['value']),ctx.assessment_cutoff)
+                claim=_verified_label_claim(row,scope,meta,event.dataset_binding,ctx.assessment_cutoff,engine)
                 charge('verification',len(claim.digest)+len(str(claim.value_identity).encode())+len(claim.evidence_reference.encode()))
                 claims.append(claim);pairs.append((event,row['value'],claim))
             claims=tuple(claims)

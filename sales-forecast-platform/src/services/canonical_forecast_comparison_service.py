@@ -1,4 +1,4 @@
-"""C1 owned, label-free pair execution. No scoring or external handoff import.
+"""Owned C1 label-free execution and opt-in C2 exact joint scoring. No handoff import.
 
 Trusted bootstrap owns authentic authorities/callbacks. Private Python objects are
 lifecycle guards, not cryptographic credentials or a security sandbox. Sequential
@@ -22,12 +22,18 @@ from src.data.contracts.backtesting import (ForecastEvaluationPlan, PredictorCap
 from src.data.contracts.dataset import StagingBudgets, operational_json
 from src.data.contracts.features import FeatureConfiguration
 from src.data.contracts.forecast_comparison import (JointPredictionPlan, JointPredictionBudgets,
-    JointForecastKey, ProducerPredictionDiagnostic, JointPredictionDiagnostic)
+    JointForecastKey, ProducerPredictionDiagnostic, JointPredictionDiagnostic,
+    JointComparisonPlan, JointComparisonPolicy, JointScoringBudgets, JointTruthPoint,
+    JointProducerScore, JointScoreDelta, SignedRatio, JointComparisonResult)
+from src.data.contracts.forecast_evaluation import (ForecastScoringPlan, EvaluationBudgets,
+    ScoredEvent, ForecastEvaluationResult)
+from src.data.processing.forecast_evaluation import score_point, group_scores, grouping_key, bounded
 from src.features.canonical_feature_pipeline import CanonicalFeaturePipeline, FeatureBudgets
 from src.features.forecast_baselines import build_baseline_profile
 from src.providers.canonical_training_data_provider import CanonicalTrainingDataProvider
 from src.services.canonical_baseline_evaluation_service import _authority, _declaration
-from src.services.canonical_forecast_evaluation_service import _EvaluationOwner
+from src.services.canonical_forecast_evaluation_service import (
+    _EvaluationOwner, EvaluationContext, _capture_label_rows, _verified_label_claim)
 from src.services.canonical_training_preparation_service import (
     CanonicalTrainingPreparationService, ValueAttestedAvailabilityVerifier)
 from src.services.deterministic_forecast_rollout_service import (
@@ -44,6 +50,25 @@ class JointExecutionContext:
     plan_digest: str
     metadata: object = None
     capture_id: str | None = None
+
+
+@dataclass(frozen=True)
+class JointComparisonContext:
+    """Original common-grid scope; declarations do not authenticate authorities."""
+    plan_json: str
+    plan_digest: str
+    policy_json: str
+    policy_digest: str
+    label_authority_digest: str
+    producer_profile_ids: tuple
+    metadata: object = None
+    fold_id: str | None = None
+    forecast_origin: object = None
+    assessment_cutoff: object = None
+    series_ids: tuple = ()
+    forecast_keys: tuple = ()
+    purpose: str = 'offline_forecast_evaluation'
+    action: str = 'joint_compare_labels'
 
 
 @dataclass(frozen=True)
@@ -152,9 +177,9 @@ def _order(key):
 
 class _JointRequest:
     """Private active-request owner. Never reconstructed from diagnostics or hashes."""
-    def __init__(self,issuer,plan,cancelled):
+    def __init__(self,issuer,plan,cancelled,comparison=None):
         self.issuer=issuer;self.plan=plan;self.cancelled=cancelled;self.phase='CAPTURING'
-        self.captures={};self.slots=[];self.handoffs=[];self.grid=();self.last=issuer._clock();self.start=self.last
+        self.captures={};self.read_sizes={};self.slots=[];self.handoffs=[];self.grid=();self.last=issuer._clock();self.start=self.last
         b=plan.budgets
         self.limits=dict(rows=b.max_captured_rows,decoded=b.max_decoded_bytes,assembly=b.max_assembly_bytes,
             work=b.max_work_cells,state=b.max_fitted_state_bytes,representation=b.max_representation_bytes,
@@ -162,6 +187,11 @@ class _JointRequest:
             external=b.max_verification_calls,prefix=b.max_prefix_cells,verification=b.max_verification_bytes,
             claims=b.max_verification_claims,checks=b.max_verification_calls,profile=b.max_profile_bytes,
             output=b.max_output_bytes,events=b.max_prediction_events,output_cells=b.max_output_cells)
+        self.comparison=comparison
+        if comparison is not None:
+            cb=comparison.budgets
+            self.limits.update(captures=cb.max_capture_sessions,truth=cb.max_truth_points,
+                scores=cb.max_scored_events,groups=cb.max_score_groups,arithmetic=cb.max_arithmetic_work)
         self.used={k:0 for k in self.limits};self.views=set();self.reservation={};self.admission_base={}
 
     def active(self):
@@ -278,11 +308,11 @@ class _JointRequest:
 
     def close(self):
         for _,owner,_,_ in self.slots:owner.close()
-        self.phase='CLOSED';self.captures.clear();self.slots.clear();self.handoffs.clear()
+        self.phase='CLOSED';self.captures.clear();self.read_sizes.clear();self.slots.clear();self.handoffs.clear()
 
 
 class CanonicalForecastComparisonService:
-    """C1 only: execute() returns detached label-free diagnostics, never scores.
+    """execute() is label-free C1; compare() is separately authorized exact C2.
 
     Construct only at trusted startup. Exactly one candidate and at most eight
     fixed baseline alternatives; one selected pair per request, no registry API.
@@ -291,7 +321,9 @@ class CanonicalForecastComparisonService:
     def __init__(self,provider,*,candidate_configuration,candidate_capabilities,candidate_predictor,
                  baseline_template_configuration,baseline_definitions,release_authority,value_authority,
                  authorize_joint,authorize_rollout,authorize_external_forecast=None,
-                 feature_budgets=None,read_budgets=None,rollout_budgets=None,joint_budgets=None,elapsed_clock=monotonic):
+                 feature_budgets=None,read_budgets=None,rollout_budgets=None,joint_budgets=None,elapsed_clock=monotonic,
+                 comparison_policy=None,label_revision_authority=None,authorize_comparison=None,
+                 authorize_evaluation=None,authorize_label_use=None,scoring_budgets=None):
         try:
             if type(provider) is not CanonicalTrainingDataProvider:raise ValueError()
             if (not all(callable(c) for c in (candidate_predictor,authorize_joint,authorize_rollout,elapsed_clock))
@@ -324,6 +356,18 @@ class CanonicalForecastComparisonService:
             self.__external=authorize_external_forecast;self.__fb=fb;self.__rb=rb
             self.__rollout_limits=_declaration(rollout_budgets if rollout_budgets is not None else RolloutBudgets(),RolloutBudgets).model_dump()
             self.__limits=_declaration(joint_budgets if joint_budgets is not None else JointPredictionBudgets(),JointPredictionBudgets).model_dump()
+            self.__scoring=None
+            if any(v is not None for v in (comparison_policy,label_revision_authority,authorize_comparison,
+                                          authorize_evaluation,authorize_label_use,scoring_budgets)):
+                policy=_declaration(comparison_policy,JointComparisonPolicy)
+                ls,labels=_authority(label_revision_authority,'captured_value_as_of_E_v1')
+                if ls!=scopes or not all(callable(c) for c in (authorize_comparison,authorize_evaluation,authorize_label_use)):
+                    raise ValueError('explicit matching joint scoring authorities required')
+                sb=_declaration(scoring_budgets if scoring_budgets is not None else JointScoringBudgets(),JointScoringBudgets)
+                authority_digest=identity([label_revision_authority.authority_id,label_revision_authority.authority_version,
+                    label_revision_authority.protocol,ls,label_revision_authority.purpose])
+                self.__scoring=(policy.model_dump_json(),authority_digest,labels,authorize_comparison,
+                                authorize_evaluation,authorize_label_use,sb.model_dump())
             self.__clock=elapsed_clock;self.__lock=Lock();self.__active=None
         except Exception:raise JointPredictionError('invalid operator joint composition') from None
 
@@ -333,6 +377,21 @@ class CanonicalForecastComparisonService:
         return self.__active is not None and self.__active.phase=='PREDICTING' and any(s[1] is owner for s in self.__active.slots)
 
     def execute(self,plan,*,cancelled=lambda:False):
+        """Backward-compatible label-free C1 path."""
+        return self.__start(plan,cancelled,None)
+
+    def compare(self,plan,*,cancelled=lambda:False):
+        """C2 starts a fresh owned request. Never accepts C1 diagnostics or events."""
+        try:
+            if self.__scoring is None:raise ValueError('joint scoring not configured')
+            plan=_declaration(plan,JointComparisonPlan)
+            policy=JointComparisonPolicy.model_validate_json(self.__scoring[0])
+            if plan.policy_digest!=policy.digest or any(v>self.__scoring[6][k] for k,v in plan.budgets.model_dump().items()):
+                raise ValueError('unapproved comparison policy or budgets')
+        except Exception:raise JointPredictionError('invalid joint scoring request') from None
+        return self.__start(plan.predictions,cancelled,plan)
+
+    def __start(self,plan,cancelled,comparison):
         acquired=False;request=None
         try:
             plan=_declaration(plan,JointPredictionPlan)
@@ -352,7 +411,7 @@ class CanonicalForecastComparisonService:
                 selected.append((producer,profile))
             acquired=self.__lock.acquire(blocking=False)
             if not acquired:raise ValueError()
-            request=_JointRequest(self,plan,cancelled);self.__active=request;request.checkpoint()
+            request=_JointRequest(self,plan,cancelled,comparison);self.__active=request;request.checkpoint()
             for _,profile in selected:request.charge('profile',len(profile.configuration_json.encode())+len(profile.capabilities_json.encode()))
             return self.__execute(request,selected)
         except Exception:raise JointPredictionError('joint prediction execution failed') from None
@@ -363,15 +422,27 @@ class CanonicalForecastComparisonService:
     def __execute(self,r,selected):
         base=JointExecutionContext(r.plan.model_dump_json(),r.plan.digest)
         r.verify(self.__authorize,base,'execute')
+        if r.comparison is not None:
+            common=self.__comparison_context(r)
+            r.verify(self.__scoring[3],common,'execute')
+            for producer in r.plan.producers:
+                r.verify(self.__scoring[4],self.__evaluation_context(r,producer),'execute')
+            calendar=CanonicalFeaturePipeline(FeatureConfiguration.model_validate_json(selected[0][1].configuration_json),budgets=self.__fb)
+            now=calendar._time(self.__provider.clock())
+            if any(calendar._time(f.assessment_cutoff)>now for f in r.plan.producers[0].plan.folds):
+                raise JointPredictionError('future assessment cutoff')
         def joint(ctx,stage):return r.verify(self.__authorize,ctx,stage)
         preparation=CanonicalTrainingPreparationService(self.__provider,authorize_preparation=joint,verify_availability=None)
         for binding in r.plan.producers[0].plan.datasets:
             r.checkpoint()
+            if r.comparison is not None:r.charge('captures',1)
             def context(meta):
                 if preparation._temporal_binding(meta,binding.series_ids)!=binding:raise ValueError()
                 return JointExecutionContext(base.plan_json,base.plan_digest,meta)
             def account(kind,rows,size):
-                if kind=='capture':r.charge('rows',rows);r.charge('decoded',size)
+                if kind=='capture':
+                    r.charge('rows',rows);r.charge('decoded',size)
+                    r.read_sizes[binding.reference]=r.read_sizes.get(binding.reference,0)+size
                 else:r.charge(kind,size)
             meta,ctx,frame=preparation._capture_neutral(binding.reference,r.plan.purpose,context,
                 row_limit=r.plan.budgets.max_captured_rows,column_limit=self.__fb.max_columns,
@@ -404,6 +475,7 @@ class CanonicalForecastComparisonService:
                 feature_budgets=self.__fb,read_budgets=self.__rb,cancelled=cancelled)
             r.seal(source,owner,producer,profile,handoff)
         if r.phase!='ALL_PREDICTIONS_SEALED':raise ValueError()
+        if r.comparison is not None:return self.__score(r,base)
         # All broad checks precede assembly and original scoped terminal checks.
         for source,producer,profile,handoff in r.handoffs:
             for ctx,claims,categories in handoff.calibration:
@@ -496,6 +568,217 @@ class CanonicalForecastComparisonService:
         estimates['checks']+=1  # Final broad joint authorization.
         estimates['output']=2*estimates['prediction']+2*sum(len(k.model_dump_json().encode()) for k in r.grid)+4096
         estimates['assembly']+=estimates['output']
+        if r.comparison is not None:self.__admit_scoring(r,estimates)
         r.admission_base=dict(r.used);r.reservation=dict(estimates)
         for kind,amount in estimates.items():
             if r.used[kind]+amount>r.limits[kind]:raise JointPredictionError('joint pre-prediction admission exceeded')
+
+    def __policy(self):
+        return JointComparisonPolicy.model_validate_json(self.__scoring[0])
+
+    def __scoring_plan(self,r,producer):
+        policy=self.__policy();b=r.comparison.budgets
+        return ForecastScoringPlan(plan_id=r.comparison.plan_id,producer_plan_digest=producer.plan.digest,
+            datasets=producer.plan.datasets,partitions=policy.partitions,event_weighting=policy.event_weighting,
+            arithmetic=policy.arithmetic,budgets=EvaluationBudgets(
+                max_scored_events=min(10000,b.max_scored_events//2),max_groups=min(10000,b.max_score_groups//2)))
+
+    def __comparison_context(self,r,metadata=None,keys=()):
+        policy=self.__policy();p=r.comparison
+        if keys:
+            first=keys[0]
+            if metadata is None or any((k.fold_id,k.organization_id,k.forecast_origin,k.assessment_cutoff)!=
+                (first.fold_id,first.organization_id,first.forecast_origin,first.assessment_cutoff) for k in keys):raise ValueError()
+            binding=next(d for d in r.plan.producers[0].plan.datasets if d.reference==metadata.reference)
+        return JointComparisonContext(p.model_dump_json(),p.digest,policy.model_dump_json(),policy.digest,
+            self.__scoring[1],tuple(v.profile_id for v in r.plan.producers),metadata,
+            keys[0].fold_id if keys else None,keys[0].forecast_origin if keys else None,
+            keys[0].assessment_cutoff if keys else None,binding.series_ids if keys else (),tuple(keys))
+
+    def __evaluation_context(self,r,producer,metadata=None,keys=(),events=()):
+        sp=self.__scoring_plan(r,producer);p=producer.plan
+        return EvaluationContext(sp.model_dump_json(),sp.digest,p.model_dump_json(),p.digest,metadata,
+            keys[0].fold_id if keys else None,keys[0].forecast_origin if keys else None,
+            keys[0].assessment_cutoff if keys else None,
+            next(d.series_ids for d in p.datasets if d.reference==metadata.reference) if metadata is not None else (),
+            tuple((k.series_id,k.horizon_step,k.target_period,k.target_period_end) for k in keys),
+            tuple(e.event_id for e in events))
+
+    def __admit_scoring(self,r,estimates):
+        """Reserve the second FULL read and bounded arithmetic before callbacks.
+
+        Arithmetic units conservatively count bounded bit-square operations,
+        not measured CPU instructions or hard process isolation.
+        """
+        keys=tuple(k for k in r.grid if k.partition=='validation');n=len(keys)
+        if not n:raise JointPredictionError('nonempty validation grid required')
+        policy=self.__policy();bits=policy.arithmetic.max_accumulator_bits
+        sizes={}
+        for k in keys:
+            scope=(k.fold_id,k.organization_id,k.forecast_origin);sizes[scope]=sizes.get(scope,0)+1
+        count=len(sizes)
+        read_rows=sum(c.metadata.rows for c in r.captures.values())
+        read_bytes=sum(r.read_sizes.values())
+        largest=max(len(repr(row).encode()) for c in r.captures.values() for row in c.rows)
+        key_size=max(len(k.model_dump_json().encode()) for k in keys)
+        context_size=(len(r.comparison.model_dump_json().encode())+len(policy.model_dump_json().encode())+
+            max(len(repr(c.metadata).encode()) for c in r.captures.values())+
+            max(sizes.values())*(key_size+largest+8192))
+        context_size*=4  # bounded repr/JSON copies and both producer contexts
+        extra_checks=10*count+3
+        estimates.update(captures=len(r.captures),truth=n,scores=2*n,groups=2*n,
+            arithmetic=1024*n*bits*bits)
+        estimates['rows']=read_rows
+        estimates['decoded']+=read_bytes
+        # Full decode, record copies, both score sets, group/delta and validation
+        # copies are reserved, not merely the selected truth column bytes.
+        extra_bytes=read_bytes*(read_rows+4)+n*(key_size+largest+32768)*16+8*count*context_size
+        estimates['assembly']+=extra_bytes
+        estimates['output']+=n*(key_size+32768)*16
+        estimates['work']+=4*read_rows*max(len(c.columns) for c in r.captures.values())+512*n
+        estimates['checks']+=extra_checks
+        estimates['claims']+=4*n
+        estimates['verification']+=extra_checks*context_size+4*n*(largest+8192)
+
+    def __score(self,r,history_base):
+        if r.phase!='ALL_PREDICTIONS_SEALED' or len(r.handoffs)!=2:raise ValueError()
+        r.checkpoint()
+        policy=self.__policy();arithmetic=policy.arithmetic;bits=arithmetic.max_accumulator_bits
+        keys=tuple(sorted((k for k in r.grid if k.partition=='validation'),key=_order))
+        expected={k.key_id for k in keys}
+        if len(keys)!=len(expected):raise ValueError('ambiguous comparison grid')
+        metadata={c.metadata.reference.organization_id:c.metadata for c in r.captures.values()}
+        producer_events={};score_plans={}
+        for source,producer,profile,h in r.handoffs:
+            # Only actual recorded/sealed objects can reach this point. Native
+            # contracts and semantic keys are independently checked again.
+            if h.owner not in [slot[1] for slot in r.slots] or h.source is not source:raise ValueError()
+            DeterministicRolloutResult.model_validate(h.result.model_dump())
+            indexed={}
+            for event in h.result.events:
+                key=_key(event.dataset_binding,event.scope,producer.plan)
+                if key.partition!='validation':continue
+                if key.key_id in indexed:raise ValueError('duplicate comparison prediction')
+                indexed[key.key_id]=event
+            if set(indexed)!=expected:raise ValueError('incomplete comparison prediction grid')
+            producer_events[profile.profile_id]=indexed;score_plans[profile.profile_id]=self.__scoring_plan(r,producer)
+        scoped={}
+        for key in keys:scoped.setdefault((key.fold_id,key.organization_id,key.forecast_origin),[]).append(key)
+        engine=CanonicalFeaturePipeline(FeatureConfiguration.model_validate_json(r.handoffs[0][2].configuration_json),budgets=self.__fb)
+        contexts=[]
+        for group in scoped.values():
+            group=tuple(group);meta=metadata[group[0].organization_id]
+            common=self.__comparison_context(r,meta,group)
+            if engine._time(self.__provider.clock())<engine._time(common.assessment_cutoff):
+                raise JointPredictionError('future assessment cutoff')
+            r.verify(self.__scoring[3],common,'labels')
+            r.verify(self.__scoring[5],common,'read')
+            evaluations=tuple(self.__evaluation_context(r,p,meta,group,
+                tuple(producer_events[p.profile_id][k.key_id] for k in group)) for p in r.plan.producers)
+            for ctx in evaluations:r.verify(self.__scoring[4],ctx,'origin')
+            r.charge('assembly',2*len(repr((common,evaluations)).encode()))
+            contexts.append((common,evaluations))
+        r.checkpoint();r.phase='LABELS'
+        wanted={(k.organization_id,k.series_id,engine._time(k.target_period)) for k in keys}
+        def account(kind,amount):
+            r.charge('assembly' if kind=='intermediate' else kind,amount)
+        rows=_capture_label_rows(self.__provider,r.plan.producers[0].plan.datasets,metadata,wanted,
+            engine,self.__rb,r.checkpoint,account)
+        # The shared helper has exhausted and successfully closed ALL readers.
+        # Neither predictors nor any prediction mutation may follow LABELS.
+        truth=[];aligned={};terminals=[]
+        for common,evaluations in contexts:
+            r.checkpoint()
+            if engine._time(self.__provider.clock())<engine._time(common.assessment_cutoff):
+                raise JointPredictionError('future assessment cutoff')
+            r.verify(self.__scoring[5],common,'after_read')
+            claims=[];values=[]
+            for key in common.forecast_keys:
+                row=rows[(key.organization_id,key.series_id,engine._time(key.target_period))]
+                event=producer_events[r.plan.producers[0].profile_id][key.key_id]
+                claim=_verified_label_claim(row,event.scope,common.metadata,key.dataset,
+                    engine._time(key.assessment_cutoff),engine)
+                claims.append(claim);values.append((key,row['value'],claim))
+            claims=tuple(claims)
+            r.verify(self.__scoring[2],common,claims)
+            for key,value,claim in values:
+                r.charge('truth',1);r.charge('work',1)
+                point=JointTruthPoint(key=key,label_binding_digest=claim.digest,
+                    original_value_identity_json=operational_json(claim.value_identity),source_record_id=claim.source_record_id,
+                    lineage_id=claim.lineage_id,available_at=claim.available_at,evidence_reference=claim.evidence_reference)
+                r.charge('assembly',len(point.model_dump_json().encode()))
+                truth.append(point);aligned[key.key_id]=(value,claim)
+            terminals.append((common,claims,evaluations))
+        if set(aligned)!=expected:raise ValueError('incomplete verified common truth')
+        r.phase='SCORING';producer_scores=[];group_maps=[]
+        for source,producer,profile,h in r.handoffs:
+            sp=score_plans[profile.profile_id];events=[];members={}
+            for key in keys:
+                r.checkpoint();r.charge('scores',1);r.charge('work',1);r.charge('arithmetic',32*bits*bits)
+                prediction=producer_events[profile.profile_id][key.key_id];value,claim=aligned[key.key_id]
+                scored=ScoredEvent(scope=prediction.scope,producer_event_id=prediction.event_id,
+                    label_binding_digest=claim.digest,scoring_plan_digest=sp.digest,arithmetic_policy_digest=arithmetic.digest,
+                    assessment_cutoff=key.assessment_cutoff,partition='validation',
+                    statistics=score_point(prediction.value,value,arithmetic))
+                r.charge('assembly',len(scored.model_dump_json().encode()));events.append(scored)
+                members.setdefault(grouping_key(scored,sp),[]).append(key.key_id)
+            def grouping_checkpoint():
+                r.checkpoint();r.charge('work',1);r.charge('arithmetic',8*bits*bits)
+            groups=group_scores(tuple(events),sp,grouping_checkpoint)
+            mapping={}
+            for group in groups:
+                r.charge('groups',1)
+                group_key=(group.fold_id,str(group.organization_id),str(group.series_id),group.horizon_step,
+                    group.metric,group.unit,group.currency or '',group.partition,group.assessment_cutoff.isoformat(),
+                    group.forecast_origin.isoformat() if group.forecast_origin is not None else '')
+                if group_key in mapping or group_key not in members:raise ValueError('ambiguous score grouping')
+                mapping[group_key]=(group,tuple(sorted(members[group_key])))
+            evaluation=ForecastEvaluationResult(scoring_plan=sp,producer_result_id=h.result.rollout_id,
+                events=tuple(events),groups=groups)
+            serialized=evaluation.model_dump_json();r.charge('assembly',2*len(serialized.encode()))
+            producer_scores.append(JointProducerScore(role=producer.role,profile_id=profile.profile_id,evaluation_json=serialized))
+            group_maps.append(mapping)
+        if set(group_maps[0])!=set(group_maps[1]):raise ValueError('different producer group keys')
+        deltas=[]
+        def signed(value):
+            bounded(value,arithmetic)
+            return SignedRatio(numerator=str(value.numerator),denominator=str(value.denominator))
+        for group_key in sorted(group_maps[0]):
+            r.checkpoint();r.charge('work',1);r.charge('arithmetic',128*bits*bits)
+            (a,a_keys),(b,b_keys)=group_maps[0][group_key],group_maps[1][group_key]
+            if a_keys!=b_keys:raise ValueError('different group truth coverage')
+            sa,sb=a.statistics,b.statistics
+            if sa.count!=sb.count or sa.saa!=sb.saa or sa.wape_status!=sb.wape_status:
+                raise ValueError('common truth denominator mismatch')
+            deltas.append(JointScoreDelta(semantic_group_id=identity([policy.digest,group_key,a_keys]),
+                forecast_key_ids=a_keys,candidate=sa,baseline=sb,
+                **{name:signed(getattr(sa,name).fraction-getattr(sb,name).fraction) for name in ('sae','sse','mae','mse')},
+                wape_status=sa.wape_status,wape=None if sa.wape is None else signed(sa.wape.fraction-sb.wape.fraction)))
+        # All broad/revocation-capable collaborators precede output assembly and
+        # the terminal original historical and label scopes. No scoring follows.
+        for source,producer,profile,h in r.handoffs:
+            for ctx,claims,categories in h.calibration:
+                source._approved(source.verify_availability,ctx,claims)
+                if categories:source._approved(source.verify_availability,ctx,categories)
+            for ctx,claim in h.external:source._approved(source.authorize_external,ctx,claim)
+        r.verify(self.__authorize,history_base,'return')
+        r.verify(self.__scoring[3],self.__comparison_context(r),'return')
+        for producer in r.plan.producers:r.verify(self.__scoring[4],self.__evaluation_context(r,producer),'return')
+        for capture in r.captures.values():self.__provider.require_current(capture.metadata,budgets=self.__rb)
+        r.charge('arithmetic',64*len(keys)*bits*bits)
+        result=JointComparisonResult(plan=r.comparison,policy=policy,label_authority_digest=self.__scoring[1],
+            truths=tuple(sorted(truth,key=lambda t:_order(t.key))),producers=tuple(producer_scores),
+            deltas=tuple(sorted(deltas,key=lambda d:d.semantic_group_id)),admission=tuple(sorted(r.reservation.items())),
+            usage=tuple(sorted(r.used.items())))
+        r.charge('output',len(result.model_dump_json().encode()));r.phase='TERMINAL'
+        for source,producer,profile,h in r.handoffs:
+            for ctx,claims in h.origins:
+                source._approved(source.verify_availability,ctx,claims)
+                source._approved(source.authorize,ctx,'return')
+        for common,claims,evaluations in terminals:
+            if engine._time(self.__provider.clock())<engine._time(common.assessment_cutoff):raise ValueError('future assessment')
+            r.verify(self.__scoring[2],common,claims)
+            r.verify(self.__scoring[5],common,'return')
+            for ctx in evaluations:r.verify(self.__scoring[4],ctx,'return')
+        r.checkpoint()
+        return result
