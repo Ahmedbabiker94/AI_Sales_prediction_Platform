@@ -657,3 +657,124 @@ def test_value_authority_missing_identity_rejects_even_with_legacy_approval(make
     # Supported stronger adapter requires identities even when old approval succeeds.
     run(b);ctx,claims=proof['seen'][0]
     with pytest.raises(TrainingPreparationError):proof['wrapped'](ctx,(replace(claims[0].availability,value_identity=None),))
+
+
+def numeric_covariate_configuration(configuration, *, availability='lagged', tolerance=None):
+    """Synthetic numeric promotion input; tolerance is NOT business approval."""
+    from src.data.contracts.features import FeatureConfiguration
+    data=configuration.model_dump()
+    data['category_encoding'].pop('promotion')
+    data['execution']['categories']=tuple(c for c in data['execution']['categories'] if c['field']!='promotion')
+    data['output_dtypes']['promotion']='float64'
+    rule=data['execution']['exogenous'][0]
+    rule.update(availability=availability,offset=1 if availability=='lagged' else None)
+    if tolerance is not None:
+        measurement={**data['execution']['measurement'],'unit':'synthetic_index','currency':None}
+        rule['measurement']=measurement
+        data['execution'].update(numeric_conversion='versioned_float64',numeric_policies=(
+            dict(field='value',measurement=data['execution']['measurement'],mode='STRICT_EXACT'),
+            dict(field='promotion',measurement=measurement,mode='BOUNDED_FLOAT64',absolute_tolerance=tolerance)))
+    return FeatureConfiguration.model_validate(data)
+
+
+def configure_numeric_rollout(bundle, *, availability='lagged', tolerance=None):
+    cfg=numeric_covariate_configuration(bundle['configuration'],availability=availability,tolerance=tolerance)
+    cap=bundle['plan'].predictor.model_copy(update={
+        'representation_schema_id':representation_schema_id(cfg),'numeric_policy_id':numeric_policy_id(cfg)})
+    bundle['configuration']=cfg
+    plan_change(bundle,configuration_digest=CanonicalFeaturePipeline(cfg).digest,predictor=cap,forecast_horizon=1)
+    return cfg
+
+
+@pytest.mark.parametrize('availability',['lagged','known_in_advance'])
+@pytest.mark.parametrize('value,accepted',[
+    (2**53+1,False),(-(2**53+1),False),(2**53,True),(2**53+2,True),(1.5,True),
+    (Decimal('0.125'),True),(Decimal('0.10'),False),(Decimal('1E-400'),False),(Decimal('1E400'),False),
+    (Decimal('-0.0000'),True),(Decimal('0.00'),True),(-0.0,True)])
+def test_numeric_covariate_reaches_exact_conversion_without_inference(make_rollout,monkeypatch,value,accepted,availability):
+    def raw(frame):
+        frame['offer']=pd.Series([value]*len(frame),dtype=object);frame.loc[0,'offer']=1.0
+    b=make_rollout(exo=True,raw_change=raw);configure_numeric_rollout(b,availability=availability)
+    seen=[];old=CanonicalFeaturePipeline.convert_numeric
+    def convert(self,original,field='value'):
+        if field=='promotion':seen.append(original)
+        return old(self,original,field)
+    monkeypatch.setattr(CanonicalFeaturePipeline,'convert_numeric',convert)
+    if accepted:
+        result=run(b);assert result.events and len(b['calls'])==2
+        for request in b['calls']:
+            for row in request.rows:
+                observed=row[-1];assert observed==float(value)
+                if float(value)==0:assert math.copysign(1,observed)==math.copysign(1,float(value))
+    else:
+        with pytest.raises(ForecastRolloutError):run(b)
+        assert not b['calls']
+    identities=[v for v in seen if type(v) is type(value) and v==value]
+    assert identities
+    if type(value) is Decimal:assert all(v.as_tuple()==value.as_tuple() for v in identities)
+    print('NUMERIC_B1',availability,type(value).__name__,repr(value),'accepted=',accepted,'calls=',len(b['calls']))
+
+
+@pytest.mark.parametrize('value,tolerance,accepted',[
+    (2**53+1,'1',True),(2**53+1,'0.999',False),(Decimal('0.10'),'1E-16',True),
+    (Decimal('19.99'),'1E-14',True),(Decimal('1E-400'),'1E-300',False),(Decimal('1E400'),'1E500',False)])
+def test_numeric_covariate_bounded_conversion_is_explicit_and_scoped(make_rollout,value,tolerance,accepted):
+    from fractions import Fraction
+    def raw(frame):
+        frame['offer']=pd.Series([value]*len(frame),dtype=object);frame.loc[0,'offer']=1.0
+    b=make_rollout(exo=True,raw_change=raw);cfg=configure_numeric_rollout(b,tolerance=tolerance)
+    if accepted:
+        result=run(b);assert result.events and len(b['calls'])==2
+        converted=b['calls'][0].rows[0][-1]
+        assert abs(Fraction.from_float(converted)-Fraction(value))<=Fraction(Decimal(tolerance))
+        assert cfg.execution.numeric_policies[1].field=='promotion'
+        assert result.events[0].numeric_policy_id==numeric_policy_id(cfg)
+    else:
+        with pytest.raises(ForecastRolloutError):run(b)
+        assert not b['calls']
+    assert type(b['raws'][2].offer.iloc[1]) is type(value) and b['raws'][2].offer.iloc[1]==value
+
+
+def test_numeric_observed_only_covariate_does_not_gain_future_availability(make_rollout):
+    def raw(frame):frame['offer']=pd.Series([1.0]*len(frame),dtype=object)
+    b=make_rollout(exo=True,raw_change=raw);configure_numeric_rollout(b,availability='observed_only')
+    with pytest.raises(ForecastRolloutError):run(b)
+    assert not b['calls']
+
+
+def test_numeric_exogenous_assembly_keeps_original_types(make_rollout):
+    from src.features.canonical_feature_pipeline import FeatureExecutionError
+    def raw(frame):
+        frame['offer']=pd.Series([2**53+1]*len(frame),dtype=object);frame.loc[0,'offer']=1.0
+    b=make_rollout(exo=True,raw_change=raw);cfg=configure_numeric_rollout(b)
+    frames=[]
+    with b['provider'].open_read(b['metadata'][0].reference,purpose='offline_forecast_evaluation') as session:
+        frames.extend(session.batches())
+    frame=pd.concat(frames,ignore_index=True);frame['organization_id']=b['metadata'][0].reference.organization_id
+    claims,exo=b['service'].preparation._availability(frame,CanonicalFeaturePipeline(cfg),lambda:None)
+    assert claims and exo['value'].dtype==object
+    assert type(exo['value'].iloc[0]) is float and exo['value'].iloc[0]==1.0
+    assert type(exo['value'].iloc[1]) is int and exo['value'].iloc[1]==2**53+1
+    with pytest.raises(FeatureExecutionError):CanonicalFeaturePipeline(cfg).convert_numeric(exo['value'].iloc[1],'promotion')
+
+
+def variable_numeric_batch_adapter(monkeypatch):
+    """Legitimate numeric-family dtype variation, serialized by real storage."""
+    original_run=runpy.run_path
+    def load(path,*args,**kwargs):
+        module=original_run(path,*args,**kwargs)
+        if str(path).endswith('tests/data/adapters/test_integration_foundation.py'):
+            cls=module['MemoryAdapter'];extract=cls.extract
+            def batches(self,**options):
+                for batch in extract(self,**options):
+                    values=batch.records['offer'].tolist()
+                    dtype=('int64' if all(type(v) is int for v in values)
+                        else 'float64' if all(type(v) is float for v in values) else None)
+                    if dtype is not None:
+                        frame=batch.records.copy()
+                        frame['offer']=pd.Series(values,index=frame.index,dtype=dtype)
+                        batch=replace(batch,records=frame)
+                    yield batch
+            cls.extract=batches
+        return module
+    monkeypatch.setattr(runpy,'run_path',load)

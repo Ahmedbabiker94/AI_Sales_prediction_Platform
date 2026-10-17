@@ -738,3 +738,167 @@ def test_c1_owner_seals_predictions_without_entering_b2a_label_phase(make_joint,
     monkeypatch.setattr(_EvaluationOwner,'consume',labels)
     assert execute(b).producers and len(sealed)==2
     assert all(o._EvaluationOwner__state=='closed' for o in sealed)
+
+
+def configure_numeric_joint(bundle, *, availability='lagged', tolerance=None):
+    helper=runpy.run_path('tests/training/test_deterministic_forecast_rollout.py')['numeric_covariate_configuration']
+    cfg=helper(bundle['configuration'],availability=availability,tolerance=tolerance)
+    data=bundle['plan'].model_dump();producer=data['producers'][0]['plan']
+    cap=PredictorCapabilities.model_validate({**producer['predictor'],
+        'representation_schema_id':representation_schema_id(cfg),'numeric_policy_id':numeric_policy_id(cfg)})
+    producer.update(configuration_digest=CanonicalFeaturePipeline(cfg).digest,predictor=cap)
+    bundle['plan']=JointPredictionPlan.model_validate(data);bundle['configuration']=cfg
+    bundle['joint']=CanonicalForecastComparisonService(**{**bundle['options'],
+        'candidate_configuration':cfg,'candidate_capabilities':cap})
+    return cfg
+
+
+def test_numeric_snapshot_mixed_object_and_nullable_scalar_fidelity(make_joint):
+    from src.services.canonical_forecast_comparison_service import _FrozenCapture, _scalar
+    b=make_joint()
+    original=pd.DataFrame({
+        'mixed':pd.Series([2**53+1,1.0],dtype=object),
+        'negative':pd.Series([-(2**53+1),1.0],dtype=object),
+        'decimal':pd.Series([Decimal('-0.0000'),Decimal('19.9900')],dtype=object),
+        'tiny_large':pd.Series([Decimal('1E-400'),Decimal('1E400')],dtype=object),
+        'positive_zero':pd.Series([Decimal('0.000'),Decimal('0.00')],dtype=object),
+        'float_zero':[-0.,0.],
+        'nullable_int':pd.Series([2**53+1,pd.NA],dtype='Int64'),
+        'nullable_float':pd.Series([-0.,pd.NA],dtype='Float64'),
+        'nullable_text':pd.Series(['category-A',pd.NA],dtype='string'),
+        'time':pd.Series([pd.Timestamp('2020-03-08',tz='America/New_York'),pd.Timestamp('2020-03-09',tz='America/New_York')])})
+    frozen=_FrozenCapture.freeze(b['metadata'][0],original,4096,lambda *a:None)
+    view=frozen.view();other=frozen.view()
+    pd.testing.assert_frame_equal(original,view,check_exact=True)
+    for i,column in enumerate(original):
+        expected=[_scalar(v,4096)[1] for v in original[column].tolist()]
+        assert [_scalar(row[i],4096)[1] for row in frozen.rows]==expected
+        assert [_scalar(v,4096)[1] for v in view[column].tolist()]==expected
+    assert type(view['mixed'].iloc[0]) is int and view['mixed'].iloc[0]==9007199254740993
+    assert type(view['mixed'].iloc[1]) is float
+    original.loc[0,'mixed']=0;view.loc[1,'decimal']=Decimal('800')
+    assert other['mixed'].iloc[0]==2**53+1 and other['decimal'].iloc[1].as_tuple()==Decimal('19.9900').as_tuple()
+    pd.testing.assert_frame_equal(frozen.view(),other,check_exact=True)
+
+
+def test_numeric_snapshot_still_rejects_mutable_and_implicit_categories(make_joint):
+    from src.services.canonical_forecast_comparison_service import _FrozenCapture
+    b=make_joint()
+    for values in ([{'mutable':True}],[['mutable']],pd.Categorical(['category-A'])):
+        with pytest.raises(ValueError):
+            _FrozenCapture.freeze(b['metadata'][0],pd.DataFrame({'unsupported':values}),4096,lambda *a:None)
+
+
+@pytest.mark.parametrize('value,tolerance,accepted',[
+    (2**53+1,None,False),(-(2**53+1),None,False),(2**53,None,True),(2**53+2,None,True),
+    (Decimal('0.10'),None,False),(Decimal('1E-400'),None,False),(Decimal('1E400'),None,False),
+    (Decimal('-0.0000'),None,True),(-0.,None,True),(2**53+1,'1',True),(2**53+1,'0.999',False),
+    (Decimal('0.10'),'1E-16',True),(Decimal('19.99'),'1E-14',True)])
+def test_numeric_authorized_joint_preserves_identity_to_policy_boundary(make_joint,monkeypatch,value,tolerance,accepted):
+    from fractions import Fraction
+    from src.services.canonical_forecast_comparison_service import _FrozenCapture
+    from src.services.canonical_training_preparation_service import CanonicalTrainingPreparationService
+    def raw(frame):
+        frame['offer']=pd.Series([value]*len(frame),dtype=object);frame.loc[0,'offer']=1.0
+    b=make_joint(exo=True,horizon=1,raw_change=raw);cfg=configure_numeric_joint(b,tolerance=tolerance)
+    stages={name:[] for name in ('provider','frozen','view','exogenous','conversion')}
+    def identity(v):
+        if type(v) is Decimal:return ('Decimal',v.as_tuple())
+        if type(v) is float:return ('float',struct.pack('>d',v).hex())
+        return (type(v).__name__,v)
+    expected=identity(value)
+    with b['provider'].open_read(b['metadata'][0].reference,purpose='offline_forecast_evaluation') as session:
+        for frame in session.batches():stages['provider'].extend(identity(v) for v in frame.promotion.tolist())
+    b['state']['reads'].clear()
+    old_view=_FrozenCapture.view
+    def view(self):
+        i=self.columns.index('promotion');stages['frozen'].extend(identity(row[i]) for row in self.rows)
+        result=old_view(self);stages['view'].extend(identity(v) for v in result.promotion.tolist());return result
+    monkeypatch.setattr(_FrozenCapture,'view',view)
+    old_availability=CanonicalTrainingPreparationService._availability
+    def availability(self,frame,engine,checkpoint):
+        claims,exo=old_availability(self,frame,engine,checkpoint)
+        if exo is not None:stages['exogenous'].extend(identity(v) for v in exo['value'].tolist())
+        return claims,exo
+    monkeypatch.setattr(CanonicalTrainingPreparationService,'_availability',availability)
+    old_convert=CanonicalFeaturePipeline.convert_numeric
+    def convert(self,v,field='value'):
+        if field=='promotion':stages['conversion'].append(identity(v))
+        return old_convert(self,v,field)
+    monkeypatch.setattr(CanonicalFeaturePipeline,'convert_numeric',convert)
+    def predict(role,request,result):
+        if role=='candidate':return PredictionBatch(request_id=request.request_id,
+            points=tuple(PredictionPoint(scope=scope,value=float(row[-1])) for scope,row in zip(request.scopes,request.rows)))
+        return result
+    b['prediction_hook']=predict
+    if accepted:
+        result=execute(b);assert len(result.producers)==2 and len(b['state']['calls'])==8
+        for event in result.producers[0].result.events:
+            assert event.value==float(value)
+            assert event.numeric_policy_id==numeric_policy_id(cfg)
+            if tolerance is not None:assert abs(Fraction.from_float(event.value)-Fraction(value))<=Fraction(Decimal(tolerance))
+            if float(value)==0:assert math.copysign(1,event.value)==math.copysign(1,float(value))
+    else:
+        with pytest.raises(JointPredictionError):execute(b)
+        assert not b['state']['calls']
+    assert all(expected in values for values in stages.values()),stages
+    assert b['state']['reads']==[0]
+    assert identity(b['raws'][2].offer.iloc[1])==expected
+    print('NUMERIC_C1',repr(expected),'stages=',{k:expected in vs for k,vs in stages.items()},
+        'tolerance=',tolerance,'calls=',len(b['state']['calls']),'accepted=',accepted)
+
+
+def test_numeric_exact_covariates_keep_fold_tenant_and_producer_isolation(make_joint,monkeypatch):
+    def raw(frame):
+        frame['offer']=pd.Series([2**53+2]*len(frame),dtype=object);frame.loc[0,'offer']=1.0
+    b=make_joint(exo=True,horizon=1,origins=(4,8),organizations=(2,3),raw_change=raw)
+    configure_numeric_joint(b);data=b['plan'].model_dump();first=data['producers'][0]['plan']['folds'][0]
+    second={**first,'fold_id':'fold-2','training_origins':(b['at'](5),),'validation_origins':(b['at'](10),),
+        'model_fit_cutoff':b['at'](6),'assessment_cutoff':b['at'](11)}
+    for producer in data['producers']:producer['plan']['folds']=(first,second)
+    b['plan']=JointPredictionPlan.model_validate(data)
+    states=[];old=CanonicalFeaturePipeline.fit_state
+    def fit(self,frame,**kwargs):
+        state=old(self,frame,**kwargs);states.append(state);return state
+    monkeypatch.setattr(CanonicalFeaturePipeline,'fit_state',fit)
+    result=execute(b)
+    assert len(states)==8 and len({s.state_id for s in states})==8
+    assert len(b['state']['calls'])==16 and b['state']['reads']==[0,0]
+    assert len(result.grid)==16 and sum(len(p.result.events) for p in result.producers)==32
+    assert all(len(s.organization_ids)==1 for s in states)
+    for role,request in b['state']['calls']:
+        assert not {'value','label','actual'}&set(request.feature_names)
+        if role=='candidate':assert all(row[-1]==float(2**53+2) for row in request.rows)
+
+
+@pytest.mark.parametrize('route',['C1','B1'])
+@pytest.mark.parametrize('value,tolerance,accepted',[(2**53+1,None,False),(2**53+2,None,True),(2**53+1,'1',True)])
+def test_numeric_verified_chunk_dtype_variation_is_lossless(tmp_path,monkeypatch,route,value,tolerance,accepted):
+    helper=runpy.run_path('tests/training/test_deterministic_forecast_rollout.py')
+    helper['variable_numeric_batch_adapter'](monkeypatch)
+    reference=runpy.run_path('tests/training/test_forecast_comparison_shared_execution.py')
+    def raw(frame):frame['offer']=pd.Series([1.0]*3+[value]*(len(frame)-3),dtype=object)
+    b=reference['make_joint'].__wrapped__(tmp_path,monkeypatch)(exo=True,horizon=1,raw_change=raw)
+    cfg=configure_numeric_joint(b,tolerance=tolerance)
+    with b['provider'].open_read(b['metadata'][0].reference,purpose='offline_forecast_evaluation') as session:
+        chunks=list(session.batches())
+    assert [str(frame.promotion.dtype) for frame in chunks][:2]==['float64','int64']
+    assert type(chunks[1].promotion.tolist()[0]) is int and chunks[1].promotion.tolist()[0]==value
+    b['state']['reads'].clear();seen=[];old=CanonicalFeaturePipeline.convert_numeric
+    def convert(self,v,field='value'):
+        if field=='promotion' and type(v) is int:seen.append(v)
+        return old(self,v,field)
+    monkeypatch.setattr(CanonicalFeaturePipeline,'convert_numeric',convert)
+    def run():
+        return execute(b) if route=='C1' else b['service'].rollout(b['plan'].producers[0].plan,cfg)
+    if accepted:
+        result=run();assert result
+    else:
+        from src.services.deterministic_forecast_rollout_service import ForecastRolloutError
+        with pytest.raises(JointPredictionError if route=='C1' else ForecastRolloutError):run()
+    assert value in seen
+    calls=b['state']['calls'] if route=='C1' else b['calls']
+    assert len(calls)==((8 if route=='C1' else 4) if accepted else 0)
+    requests=[request for role,request in calls if role=='candidate'] if route=='C1' else calls
+    assert all(row[-1]==float(value) for request in requests for row in request.rows)
+    print('NUMERIC_CHUNKS',route,'value=',value,'tolerance=',tolerance,'accepted=',accepted,'calls=',len(calls))

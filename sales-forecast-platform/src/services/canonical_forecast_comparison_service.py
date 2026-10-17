@@ -112,16 +112,21 @@ class _FrozenCapture:
         digest=hashlib.sha256(operational_json([binding.model_dump(mode='json'),metadata.mapping_json,
             metadata.series_json,columns,dtypes]).encode())
         rows=[]
-        for record in frame.to_dict('records'):
+        # Column lists preserve nullable sentinels and heterogeneous object
+        # scalars; record conversion can replace extension missing values.
+        for record in zip(*(frame[column].tolist() for column in columns)):
             cells=[];tags=[]
-            for column in columns:
-                value,tag=_scalar(record[column],cell_limit);cells.append(value);tags.append(tag)
+            for original in record:
+                value,tag=_scalar(original,cell_limit);cells.append(value);tags.append(tag)
             encoded=operational_json(tags).encode();charge('assembly',len(encoded))
             digest.update(len(encoded).to_bytes(8,'big'));digest.update(encoded);rows.append(tuple(cells))
         return cls(metadata,columns,dtypes,tuple(rows),digest.hexdigest(),size)
 
     def view(self):
-        return pd.DataFrame(self.rows,columns=self.columns).astype({c:_restore_dtype(d) for c,d in zip(self.columns,self.dtypes)})
+        # Apply each verified dtype at construction. Inferring a float column
+        # first can round an object integer before a later astype(object).
+        return pd.DataFrame({column:pd.Series([row[i] for row in self.rows],dtype=_restore_dtype(dtype))
+            for i,(column,dtype) in enumerate(zip(self.columns,self.dtypes))})
 
 
 def _partition(fold,origin):

@@ -584,6 +584,16 @@ class CanonicalTrainingPreparationService:
         checkpoint();self.provider.require_current(metadata,budgets=read_budgets)
         self._approved(self.authorize,context,'after_read')
         if account is not None:account("assembly",0,decoded)
+        # Storage preserves per-chunk numeric dtypes, not one physical dtype
+        # across the version. Prevent concat from promoting int chunks to float.
+        varying={field:object for field in chunks[0].columns
+            if any(not pd.api.types.is_dtype_equal(chunk[field].dtype,chunks[0][field].dtype) for chunk in chunks[1:])}
+        if varying:
+            for i,chunk in enumerate(chunks):
+                exact=chunk.astype(varying)
+                inspect_frame(exact)
+                if account is not None:account("assembly",0,int(exact.memory_usage(deep=True).sum()))
+                chunks[i]=exact
         frame=pd.concat(chunks,ignore_index=True);chunks.clear();inspect_frame(frame)
         return metadata,context,frame
 
@@ -663,7 +673,12 @@ class CanonicalTrainingPreparationService:
                     field=rule.field,value=row[rule.field],period_start=row['period_start'],period_end=row['period_end'],
                     available_at=available,evidence_reference=evidence,unit=rule.measurement.unit if rule.measurement else None,
                     currency=rule.measurement.currency if rule.measurement else None))
-        return tuple(claims),pd.DataFrame(exogenous) if exogenous else None
+        # Numeric policy must see original scalars, not pandas' inferred float
+        # approximation of a mixed integer/float column. Metadata keeps its
+        # existing inferred dtypes; only the heterogeneous value column is object.
+        exogenous_frame=pd.DataFrame({field:pd.Series([row[field] for row in exogenous],
+            dtype=object if field=='value' else None) for field in exogenous[0]}) if exogenous else None
+        return tuple(claims),exogenous_frame
 
     def _verify_categories(self,fit,engine,context,cutoff,checkpoint):
         """Validate all categorical releases before any vocabulary fitting."""
