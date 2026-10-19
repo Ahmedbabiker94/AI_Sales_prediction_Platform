@@ -720,3 +720,79 @@ phase. Sequential checks still cannot provide an atomic revocation snapshot;
 authorization leases, authentic external authorities and hard process controls
 remain deployment-owned. No model fitting/loading, serving, operational access,
 MLflow, automatic selection or further milestone is wired by this foundation.
+
+### R-04D1: owned training-only preparation (no model fitting)
+
+The opt-in `CanonicalTrainingPreparationService.prepare_training(plan,
+configuration)` owns issuance of a `TrainingOnlyHandoff`. Trusted bootstrap must
+fix an immutable `TrainingHandoffScope`, the publication provider, preparation
+permission callback, a `ValueAttestedAvailabilityVerifier` with independent
+release/value/revision authorities, and a separate `verify_training_labels`
+authority. Ordinary requests cannot supply a prepared result, fitted state,
+authority, numeric tolerance or claimed provenance in place of this execution.
+Python types, scope IDs and matching hashes do not authenticate authorities.
+Bootstrap and in-process Python collaborators remain trusted, not sandboxed.
+
+Only separately authorized FINALIZED `production_training` publications enter
+this path. The complete original temporal plan remains bound in the output,
+including held-out origins, C/O/M/E cutoffs and overlap checks. Only declared
+training origins execute, with H1 supervised examples and expanding history.
+Validation/test matrices and labels are not prepared or exposed. Future target
+actuals are excluded from the feature-engine input view; only required H1
+exogenous periods are supplied, using the executor's existing calendar arithmetic.
+The complete bounded canonical capture still undergoes integrity and authority
+checks, so held-out content is not a separate, unverified storage shortcut.
+
+Exactly one actual feature state is fitted on the verified calibration prefix
+per fold/organization. Every time-varying categorical release must pass its own
+availability check at C **before** fitting. State JSON is exported verbatim; the
+original partition hash binds the unchanged full plan, publication/series
+identity, feature configuration and calibration bounds. Later origins use that
+frozen vocabulary; they never refit on held-out or newly observed categories.
+Ordered schema/dtypes, H1 coverage and numeric-policy identities remain those of
+the existing executor. Default conversion remains STRICT_EXACT. Approximate
+conversion is possible only when explicitly selected in the bootstrap-approved
+configuration, with the existing measurement-scoped policy; no production
+business tolerance is approved here.
+
+Training labels are separated from histories at O. Each `TrainingLabelClaim`
+uses `captured_value_as_of_M_v1`: exact publication, manifest/admission/mapping,
+full plan/fold, series/dimensions/measurement, O/target period, release/evidence,
+lineage and original Decimal tuple/integer/binary64 identity. The independent
+label authority must validate the **exact captured revision as of M**, not just
+its timestamp or a digest recomputed from the claim. A label may be released
+after O, but must be complete and independently attested by M. Revised/backdated
+values must also be rejected by the historical value authority when reconstructing
+features at O or calibration at C. Original canonical labels retain their type,
+Decimal scale and signed zero; only detached model-input copies are converted.
+
+All dataset versions are completely consumed and successfully closed once per
+request before fitting feature state or transforming examples. Snapshot cleanup
+and lock release precede computation. Existing calibration/external/global/read
+reauthorization runs before immutable result assembly. Terminal checks retain
+every original training-origin history/permission context, then every original
+label-at-M claim and its preparation permission. A cancellation/elapsed checkpoint
+follows all callbacks and directly precedes return. Any failure returns nothing;
+no partial handoff, held-out fallback, CSV fallback or background worker exists.
+Sequential checks are not an atomic authorization snapshot: an earlier scope can
+be revoked concurrently or by a later trusted scoped collaborator. Deployment
+must supply stronger leases/snapshots if required. Cancellation is cooperative,
+not hard callback preemption.
+
+Existing temporal row/byte/origin/series/output/state/assembly/work limits remain
+active. Operator scope additionally caps request-wide verification calls, claim
+counts, serialized verification work and immutable handoff bytes. Full-plan
+bounds are conservative even though held-out transformations do not execute.
+These counters are not process RSS/CPU isolation. Scope/provenance JSON and exact
+labels may be sensitive and must not be logged as public diagnostics.
+
+`PREPARED / NOT_MODEL_FITTED` is the only completion status. Returned matrices,
+labels and parsed states are detached copies; the stored tuples and audit
+provenance are immutable. A serialized or caller-created handoff is **not** a
+fitting credential or proof of authentic fitted-model provenance. No API in D1
+accepts it as permission to train. A future owned trainer must freshly authorize
+its use and bind the exact emitted feature state/representation to a deliberately
+trained artifact. Real training, artifact persistence/loading, validation/test
+assessment, registry operations, promotion and runtime migration remain later
+milestones. Existing `prepare()`, `prepare_temporal()` and B1/B2a/B2b/B2c APIs keep
+their accepted behavior.

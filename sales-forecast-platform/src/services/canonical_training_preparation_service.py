@@ -260,11 +260,27 @@ class CanonicalTrainingPreparationService:
     R-04C2-B owns predictor-dependent rollout; active training remains separate.
     """
     def __init__(self, provider, *, authorize_preparation, verify_availability,
-                 authorize_external_forecast=None, elapsed_clock=monotonic):
+                 authorize_external_forecast=None, elapsed_clock=monotonic,
+                 training_scope=None, verify_training_labels=None):
         if type(provider) is not CanonicalTrainingDataProvider:
             raise TrainingPreparationError('trusted canonical provider required')
         self.provider=provider;self.authorize=authorize_preparation;self.verify_availability=verify_availability
         self.authorize_external=authorize_external_forecast;self.elapsed_clock=elapsed_clock
+        self.__training=None
+        if training_scope is not None or verify_training_labels is not None:
+            try:
+                from src.data.contracts.model_training import TrainingHandoffScope
+                if (type(training_scope) is not TrainingHandoffScope
+                        or type(verify_availability) is not ValueAttestedAvailabilityVerifier
+                        or not all(callable(c) for c in (authorize_preparation,verify_training_labels,elapsed_clock))):
+                    raise ValueError()
+                scope=TrainingHandoffScope.model_validate(training_scope.model_dump())
+                verifier=ValueAttestedAvailabilityVerifier(verify_availability=verify_availability._availability,
+                    verify_captured_values=verify_availability._values)
+                self.__training=(provider,scope.model_dump_json(),authorize_preparation,verifier,verify_training_labels,
+                                 authorize_external_forecast,elapsed_clock)
+            except Exception:
+                raise TrainingPreparationError('invalid operator training handoff composition') from None
 
     @staticmethod
     def _approved(callback, *args):
@@ -312,7 +328,38 @@ class CanonicalTrainingPreparationService:
         except Exception:
             raise TrainingPreparationError('canonical temporal preparation failed') from None
 
-    def _prepare_temporal(self,plan,configuration,feature_budgets,read_budgets,cancelled):
+    def prepare_training(self,plan,configuration,*,cancelled=lambda:False):
+        """D1 owned training-only view. No caller result/state/authority import."""
+        try:
+            from src.data.contracts.model_training import TrainingHandoffScope
+            from src.data.contracts.features import FeatureConfiguration
+            if self.__training is None or type(plan) is not TemporalPreparationPlan or type(configuration) is not FeatureConfiguration:
+                raise ValueError()
+            provider,encoded,authorize,availability,labels,external,clock=self.__training
+            scope=TrainingHandoffScope.model_validate_json(encoded)
+            plan=TemporalPreparationPlan.model_validate(plan.model_dump())
+            configuration=FeatureConfiguration.model_validate(configuration.model_dump())
+            if (plan.datasets!=scope.datasets or plan.configuration_digest!=scope.configuration_digest
+                    or plan.purpose!=scope.purpose or plan.forecast_horizon!=1 or plan.capability!='supervised_h1'
+                    or any(v>scope.budgets.model_dump()[k] for k,v in plan.budgets.model_dump().items())):
+                raise ValueError()
+            request=_TrainingRequest(scope,plan,configuration,authorize,availability,labels,external)
+            previous=None
+            def checked_clock():
+                nonlocal previous
+                value=clock()
+                if (type(value) not in (int,float) or not math.isfinite(value)
+                        or (previous is not None and value<previous)):
+                    raise TrainingPreparationError('invalid training elapsed clock')
+                previous=value
+                return value
+            worker=CanonicalTrainingPreparationService(provider,authorize_preparation=request.authorize,
+                verify_availability=request.availability,authorize_external_forecast=request.external,elapsed_clock=checked_clock)
+            return worker._prepare_temporal(plan,configuration,FeatureBudgets(),StagingBudgets(),cancelled,_training=request)
+        except Exception:
+            raise TrainingPreparationError('canonical training-only handoff failed') from None
+
+    def _prepare_temporal(self,plan,configuration,feature_budgets,read_budgets,cancelled,*,_training=None):
         engine=CanonicalFeaturePipeline(configuration,budgets=feature_budgets)
         b=plan.budgets;start=self.elapsed_clock();plan_json=plan.model_dump_json();digest=plan.digest
         def checkpoint():
@@ -370,7 +417,7 @@ class CanonicalTrainingPreparationService:
             account('work',0,len(frame)*len(frame.columns))
             claims,exogenous=self._availability(frame,engine,checkpoint)
             self._approved(self.verify_availability,context,claims)
-            engine._rows(frame,observations=True)
+            if _training is None:engine._rows(frame,observations=True)
             requests=pd.DataFrame([dict(organization_id=metadata.reference.organization_id,series_id=s,
                 metric=metadata.mapping.target_metric,unit=metadata.mapping.measurement.unit,
                 currency=metadata.mapping.measurement.currency,frequency=metadata.mapping.frequency.value,
@@ -387,7 +434,8 @@ class CanonicalTrainingPreparationService:
                 self.provider.require_current(metadata,budgets=read_budgets)
                 self._approved(self.authorize,context,'fold');checkpoint()
                 now=engine._time(self.provider.clock())
-                if engine._time(fold.assessment_cutoff)>now or engine._time(fold.model_fit_cutoff)>now:
+                if ((_training is None and engine._time(fold.assessment_cutoff)>now)
+                        or engine._time(fold.model_fit_cutoff)>now):
                     raise TrainingPreparationError('label assessment cannot claim future availability')
                 self._approved(self.verify_availability,context,claims)
                 # The explicitly declared prefix is validated intact; never silently
@@ -416,7 +464,10 @@ class CanonicalTrainingPreparationService:
                 schema=describe_feature_schema(configuration,state,forecast_config=forecast,forecast_origin=engine._time(fold.origins[0]))
                 schema_json=schema.model_dump_json()
                 fold_checks.append((context,claims,category_claims))
-                for partition_name,origins in (('training',fold.training_origins),('validation',fold.validation_origins),('test',fold.test_origins)):
+                if _training is not None:_training.state(context,binding,state_json,schema_json,partition)
+                partitions=(('training',fold.training_origins),) if _training is not None else (
+                    ('training',fold.training_origins),('validation',fold.validation_origins),('test',fold.test_origins))
+                for partition_name,origins in partitions:
                     for origin_date in origins:
                         checkpoint();origin=engine._time(origin_date)
                         current=TemporalPreparationContext(metadata,context.configuration_json,engine.digest,
@@ -429,6 +480,7 @@ class CanonicalTrainingPreparationService:
                                 or any(engine._time(v)>limit for v in labels.period_end)
                                 or any(engine._time(v)>limit for v in labels.available_at)):
                             raise TrainingPreparationError('complete labels unavailable at partition cutoff')
+                        if _training is not None:_training.labels(current,labels,limit,engine)
                         values={row['series_id']:row['value'] for row in labels.to_dict('records')}
                         originals=tuple(values[s] for s in binding.series_ids)
                         converted=tuple(engine.convert_numeric(v) for v in originals)
@@ -439,8 +491,19 @@ class CanonicalTrainingPreparationService:
                         engine.authorize_external_forecast=verify_external
                         account('work',0,len(frame)*len(frame.columns))
                         account('assembly',0,int(frame.memory_usage(deep=True).sum()))
-                        matrix=engine.prepare_training(frame,requests,state,forecast_origin=origin,
-                            forecast_config=forecast,exogenous=exogenous)
+                        history=frame;inputs=exogenous
+                        if _training is not None:
+                            # Labels are separate, independently attested at M. In
+                            # particular, never numerically convert future actuals
+                            # merely because they share the verified capture.
+                            history=frame[(frame.period_end<=origin)&(frame.available_at<=origin)].copy()
+                            if exogenous is not None:
+                                wanted={r.field:engine._advance(origin,-r.offset) if r.offset is not None else origin
+                                        for r in engine.rules.exogenous}
+                                inputs=exogenous[[engine._time(p)==wanted[f] for f,p in
+                                    zip(exogenous.field,exogenous.period_start)]].copy()
+                        matrix=engine.prepare_training(history,requests,state,forecast_origin=origin,
+                            forecast_config=forecast,exogenous=inputs)
                         account('assembly',0,int(matrix.memory_usage(deep=True).sum()))
                         verify_feature_schema(schema,configuration,state,matrix,requests=requests,
                             forecast_config=forecast,forecast_origin=origin)
@@ -479,11 +542,13 @@ class CanonicalTrainingPreparationService:
                 raise TrainingPreparationError('origin verification binding mismatch')
         result=TemporalPreparationResult(plan_json,tuple(groups),hashlib.sha256(operational_json(
             [digest,[g.event_id for g in groups]]).encode()).hexdigest())
+        if _training is not None:result=_training.finish(result)
         # Broader callbacks and result assembly are complete. Only original scoped
         # availability/authorization checks, the checkpoint and return remain.
         for current,claims in origin_checks:
             self._approved(self.verify_availability,current,claims)
             self._approved(self.authorize,current,'return')
+        if _training is not None:_training.terminal()
         checkpoint()
         return result
 
@@ -708,3 +773,150 @@ class CanonicalTrainingPreparationService:
         if category_claims:
             self._approved(self.verify_availability,context,tuple(category_claims))
         return tuple(category_claims)
+
+
+@dataclass(frozen=True)
+class TrainingLabelContext(TemporalPreparationContext):
+    """Original O/C scope plus explicit training-label assessment at M."""
+    model_fit_cutoff: object = None
+    training_scope_digest: str = ''
+    purpose: str = 'production_training'
+    action: str = 'verify_training_label_at_M'
+
+
+@dataclass(frozen=True)
+class TrainingOnlyHandoff(TemporalPreparationResult):
+    """Owned PREPARED output; no model was fitted and no fitting credential exists.
+
+    Inherited matrix/label properties allocate detached copies. Public construction
+    or serialization never authenticates fitting permission; no API consumes it.
+    A future trainer must own a fresh authorized preparation invocation.
+    """
+    provenance: object
+
+    @property
+    def status(self): return self.provenance.status
+
+    @property
+    def model_status(self): return self.provenance.model_status
+
+    @property
+    def handoff_id(self): return self.provenance.handoff_id
+
+
+class _TrainingRequest:
+    """Request-local D1 bookkeeping over the existing executor/authority slots."""
+    def __init__(self, scope, plan, configuration, authorize, availability, labels, external):
+        self.scope=scope;self.plan=plan;self.configuration=configuration
+        self.authorize_callback=authorize
+        self.labels_callback=labels;self.external_callback=external
+        self.states={};self.targets=[];self.used=dict(calls=0,claims=0,bytes=0)
+        # Charge the actual release and value authorities independently; counting
+        # only the adapter invocation would undercount trusted callback work.
+        self.availability_callback=ValueAttestedAvailabilityVerifier(
+            verify_availability=lambda *args:self.approve(availability._availability,*args),
+            verify_captured_values=lambda *args:self.approve(availability._values,*args))
+
+    def approve(self, callback, *args):
+        self.used['calls']+=1
+        self.used['claims']+=sum(len(a) for a in args if type(a) is tuple)
+        self.used['bytes']+=len(repr(args).encode())
+        if (self.used['calls']>self.scope.max_verification_calls
+                or self.used['claims']>self.scope.max_verification_claims
+                or self.used['bytes']>self.scope.max_verification_bytes):
+            raise TrainingPreparationError('training verification budget exceeded')
+        CanonicalTrainingPreparationService._approved(callback,*args)
+        return True
+
+    def context(self, ctx):
+        binding=CanonicalTrainingPreparationService._temporal_binding(ctx.metadata,ctx.series_ids)
+        if (ctx.metadata.purpose!='production_training' or binding not in self.scope.datasets
+                or ctx.plan_json!=self.plan.model_dump_json() or ctx.plan_digest!=self.plan.digest
+                or ctx.configuration_digest!=self.scope.configuration_digest
+                or ctx.configuration_json!=self.configuration.model_dump_json()):
+            raise TrainingPreparationError('training authority scope mismatch')
+        if ctx.fold_id is not None:
+            fold=next(f for f in self.plan.folds if f.fold_id==ctx.fold_id)
+            if ctx.forecast_origin not in fold.training_origins or ctx.training_cutoff!=fold.categorical_cutoff:
+                raise TrainingPreparationError('training origin scope mismatch')
+        return binding
+
+    def authorize(self,ctx,stage):
+        self.context(ctx)
+        return self.approve(self.authorize_callback,ctx,stage)
+
+    def availability(self,ctx,claims):
+        self.context(ctx)
+        return self.availability_callback(ctx,claims)
+
+    def external(self,ctx,claim):
+        self.context(ctx)
+        return self.approve(self.external_callback,ctx,claim)
+
+    def state(self,ctx,binding,state_json,schema_json,partition):
+        self.context(ctx)
+        from src.data.contracts.model_training import TrainingFittedState
+        state=FeatureState.model_validate_json(state_json)
+        if (state.training_partition_reference!=partition or state.organization_ids!=(binding.reference.organization_id,)
+                or state.configuration_digest!=self.scope.configuration_digest or state.training_cutoff!=ctx.training_cutoff):
+            raise TrainingPreparationError('training fitted state substitution')
+        key=ctx.fold_id,binding.reference.organization_id
+        if key in self.states:raise TrainingPreparationError('duplicate training fitted state')
+        self.states[key]=TrainingFittedState(fold_id=ctx.fold_id,dataset=binding,state_json=state_json,representation_json=schema_json)
+
+    def labels(self,ctx,rows,cutoff,engine):
+        from src.data.contracts.model_training import TrainingLabelClaim
+        binding=self.context(ctx);fold=next(f for f in self.plan.folds if f.fold_id==ctx.fold_id)
+        if cutoff!=engine._time(fold.model_fit_cutoff):raise TrainingPreparationError('training M mismatch')
+        context=TrainingLabelContext(ctx.metadata,ctx.configuration_json,ctx.configuration_digest,ctx.series_ids,
+            ctx.plan_json,ctx.plan_digest,ctx.fold_id,ctx.forecast_origin,ctx.training_cutoff,ctx.target_period_end,
+            cutoff,self.scope.digest)
+        definitions={s.series_id:s for s in ctx.metadata.series};mapping=ctx.metadata.mapping
+        indexed={r['series_id']:r for r in rows.to_dict('records')};claims=[]
+        for sid in binding.series_ids:
+            row=indexed[sid]
+            claims.append(TrainingLabelClaim(dataset=binding,plan_digest=self.plan.digest,fold_id=ctx.fold_id,series_id=sid,
+                dimensions=tuple(sorted(definitions[sid].dimensions.items())),metric=mapping.target_metric,
+                unit=mapping.measurement.unit,currency=mapping.measurement.currency,frequency=self.plan.frequency,
+                timezone=self.plan.timezone,forecast_origin=ctx.forecast_origin,period_start=engine._time(row['period_start']),
+                period_end=engine._time(row['period_end']),available_at=engine._time(row['available_at']),model_fit_cutoff=cutoff,
+                source_record_id=row['source_record_id'],lineage_id=row['lineage_id'],evidence_reference=row['availability_reference'],
+                original_value_identity_json=operational_json(historical_value_identity(row['value']))))
+        claims=tuple(claims)
+        self.approve(self.labels_callback,context,claims)
+        self.targets.append((context,claims))
+
+    def finish(self,result):
+        from src.data.contracts.model_training import TrainingHandoffProvenance
+        expected=[(f.fold_id,d,o) for f in self.plan.folds for d in self.plan.datasets for o in f.training_origins]
+        if len(result.origins)!=len(expected) or len(self.targets)!=len(expected):
+            raise TrainingPreparationError('complete training handoff required')
+        for group,(fold,binding,origin),(context,claims) in zip(result.origins,expected,self.targets):
+            prepared=group.preparation;state=self.states[fold,binding.reference.organization_id]
+            if (group.partition!='training' or group.fold_id!=fold or group.plan_digest!=self.plan.digest
+                    or group.dataset_binding_json!=binding.model_dump_json()
+                    or prepared.context.forecast_origin!=origin or prepared.state_json!=state.state_json
+                    or prepared.schema_json!=state.representation_json or prepared.preparation_id!=group.event_id
+                    or prepared.index!=tuple((binding.reference.organization_id,s,origin) for s in binding.series_ids)
+                    or len(claims)!=len(prepared.original_labels)):
+                raise TrainingPreparationError('training output/state scope mismatch')
+            for label,claim in zip(prepared.original_labels,claims):
+                if operational_json(historical_value_identity(label))!=claim.original_value_identity_json:
+                    raise TrainingPreparationError('training output label differs from verified target')
+        provenance=TrainingHandoffProvenance(scope_digest=self.scope.digest,plan=self.plan,
+            configuration_digest=self.scope.configuration_digest,preparation_id=result.preparation_id,
+            states=tuple(self.states.values()),labels=tuple(c for ctx,claims in self.targets for c in claims),
+            origin_ids=tuple(g.event_id for g in result.origins))
+        # Tagged original feature/label identities avoid JSON float/NaN coercion.
+        size=len(provenance.model_dump_json().encode())+sum(len(operational_json([
+            [[_value_identity(v) for v in row] for row in g.preparation.feature_rows],
+            [_value_identity(v) for v in g.preparation.original_labels],g.preparation.converted_labels]).encode())
+            for g in result.origins)
+        if size>self.scope.max_handoff_bytes:raise TrainingPreparationError('training handoff budget exceeded')
+        return TrainingOnlyHandoff(result.plan_json,result.origins,result.preparation_id,provenance)
+
+    def terminal(self):
+        for context,claims in self.targets:
+            self.context(context)
+            self.approve(self.labels_callback,context,claims)
+            self.approve(self.authorize_callback,context,'return_training_labels')
