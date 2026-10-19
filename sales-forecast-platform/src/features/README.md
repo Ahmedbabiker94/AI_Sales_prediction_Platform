@@ -796,3 +796,99 @@ trained artifact. Real training, artifact persistence/loading, validation/test
 assessment, registry operations, promotion and runtime migration remain later
 milestones. Existing `prepare()`, `prepare_temporal()` and B1/B2a/B2b/B2c APIs keep
 their accepted behavior.
+
+### R-04D2: controlled offline XGBoost candidate (not evaluation or serving)
+
+`CanonicalXGBoostTrainingService` is an additive, operator-owned bootstrap. It
+fixes one approved fixture, temporal plan, fold, organization, measurement scope,
+feature configuration, D1 scope, authority callbacks, and bounded training
+configuration. `train()` accepts only cooperative cancellation. There is no
+handoff, matrix, label, model URI, output path, registry or callback request
+parameter. A service instance permits one training attempt. Another attempt
+requires a fresh owned instance and complete D1 authorization/capture.
+
+D2 constructs and invokes accepted D1 itself. It does not accept a serialized or
+caller-created PREPARED object as fitting permission. Original successful
+release/value/label/external verification contexts and claims are retained in a
+bounded request-local ledger. Returned handoff values, original label claims,
+state/schema JSON, exact event hashes, feature order and scope are checked before
+fitting. There is one calibration state for the single selected fold and
+organization; no feature-state fit or transform is performed during native model
+loading. The full original plan and held-out boundaries remain in provenance,
+but only declared H1 training examples enter the DMatrix. No validation/test
+features, labels, eval sets, early stopping or model selection are used.
+
+The initial model family is XGBoost 3.2.0 CPU only. The fixed algorithm is
+`reg:squarederror`, `gbtree`, `hist`, eta 0.25, full row/column sampling,
+min_child_weight 1 and max_bin 64. Seed, rounds and depth are declared and bound;
+threads are fixed to one. Limits are at most 512 training rows, 32 features,
+8,192 input cells, 16 rounds, depth 3, 1 MiB native artifact and 2 MiB bundle.
+Evidence records/bytes are bounded separately. Iteration callbacks and final
+checkpoints enforce a cooperative elapsed/cancellation budget, not hard CPU/RSS
+isolation or interruption inside a native operation.
+
+D1's STRICT_EXACT/default or explicitly approved numeric policy remains unchanged.
+D2 adds the stricter, model-specific `strict_exact_float32_v1` ingress rule:
+finite integer/float inputs and labels, absolute magnitude <= 1,000,000, exactly
+representable in float32, preserving signed zero. Object/Decimal/string/Boolean
+arrays are not model input views. Original canonical Decimal labels and identities
+remain in D1 provenance. This policy deliberately rejects many ordinary float64
+features, including irrational rolling standard deviations. The approved synthetic
+fixture selects location, lag1 and mean4 explicitly; it does not change the
+executor's calculations or legacy 32-feature schema. Broader float32 conversion
+requires a separately approved policy/version, not an implicit cast. Histogram
+binning and native floating-point model arithmetic are declared algorithm
+semantics, not claims of exact real-number model fitting.
+
+Native serialization uses `Booster.save_raw(raw_format='ubj')` and the matching
+`Booster.load_model(bytearray(...))`. No pickle/joblib deserialization is used.
+A new booster reloads the actual native bytes and predicts the same approved
+training rows. Shape, float32 dtype, finite bounded outputs, native ordered
+feature names/count, round count and embedded provenance bindings must match.
+The comparison policy is `bitwise_float32_v1`, with zero numerical tolerance.
+This is a serialization check on training inputs, not a validation score,
+accuracy claim or general production inference interface. Identical artifact
+bytes across platforms/library builds are not promised.
+
+`CandidateBundle` contains immutable canonical JSON bytes: a versioned manifest
+and canonical base64 of the actual native UBJSON. SHA-256 identities are computed
+from those actual bytes. The manifest carries complete D1 provenance and original
+state/schema strings, state/native artifact digests, operator invocation and
+fixture approval identifiers, all authority identities, actual fixed/native
+parameters, dataset/admission/mapping/purpose/plan bindings, original training
+origins, frozen ordered dtypes, exact model input/label/prediction bytes, runtime
+versions and selected implementation source hashes. Source identity records the
+actual Git HEAD plus hashes of the listed implementation files. During precommit
+synthetic tests `source_matches_commit` can be false; this explicitly identifies
+an uncommitted source snapshot, not a claim that HEAD contains it. Postcommit
+verification must produce a fresh bundle with `source_matches_commit=true`.
+The flag covers the listed implementation files, not every repository file.
+
+Bundle assembly and publication are **in memory only**, by one complete immutable
+return. Native partial serialization, reader snapshot cleanup failure, denied
+permission, budget exhaustion or cancellation yields no issued candidate. No
+filesystem artifact writer, mutable production alias or durability protocol is
+introduced. Applications that export bytes must provide their own separately
+reviewed storage lifecycle; no file-write/crash-durability guarantee is claimed
+here. Reader locks are released before fitting. Broad/calibration/external/read
+checks precede complete bundle binding validation; original scoped evidence and
+preparation/training permission are rechecked terminally, followed by the final
+checkpoint and return. Sequential checks remain non-atomic authorization leases.
+
+`verify_candidate()` only reloads the exact object issued by that service owner;
+a byte-identical public reconstruction or a matching digest is not loading
+permission. It performs fresh authority/publication checks and never refits state.
+`CandidateBundle.validate()` is pure bounded structural/content-integrity checking;
+it does not deserialize the native model or authenticate an artifact producer.
+An independently transported bundle needs an independently authorized loading
+boundary before any native parser. In-process Python collaborators and the
+application bootstrap are trusted, not sandboxed; names, types and hashes cannot
+establish authoritative trust by themselves. Bundles contain sensitive training
+provenance and must be treated as private artifacts.
+
+The only status is `CANDIDATE / NOT_APPROVED_FOR_PRODUCTION`. There is no MLflow,
+registry, promotion, production pointer, API/scheduler/database integration,
+B2c producer widening or legacy-model migration. Real held-out evaluation,
+production business conversion approvals, durable artifact transport/authenticity,
+atomic authorization snapshots and process resource controls remain later work.
+The accepted D1 malformed-declaration warning P2 is unchanged in its source.
