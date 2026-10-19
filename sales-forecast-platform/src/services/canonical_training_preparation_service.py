@@ -337,8 +337,8 @@ class CanonicalTrainingPreparationService:
                 raise ValueError()
             provider,encoded,authorize,availability,labels,external,clock=self.__training
             scope=TrainingHandoffScope.model_validate_json(encoded)
-            plan=TemporalPreparationPlan.model_validate(plan.model_dump())
-            configuration=FeatureConfiguration.model_validate(configuration.model_dump())
+            plan=TemporalPreparationPlan.model_validate(plan.model_dump(warnings='error'))
+            configuration=FeatureConfiguration.model_validate(configuration.model_dump(warnings='error'))
             if (plan.datasets!=scope.datasets or plan.configuration_digest!=scope.configuration_digest
                     or plan.purpose!=scope.purpose or plan.forecast_horizon!=1 or plan.capability!='supervised_h1'
                     or any(v>scope.budgets.model_dump()[k] for k,v in plan.budgets.model_dump().items())):

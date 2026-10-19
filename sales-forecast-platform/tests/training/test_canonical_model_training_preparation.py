@@ -7,6 +7,7 @@ import math
 import runpy
 import struct
 import traceback
+import warnings
 from uuid import UUID
 
 import pandas as pd
@@ -178,6 +179,30 @@ def test_same_date_partition_injection_rejects_before_capture(make_training,part
         TemporalFold.model_construct(**d['folds'][0]),)})
     with pytest.raises(TrainingPreparationError):b['service'].prepare_training(forged,b['configuration'])
     assert not b['trace']
+
+
+@pytest.mark.parametrize('declaration',['plan','configuration'])
+def test_malformed_training_declarations_do_not_emit_serializer_secrets(make_training,capsys,declaration):
+    b=make_training();secret='P2-PRIVATE-CALLER-SERIALIZER-VALUE'
+    plan=b['plan'];configuration=b['configuration']
+    if declaration=='plan':
+        plan=TemporalPreparationPlan.model_construct(**{**plan.__dict__,'folds':(secret,)})
+    else:
+        configuration=FeatureConfiguration.model_construct(**{**configuration.__dict__,'configuration_id':{'private':secret}})
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter('always')
+        with pytest.raises(TrainingPreparationError) as error:
+            b['service'].prepare_training(plan,configuration)
+    captured=capsys.readouterr()
+    assert not emitted
+    assert secret not in captured.err+captured.out+''.join(traceback.format_exception(error.value))
+    assert str(error.value)=='canonical training-only handoff failed'
+    assert not b['trace']
+    # The sanitized boundary must not install a global warning filter.
+    with warnings.catch_warnings(record=True) as unrelated:
+        warnings.simplefilter('always')
+        warnings.warn('unrelated review warning',UserWarning)
+    assert len(unrelated)==1 and str(unrelated[0].message)=='unrelated review warning'
 
 
 @pytest.mark.parametrize('fault',['late','revision','substitution','missing_authority'])

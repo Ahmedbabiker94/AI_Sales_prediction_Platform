@@ -280,6 +280,25 @@ def test_bad_training_features_are_rejected_before_native_fit(make_owner,monkeyp
     assert not fits
 
 
+@pytest.mark.parametrize('field',['feature','label'])
+@pytest.mark.parametrize('boolean',[True,False,np.bool_(True),np.bool_(False)])
+def test_boolean_handoff_substitution_rejects_before_owned_native_fit(make_owner,monkeypatch,field,boolean):
+    from dataclasses import replace
+    b=make_owner();original=CanonicalTrainingPreparationService.prepare_training;fits=[]
+    def corrupt(self,*args,**kwargs):
+        handoff=original(self,*args,**kwargs);group=handoff.origins[0];prepared=group.preparation
+        if field=='feature':
+            rows=list(prepared.feature_rows);rows[0]=(rows[0][0],boolean,rows[0][2])
+            prepared=replace(prepared,feature_rows=tuple(rows))
+        else:
+            prepared=replace(prepared,converted_labels=(boolean,*prepared.converted_labels[1:]))
+        return replace(handoff,origins=(replace(group,preparation=prepared),*handoff.origins[1:]))
+    monkeypatch.setattr(CanonicalTrainingPreparationService,'prepare_training',corrupt)
+    monkeypatch.setattr(Service,'_fit_native',staticmethod(lambda *args:fits.append(1)))
+    with pytest.raises(CandidateTrainingError):b['train']()
+    assert not fits
+
+
 def test_signed_labels_and_original_value_identities_survive(make_owner):
     def change(raw):raw.loc[4,'reported']=-0.;raw.loc[5,'reported']=-16.
     b=make_owner(rows_change=change);bundle=b['train']()

@@ -1,5 +1,6 @@
 """Offline candidate data, not authentication, registry entries or production aliases."""
 import base64
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 import hashlib
@@ -96,6 +97,25 @@ def original_value(encoded):
 
 def strict_float32(values):
     """A declared model-specific restriction, never a relaxed D1 policy."""
+    # Check raw sequence leaves before NumPy can erase Boolean identity. Numeric
+    # array-like inputs are typed views; their earlier construction is not attested
+    # here. Keep the existing output shape and numeric conversion unchanged.
+    pending=[(iter((values,)),None)];active=set()
+    while pending:
+        try:item=next(pending[-1][0])
+        except StopIteration:
+            _,identity=pending.pop()
+            if identity is not None:active.remove(identity)
+            continue
+        if isinstance(item,(bool,np.bool_)):
+            raise ValueError('Boolean model inputs are unsupported')
+        array_view=isinstance(item,memoryview) or hasattr(item,'__array__') or hasattr(item,'__array_interface__')
+        if array_view or not isinstance(item,(Sequence,int,float,complex,np.number)):
+            if np.asarray(item).dtype.kind=='b':raise ValueError('Boolean model inputs are unsupported')
+        if isinstance(item,Sequence) and not isinstance(item,(str,bytes,bytearray)) and not array_view:
+            identity=id(item)
+            if identity in active:raise ValueError('cyclic model input sequences are unsupported')
+            active.add(identity);pending.append((iter(item),identity))
     raw=np.asarray(values)
     if raw.dtype.kind not in ('i','u','f') or raw.dtype.itemsize>8:
         raise ValueError('explicit integer/float model inputs required')
