@@ -957,3 +957,29 @@ declared geometry/content; actual callback/capture/representation accounting, ca
 following terminal callbacks, atomic authorization and hard CPU/RSS enforcement
 remain future service/deployment responsibilities. Trusted in-process Python is
 not a sandbox. The standalone digest-helper diagnostic P2 remains deferred.
+
+D3-A public declaration deserialization uses local fixed-error guards for direct
+construction, `model_validate()`, `model_validate_json()` and
+`model_validate_strings()`. Original validation exceptions are discarded before
+raising the public error; their input-bearing args, cause and implicit context
+are not retained. The public error also explicitly detaches any ambient exception
+the caller was already handling. Extra fields still reject, including attempts to select
+`extra='ignore'` or `'allow'`. No warning filter is installed. The constructor
+guard is a local metaclass boundary rather than a custom Pydantic initializer,
+so compiled nested validation and strict/context dispatch remain unchanged.
+A D3-local `RuntimeIdentity` facade protects the runtime fragment's direct APIs
+while preserving its fields, JSON Schema and wire bytes; D2's type is unchanged.
+The factory accepts the original D2 runtime declaration and snapshots it locally.
+
+These guards cover D3 declaration APIs and nested validation reached through
+them. They do not redefine standalone APIs on embedded accepted foundation
+objects (plans, configurations, schemas, dataset bindings or training invocations).
+Those objects must enter untrusted D3 deserialization through the guarded enclosing
+declaration. Calling Pydantic `TypeAdapter`, raw `__pydantic_validator__` or
+`BaseModel` implementations directly bypasses the D3 public guard; these are not
+supported D3 import entry points. Deprecated Pydantic v1 `parse_*` and
+`from_orm` APIs are also outside this supported D3 boundary. `model_construct()` and unchecked
+`model_copy(update=...)` do not validate inputs or establish authority. String-mode
+validation retains Pydantic's existing limitations for complex list/tuple fields;
+Python/JSON validation provides the full declaration round-trip. No authorization,
+loading, prediction, scoring or new resource enforcement is implemented here.

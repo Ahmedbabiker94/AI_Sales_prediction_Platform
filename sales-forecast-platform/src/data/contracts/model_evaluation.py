@@ -12,7 +12,7 @@ from pydantic import ConfigDict, Field, StrictInt, model_validator
 
 from .backtesting import Digest, identity
 from .dataset import _opaque
-from .model_candidate import CandidateBundle, RuntimeIdentity, TrainingInvocation, digest
+from .model_candidate import CandidateBundle, RuntimeIdentity as _CandidateRuntimeIdentity, TrainingInvocation, digest
 from src.features.feature_schema_compatibility import FeatureSchemaCompatibility
 from .temporal_preparation import _TemporalContract, TemporalDatasetBinding, TemporalTimestamp, TemporalPreparationPlan, _instants
 
@@ -21,15 +21,65 @@ class EvaluationDeclarationError(ValueError):
     """Fixed diagnostics at the declaration import boundary."""
 
 
+def _reject_declaration(*, identity=False):
+    message=('invalid non-authoritative evaluation identity' if identity
+             else 'invalid non-authoritative evaluation declaration')
+    error=EvaluationDeclarationError(message)
+    try:
+        raise error from None
+    finally:
+        # A caller may already be handling another input-bearing exception.
+        # Python attaches that ambient context even after our own handler exits.
+        error.__context__=None
+        error.__cause__=None
+
+
 def _declaration_identity(value):
     try:
         return identity(value.model_dump(mode='json',warnings='error'))
     except Exception:
-        raise EvaluationDeclarationError('invalid non-authoritative evaluation identity') from None
+        pass
+    _reject_declaration(identity=True)
 
 
-class _Declaration(_TemporalContract):
+def _validate_public(operation, *args, **kwargs):
+    # Raise after leaving the handler: ``from None`` only hides __context__, it
+    # does not remove the original, potentially sensitive ValidationError.
+    try:
+        if kwargs.get('extra') not in (None, 'forbid'):
+            raise ValueError()
+        return operation(*args, **kwargs)
+    except Exception:
+        pass
+    _reject_declaration()
+
+
+class _DeclarationMeta(type(_TemporalContract)):
+    def __call__(cls, *args, **kwargs):
+        # Do not override BaseModel.__init__: a custom Pydantic init can change
+        # compiled nested-validation and strict/context dispatch behavior.
+        return _validate_public(super().__call__, *args, **kwargs)
+
+
+class _Declaration(_TemporalContract, metaclass=_DeclarationMeta):
     model_config = ConfigDict(frozen=True, revalidate_instances='always', hide_input_in_errors=True)
+
+    @classmethod
+    def model_validate(cls, *args, **kwargs):
+        return _validate_public(super().model_validate, *args, **kwargs)
+
+    @classmethod
+    def model_validate_json(cls, *args, **kwargs):
+        return _validate_public(super().model_validate_json, *args, **kwargs)
+
+    @classmethod
+    def model_validate_strings(cls, *args, **kwargs):
+        return _validate_public(super().model_validate_strings, *args, **kwargs)
+
+
+class RuntimeIdentity(_Declaration, _CandidateRuntimeIdentity):
+    # D3-local facade. Identical fields/wire name; D2's runtime API is unchanged.
+    pass
 
 
 class FittedCandidateCapabilities(_Declaration):
@@ -234,10 +284,7 @@ class LabelFreeCandidateProvenance(_Declaration):
     def sanitized_projection(cls,value,handler):
         # hide_input_in_errors does not hide caller-controlled extra-field names
         # in nested Pydantic locations. Keep this new summary boundary fixed-text.
-        try:
-            return handler(value)
-        except Exception:
-            raise EvaluationDeclarationError('invalid label-free candidate provenance') from None
+        return _validate_public(handler, value)
 
     @model_validator(mode='after')
     def original_bindings(self):
@@ -375,11 +422,14 @@ def declare_evaluation_eligibility(bundle, *, capabilities, relationship, covera
     try:
         def snapshot(value,contract):
             if type(value) is not contract:raise ValueError()
-            return contract.model_validate(value.model_dump(warnings='error'))
+            validated=contract.model_validate(value)
+            return contract.model_validate(validated.model_dump(warnings='error'))
         cap=snapshot(capabilities,FittedCandidateCapabilities)
         relation=snapshot(relationship,PublicationRelationshipDeclaration)
         selected=snapshot(coverage,ValidationOnlyCoverage)
-        observed=snapshot(runtime,RuntimeIdentity)
+        if type(runtime) not in (_CandidateRuntimeIdentity,RuntimeIdentity):raise ValueError()
+        checked_runtime=type(runtime).model_validate(runtime)
+        observed=RuntimeIdentity.model_validate(checked_runtime.model_dump(warnings='error'))
         limits=snapshot(resources,EvaluationResourcePolicy) if resources is not None else EvaluationResourcePolicy()
         if type(bundle) is not CandidateBundle or type(bundle.payload) is not bytes or len(bundle.payload)>limits.max_bundle_bytes:
             raise ValueError()
@@ -388,4 +438,5 @@ def declare_evaluation_eligibility(bundle, *, capabilities, relationship, covera
         return ModelEvaluationEligibility(candidate=_label_free_provenance(bundle,manifest),
             capabilities=cap,relationship=relation,coverage=selected,runtime=observed,resources=limits)
     except Exception:
-        raise EvaluationDeclarationError('invalid non-authoritative evaluation declaration') from None
+        pass
+    _reject_declaration()

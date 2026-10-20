@@ -18,7 +18,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from collections.abc import Mapping
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 import pytest
 
 from src.data.contracts.backtesting import PredictorCapabilities, ForecastEvaluationPlan
@@ -525,3 +525,140 @@ def test_secret_bearing_summary_revalidation_has_no_diagnostics(metadata,where,c
     output=capsys.readouterr()
     assert not caught and not output.err
     assert secret not in output.out+output.err+caplog.text+''.join(traceback.format_exception(exc.value))
+
+
+_PUBLIC_VALIDATORS=('constructor','python','json','strings')
+_DIAGNOSTIC_SCOPES=('root','capabilities','relationship','coverage','runtime','resources','authorization')
+
+
+def _public_validate(contract,entry,data,**options):
+    if entry=='constructor':return contract(**data)
+    if entry=='python':return contract.model_validate(data,**options)
+    if entry=='json':return contract.model_validate_json(json.dumps(data),**options)
+    return contract.model_validate_strings(data,**options)
+
+
+def _assert_fixed_diagnostics(operation,secret,capsys,caplog):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        with pytest.raises(EvaluationDeclarationError) as error:operation()
+    exc=error.value;captured=capsys.readouterr()
+    assert exc.__cause__ is None and exc.__context__ is None
+    assert exc.args==('invalid non-authoritative evaluation declaration',)
+    text=str(exc)+repr(exc)+repr(exc.args)+''.join(traceback.format_exception(exc))
+    assert secret not in text+captured.out+captured.err+caplog.text
+    assert not caught and not captured.err
+    with warnings.catch_warnings(record=True) as unrelated:
+        warnings.simplefilter('always');warnings.warn('unrelated declaration warning',UserWarning)
+    assert len(unrelated)==1
+
+
+@pytest.mark.parametrize('entry',_PUBLIC_VALIDATORS)
+@pytest.mark.parametrize('scope',_DIAGNOSTIC_SCOPES)
+def test_public_deserialization_unknown_names_have_no_diagnostics(metadata,entry,scope,capsys,caplog):
+    secret='UNKNOWN_'+UUID(bytes=__import__('os').urandom(16)).hex
+    data=declare(metadata).model_dump(mode='json')
+    target=data if scope=='root' else data[scope];target[secret]='VALUE_'+secret
+    _assert_fixed_diagnostics(lambda:_public_validate(ModelEvaluationEligibility,entry,data),secret,capsys,caplog)
+
+
+@pytest.mark.parametrize('entry',_PUBLIC_VALIDATORS)
+@pytest.mark.parametrize('scope',_DIAGNOSTIC_SCOPES+('candidate','period','series'))
+def test_nested_declarations_are_independently_sanitized(metadata,entry,scope,capsys,caplog):
+    root=declare(metadata)
+    obj=(root if scope=='root' else root.coverage.periods[0] if scope=='period'
+         else root.relationship.series[0] if scope=='series' else getattr(root,scope))
+    secret='NESTED_'+UUID(bytes=__import__('os').urandom(16)).hex
+    data=obj.model_dump(mode='json');data[secret]={'VALUE_'+secret:secret}
+    _assert_fixed_diagnostics(lambda:_public_validate(type(obj),entry,data),secret,capsys,caplog)
+
+
+@pytest.mark.parametrize('entry',_PUBLIC_VALIDATORS)
+@pytest.mark.parametrize('field',('candidate','capabilities','relationship','coverage','runtime','resources','authorization'))
+def test_malformed_public_field_types_have_no_diagnostics(metadata,entry,field,capsys,caplog):
+    secret='TYPE_'+UUID(bytes=__import__('os').urandom(16)).hex
+    data=declare(metadata).model_dump(mode='json');data[field]={secret:secret}
+    _assert_fixed_diagnostics(lambda:_public_validate(ModelEvaluationEligibility,entry,data),secret,capsys,caplog)
+
+
+@pytest.mark.parametrize('entry',('python','json','strings'))
+@pytest.mark.parametrize('override',('ignore','allow'))
+def test_public_entry_points_cannot_disable_extra_rejection(entry,override,capsys,caplog):
+    secret='EXTRA_'+UUID(bytes=__import__('os').urandom(16)).hex
+    _assert_fixed_diagnostics(lambda:_public_validate(EvaluationResourcePolicy,entry,{secret:secret},extra=override),
+                              secret,capsys,caplog)
+
+
+@pytest.mark.parametrize('entry',('constructor','python','json'))
+def test_valid_public_roundtrips_preserve_bytes_schema_and_state(metadata,entry):
+    root=declare(metadata);result=_public_validate(ModelEvaluationEligibility,entry,root.model_dump(mode='json'))
+    assert result.model_dump_json()==root.model_dump_json() and result.eligibility_id==root.eligibility_id
+    assert_label_free_graph(result);assert_original_summary(result,metadata['bundle'])
+    assert type(result.runtime) is not RuntimeIdentity  # D2 class is untouched.
+    assert result.runtime.model_dump_json()==metadata['runtime'].model_dump_json()
+    for name in _DIAGNOSTIC_SCOPES[1:]+('candidate',):
+        obj=getattr(root,name);rebuilt=_public_validate(type(obj),entry,obj.model_dump(mode='json'))
+        assert rebuilt.model_dump_json()==obj.model_dump_json()
+
+
+def test_string_mode_valid_scalar_declaration_preserves_behavior():
+    obj=EvaluationResourcePolicy.model_validate_strings({'max_origins':'2','max_native_calls':'2'})
+    assert obj.max_origins==2 and obj.max_native_calls==2
+    assert EvaluationResourcePolicy.model_validate_json(obj.model_dump_json()).model_dump_json()==obj.model_dump_json()
+
+
+def test_compiled_nested_validation_and_subclass_dispatch_are_preserved(metadata,capsys,caplog):
+    seen=[]
+    class DerivedPolicy(EvaluationResourcePolicy):
+        declared_flag: bool = True
+
+        @model_validator(mode='after')
+        def observe_context(self,info):
+            seen.append(info.context);return self
+    class NestedPolicy(EvaluationResourcePolicy):
+        child: DerivedPolicy
+    assert DerivedPolicy.__pydantic_custom_init__ is False
+    assert NestedPolicy.model_validate({'child':{'max_origins':2}}).child.max_origins==2
+    secret='COMPILED_'+UUID(bytes=__import__('os').urandom(16)).hex
+    _assert_fixed_diagnostics(lambda:NestedPolicy.model_validate({'child':{secret:secret}}),secret,capsys,caplog)
+    _assert_fixed_diagnostics(lambda:DerivedPolicy.model_validate({'max_origins':True}),secret,capsys,caplog)
+    _assert_fixed_diagnostics(lambda:NestedPolicy.model_validate({'child':{'max_origins':'2'}},strict=True),secret,capsys,caplog)
+    assert DerivedPolicy.model_validate({'declared_flag':'true'}).declared_flag is True
+    _assert_fixed_diagnostics(lambda:NestedPolicy.model_validate({'child':{'declared_flag':'true'}},strict=True),secret,capsys,caplog)
+    context={'identity':'owned-declaration'}
+    assert DerivedPolicy.model_validate({'max_origins':2},strict=True,context=context).max_origins==2
+    assert seen[-1] is context
+    assert NestedPolicy.model_validate({'child':{'max_origins':2}},context=context).child.max_origins==2
+    assert seen[-1] is context
+
+
+@pytest.mark.parametrize('field',('capabilities','relationship','coverage','runtime','resources'))
+def test_factory_failures_leave_no_original_exception_context(metadata,field,capsys,caplog):
+    secret='FACTORY_'+UUID(bytes=__import__('os').urandom(16)).hex
+    obj=metadata.get(field,EvaluationResourcePolicy())
+    first=next(iter(type(obj).model_fields));bad=changed(obj,**{first:{secret:secret}})
+    _assert_fixed_diagnostics(lambda:declare(metadata,**{field:bad}),secret,capsys,caplog)
+
+
+def test_invalid_json_syntax_has_no_original_exception_context(capsys,caplog):
+    secret='JSON_'+UUID(bytes=__import__('os').urandom(16)).hex
+    _assert_fixed_diagnostics(lambda:EvaluationResourcePolicy.model_validate_json('{"'+secret+'":'),secret,capsys,caplog)
+
+
+@pytest.mark.parametrize('field',('capabilities','relationship','coverage','runtime','resources'))
+def test_factory_rejects_unchecked_extra_fields_before_serialization(metadata,field,capsys,caplog):
+    secret='UNCHECKED_'+UUID(bytes=__import__('os').urandom(16)).hex
+    obj=metadata.get(field,EvaluationResourcePolicy()).model_copy(update={secret:'VALUE_'+secret})
+    assert secret in vars(obj)  # A schema serializer would otherwise silently drop it.
+    _assert_fixed_diagnostics(lambda:declare(metadata,**{field:obj}),secret,capsys,caplog)
+
+
+@pytest.mark.parametrize('entry',_PUBLIC_VALIDATORS)
+def test_public_errors_detach_ambient_validation_exception(entry,capsys,caplog):
+    secret='AMBIENT_'+UUID(bytes=__import__('os').urandom(16)).hex
+    try:RuntimeIdentity.model_validate({secret:secret})  # Existing D2 API, outside D3's guard.
+    except ValueError as ambient:
+        assert secret in str(ambient)
+        _assert_fixed_diagnostics(lambda:_public_validate(EvaluationResourcePolicy,entry,{secret:secret}),
+                                  secret,capsys,caplog)
+    else:pytest.fail('malformed runtime must reject')
