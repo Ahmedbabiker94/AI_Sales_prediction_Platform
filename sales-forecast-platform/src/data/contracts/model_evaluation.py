@@ -12,8 +12,9 @@ from pydantic import ConfigDict, Field, StrictInt, model_validator
 
 from .backtesting import Digest, identity
 from .dataset import _opaque
-from .model_candidate import CandidateBundle, CandidateManifest, RuntimeIdentity
-from .temporal_preparation import _TemporalContract, TemporalDatasetBinding, TemporalTimestamp, _instants
+from .model_candidate import CandidateBundle, RuntimeIdentity, TrainingInvocation, digest
+from src.features.feature_schema_compatibility import FeatureSchemaCompatibility
+from .temporal_preparation import _TemporalContract, TemporalDatasetBinding, TemporalTimestamp, TemporalPreparationPlan, _instants
 
 
 class EvaluationDeclarationError(ValueError):
@@ -193,16 +194,87 @@ class EvaluationAuthorizationRequirements(_Declaration):
         return self
 
 
-class ModelEvaluationEligibility(_Declaration):
-    """Consistent metadata only, NEVER an issued evaluation handle or permission.
+class LabelFreeCandidateProvenance(_Declaration):
+    """An allowlisted summary. No model bytes, training rows, labels or state data.
 
-    The manifest snapshot contains training audit data: it must not be passed to
-    predictors. Actual issuer ownership, FINALIZED purpose admission, relationship
-    authority, runtime measurement, revocation and execution remain D3-B/C duties.
+    Digests bind the owner's original private records; they grant no authority.
+    The original full plan and feature schema contain declarations, not examples.
     """
     version: Literal['1.0'] = '1.0'
+    candidate_bundle_id: Digest
+    manifest_digest: Digest
+    artifact_digest: Digest
+    artifact_size: StrictInt = Field(ge=1,le=1024*1024)
+    bundle_size: StrictInt = Field(ge=1,le=2*1024*1024)
+    model_family: Literal['xgboost'] = 'xgboost'
+    serialization: Literal['ubj'] = 'ubj'
+    model_input_policy: Literal['strict_exact_float32_v1'] = 'strict_exact_float32_v1'
+    training_invocation: TrainingInvocation
+    training_invocation_digest: Digest
+    training_scope_id: str
+    training_scope_digest: Digest
+    label_authority_id: str
+    label_authority_version: str
+    training_handoff_id: Digest
+    preparation_id: Digest
+    training_plan: TemporalPreparationPlan
+    training_plan_digest: Digest
+    configuration_digest: Digest
+    fitted_state_id: Digest
+    fitted_state_digest: Digest
+    fitted_state_size: StrictInt = Field(ge=1,le=4*1024*1024)
+    training_partition_reference: Digest
+    training_schema_digest: Digest
+    representation: FeatureSchemaCompatibility
+    series: tuple[SeriesEvaluationScope,...] = Field(min_length=1,max_length=128)
+    runtime_digest: Digest
+
+    @model_validator(mode='wrap')
+    @classmethod
+    def sanitized_projection(cls,value,handler):
+        # hide_input_in_errors does not hide caller-controlled extra-field names
+        # in nested Pydantic locations. Keep this new summary boundary fixed-text.
+        try:
+            return handler(value)
+        except Exception:
+            raise EvaluationDeclarationError('invalid label-free candidate provenance') from None
+
+    @model_validator(mode='after')
+    def original_bindings(self):
+        for name in (self.training_scope_id,self.label_authority_id,self.label_authority_version):_opaque(name)
+        plan=self.training_plan;schema=self.representation
+        if (len(plan.folds)!=1 or len(plan.datasets)!=1 or plan.forecast_horizon!=1
+                or plan.capability!='supervised_h1' or self.training_plan_digest!=plan.digest
+                or self.configuration_digest!=plan.configuration_digest
+                or self.configuration_digest!=schema.configuration_digest
+                or schema.forecast_horizon!=1 or schema.fitted_state_id!=self.fitted_state_id
+                or schema.training_schema_digest!=self.training_schema_digest
+                or tuple(s.series_id for s in self.series)!=plan.datasets[0].series_ids
+                or self.training_invocation_digest!=digest(self.training_invocation.model_dump_json(warnings='error').encode())):
+            raise ValueError('inconsistent label-free candidate provenance')
+        # Preserve D1's exact calibration-partition identity without exporting
+        # its label claims or fitted vocabulary. Calendar/hash helpers are shared.
+        from src.features.canonical_feature_pipeline import CanonicalFeaturePipeline
+        engine=CanonicalFeaturePipeline(schema.configuration);fold=plan.folds[0]
+        partition=identity([plan.digest,fold.fold_id,plan.datasets[0].model_dump(mode='json'),
+            self.configuration_digest,engine._time(fold.calibration_start).isoformat(),
+            engine._time(fold.categorical_cutoff).isoformat()])
+        if self.training_partition_reference!=partition:
+            raise ValueError('original fitted calibration partition required')
+        return self
+
+
+class ModelEvaluationEligibility(_Declaration):
+    """Label-free consistency declaration, NEVER an issued evaluation handle.
+
+    Original manifests and label-bearing evidence stay with the original owner.
+    Ownership, purpose admission, relationship authority, measured runtime and
+    revocation remain D3-B/C duties. No digest or public summary proves them.
+    """
+    # Rejected manifest-bearing wire form is deliberately not deserializable.
+    version: Literal['1.1'] = '1.1'
     status: Literal['DECLARATION_ONLY'] = 'DECLARATION_ONLY'
-    candidate_manifest_json: str = Field(min_length=1,max_length=2*1024*1024)
+    candidate: LabelFreeCandidateProvenance
     capabilities: FittedCandidateCapabilities
     relationship: PublicationRelationshipDeclaration
     coverage: ValidationOnlyCoverage
@@ -210,37 +282,21 @@ class ModelEvaluationEligibility(_Declaration):
     resources: EvaluationResourcePolicy = Field(default_factory=EvaluationResourcePolicy)
     authorization: EvaluationAuthorizationRequirements = Field(default_factory=EvaluationAuthorizationRequirements)
 
-    @property
-    def manifest(self):
-        try:
-            return CandidateManifest.model_validate_json(self.candidate_manifest_json)
-        except Exception:
-            raise EvaluationDeclarationError('invalid candidate declaration snapshot') from None
-
     @model_validator(mode='after')
     def consistent_declaration(self):
-        from .features import FeatureState
         from src.features.canonical_feature_pipeline import CanonicalFeaturePipeline
-        from src.features.feature_schema_compatibility import FeatureSchemaCompatibility
-        from .model_candidate import digest
-        manifest=self.manifest;cap=self.capabilities;relation=self.relationship
-        if manifest.model_dump_json(warnings='error')!=self.candidate_manifest_json:
-            raise ValueError('canonical original manifest snapshot required')
-        provenance=manifest.provenance;native=provenance.states[0]
-        state=FeatureState.model_validate_json(native.state_json)
-        schema=FeatureSchemaCompatibility.model_validate_json(native.representation_json)
-        engine=CanonicalFeaturePipeline(schema.configuration)
-        expected=(manifest.artifact_digest,provenance.handoff_id,provenance.configuration_digest,
-                  state.state_id,digest(native.state_json.encode()),schema.schema_id,
-                  manifest.feature_names,manifest.feature_dtypes)
-        actual=(cap.artifact_digest,cap.training_handoff_id,cap.configuration_digest,cap.fitted_state_id,
-                cap.fitted_state_digest,cap.representation_schema_id,cap.feature_names,cap.feature_dtypes)
-        if actual!=expected or self.runtime!=manifest.runtime or not self.runtime.source_matches_commit:
+        candidate=self.candidate;cap=self.capabilities;relation=self.relationship
+        schema=candidate.representation;engine=CanonicalFeaturePipeline(schema.configuration)
+        expected=(candidate.candidate_bundle_id,candidate.artifact_digest,candidate.training_handoff_id,
+                  candidate.configuration_digest,candidate.fitted_state_id,candidate.fitted_state_digest,schema.schema_id,
+                  schema.configuration.ordered_outputs,tuple(schema.configuration.output_dtypes[n] for n in schema.configuration.ordered_outputs))
+        actual=(cap.candidate_bundle_id,cap.artifact_digest,cap.training_handoff_id,cap.configuration_digest,
+                cap.fitted_state_id,cap.fitted_state_digest,cap.representation_schema_id,cap.feature_names,cap.feature_dtypes)
+        if (actual!=expected or digest(self.runtime.model_dump_json(warnings='error').encode())!=candidate.runtime_digest
+                or not self.runtime.source_matches_commit):
             raise ValueError('original candidate state representation or runtime mismatch')
-        plan=provenance.plan;fold=plan.folds[0]
-        if (len(plan.folds)!=1 or len(plan.datasets)!=1 or relation.training!=plan.datasets[0]
-                or native.dataset!=relation.training or native.fold_id!=self.coverage.fold_id
-                or self.coverage.fold_id!=fold.fold_id):
+        plan=candidate.training_plan;fold=plan.folds[0]
+        if relation.training!=plan.datasets[0] or self.coverage.fold_id!=fold.fold_id:
             raise ValueError('original single-fold training provenance required')
         rules=engine.rules;temporal=engine.temporal
         if cap.allowed_covariates!=tuple(sorted(r.field for r in rules.exogenous)):
@@ -251,8 +307,7 @@ class ModelEvaluationEligibility(_Declaration):
                 or (plan.frequency,plan.calendar,plan.timezone,plan.period_anchor)!=(
                     relation.frequency,relation.calendar,relation.timezone,relation.period_anchor)):
             raise ValueError('measurement or calendar relationship mismatch')
-        dimensions={s.series_id:s.dimensions for s in relation.series}
-        if any(c.dimensions!=dimensions[c.series_id] for c in provenance.labels):
+        if relation.series!=candidate.series:
             raise ValueError('original series dimensions required')
         begin=engine._time(fold.calibration_start);cutoff=engine._time(fold.categorical_cutoff)
         fit=engine._time(fold.model_fit_cutoff);assessment=engine._time(fold.assessment_cutoff)
@@ -271,9 +326,9 @@ class ModelEvaluationEligibility(_Declaration):
                 raise ValueError('ineligible validation H1 target interval')
         b=self.resources;count=len(self.coverage.periods);rows=count*len(relation.series)
         if (count>min(b.max_origins,b.max_native_calls) or rows>b.max_prediction_rows
-                or rows*len(cap.feature_names)>b.max_input_cells or manifest.artifact_size>b.max_artifact_bytes
-                or len(native.state_json.encode())>b.max_state_bytes
-                or len(self.candidate_manifest_json.encode())>b.max_bundle_bytes):
+                or rows*len(cap.feature_names)>b.max_input_cells or candidate.artifact_size>b.max_artifact_bytes
+                or candidate.fitted_state_size>b.max_state_bytes
+                or candidate.bundle_size>b.max_bundle_bytes):
             raise ValueError('evaluation declaration exceeds resource ceilings')
         return self
 
@@ -281,11 +336,41 @@ class ModelEvaluationEligibility(_Declaration):
     def eligibility_id(self): return _declaration_identity(self)
 
 
+def _label_free_provenance(bundle,manifest):
+    """Transient full-content validation precedes this allowlisted projection.
+
+    Never retain the manifest, its JSON, label claims or buffers in the result.
+    """
+    provenance=manifest.provenance;native=provenance.states[0];state=native.state
+    dimensions={}
+    for claim in provenance.labels:
+        if claim.series_id in dimensions and dimensions[claim.series_id]!=claim.dimensions:
+            raise ValueError('conflicting original series dimensions')
+        dimensions[claim.series_id]=claim.dimensions
+    return LabelFreeCandidateProvenance(candidate_bundle_id=bundle.bundle_id,
+        manifest_digest=digest(manifest.model_dump_json(warnings='error').encode()),
+        artifact_digest=manifest.artifact_digest,artifact_size=manifest.artifact_size,bundle_size=len(bundle.payload),
+        model_family=manifest.training.model_family,serialization=manifest.training.serialization,
+        model_input_policy=manifest.training.input_policy,training_invocation=manifest.invocation,
+        training_invocation_digest=digest(manifest.invocation.model_dump_json(warnings='error').encode()),
+        training_scope_id=manifest.scope.scope_id,training_scope_digest=manifest.scope.digest,
+        label_authority_id=manifest.scope.label_authority_id,label_authority_version=manifest.scope.label_authority_version,
+        training_handoff_id=provenance.handoff_id,preparation_id=provenance.preparation_id,
+        training_plan=provenance.plan,training_plan_digest=provenance.plan.digest,
+        configuration_digest=provenance.configuration_digest,fitted_state_id=state.state_id,
+        fitted_state_digest=manifest.state_digest,fitted_state_size=len(native.state_json.encode()),
+        training_partition_reference=state.training_partition_reference,training_schema_digest=state.training_schema_digest,
+        representation=FeatureSchemaCompatibility.model_validate_json(native.representation_json),
+        series=tuple(SeriesEvaluationScope(series_id=sid,dimensions=dimensions[sid])
+                     for sid in provenance.plan.datasets[0].series_ids),
+        runtime_digest=digest(manifest.runtime.model_dump_json(warnings='error').encode()))
+
+
 def declare_evaluation_eligibility(bundle, *, capabilities, relationship, coverage, runtime, resources=None):
     """Sanitized CONTENT validation only. Publicly reconstructable, NOT issuance.
 
-    A real native model and its original live owner cannot be authenticated here.
-    D3-B must introduce that owned boundary; this function grants no operation.
+    Full original content is inspected locally and never exported or cached.
+    D3-B must verify the original live owner; this function grants no operation.
     """
     try:
         def snapshot(value,contract):
@@ -300,7 +385,7 @@ def declare_evaluation_eligibility(bundle, *, capabilities, relationship, covera
             raise ValueError()
         manifest,_=bundle.validate()
         if cap.candidate_bundle_id!=bundle.bundle_id:raise ValueError()
-        return ModelEvaluationEligibility(candidate_manifest_json=manifest.model_dump_json(warnings='error'),
+        return ModelEvaluationEligibility(candidate=_label_free_provenance(bundle,manifest),
             capabilities=cap,relationship=relation,coverage=selected,runtime=observed,resources=limits)
     except Exception:
         raise EvaluationDeclarationError('invalid non-authoritative evaluation declaration') from None

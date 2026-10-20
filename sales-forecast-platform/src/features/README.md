@@ -903,10 +903,10 @@ identities and accepted implementation kinds remain unchanged. Existing syntheti
 executors reject the new declaration; no prediction or scoring adapter is added.
 
 `declare_evaluation_eligibility()` checks bounded candidate **content** and makes
-a detached `ModelEvaluationEligibility` snapshot. It binds the original D2
-bundle/artifact identities, D1 invocation and complete original temporal plan,
-original state/schema strings, ordered representation, conversion configuration,
-training authority references, runtime/source declarations and explicit
+a detached, label-free `ModelEvaluationEligibility` version `1.1`. It binds the
+original D2 bundle/artifact identities, canonical manifest SHA-256, D1 invocation
+and complete original temporal plan, original state identities and ordered feature
+schema, conversion configuration, training authority references, runtime/source declarations and explicit
 training/evaluation publication relationship. The relationship currently requires
 the same organization, source, exact mapping, series definitions and quality
 policy; publications must be different immutable versions with distinct purposes.
@@ -937,10 +937,23 @@ and before handoff. Cross-process/archival import is excluded. Ordinary requests
 must not select their own authorities. These are obligations, not implemented
 permission checks or an evaluation handle.
 
-The original manifest snapshot contains private training audit rows/labels and
-must never be forwarded as a predictor request. No validation labels are captured
-here. Conservative resource ceilings reject oversized declared geometry/content;
-actual callback/capture/representation accounting, cancellation/deadline checks
+The returned `LabelFreeCandidateProvenance` is an explicit allowlist: plan,
+invocation/authority identifiers, series/measurement scope, typed feature schema,
+runtime/configuration identities and bounded size metadata. State bytes and fitted
+vocabularies remain private; only their integrity identities are exported. The
+manifest digest is SHA-256 of the original canonical `model_dump_json()` UTF-8
+bytes. The future owner must recompute it against its original private manifest.
+It is an integrity comparison, never a loading or evaluation credential.
+
+The complete D2 manifest is inspected transiently during content validation and
+is not retained in the returned declaration. There is no manifest accessor, JSON
+payload, training matrix, row-index payload, training predictions, numeric labels
+or exact label-value claims in its reachable supported object graph. Original
+label-bearing records remain with the D2 owner. Rejected manifest-bearing D3-A
+version `1.0` declarations are not accepted by the label-free `1.1` wire contract.
+Accepted synthetic-v1 and D1/D2 schemas/artifacts are unchanged. No validation
+labels are captured here. Conservative resource ceilings reject oversized
+declared geometry/content; actual callback/capture/representation accounting, cancellation/deadline checks
 following terminal callbacks, atomic authorization and hard CPU/RSS enforcement
 remain future service/deployment responsibilities. Trusted in-process Python is
 not a sandbox. The standalone digest-helper diagnostic P2 remains deferred.
