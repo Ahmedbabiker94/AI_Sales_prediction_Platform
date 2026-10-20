@@ -343,3 +343,52 @@ def test_late_history_and_future_prediction_availability_are_not_inferred(setup,
     pred.available_at=origin+pd.Timedelta(seconds=1)
     with pytest.raises(FeatureExecutionError,match='prediction scope or horizon'):
         run(engine,history,context,origin,state,ForecastConfig(forecast_frequency='weekly',forecast_horizon=2),prior_predictions=pred)
+
+
+@pytest.mark.parametrize('field',('id','unit','meaning','version','calculation','history'))
+@pytest.mark.parametrize('channel',('warnings','stderr','logging'))
+def test_malformed_configuration_diagnostics_are_sanitized(monkeypatch,capsys,caplog,field,channel):
+    import logging
+    import sys
+    import warnings
+
+    config=feature_config();secret='CFGKEY42'
+    def malformed(obj,**changes):
+        return type(obj).model_construct(**{**obj.__dict__,**changes})
+    execution=config.execution
+    variants={
+        'id':malformed(config,configuration_id={secret:secret}),
+        'unit':malformed(config,execution=malformed(execution,measurement=malformed(execution.measurement,unit={secret:secret}))),
+        'meaning':malformed(config,execution=malformed(execution,metric_meaning={secret:secret})),
+        'version':malformed(config,version=[secret]),
+        'calculation':malformed(config,calculations=(secret,)),
+        'history':malformed(config,execution=malformed(execution,temporal=malformed(execution.temporal,minimum_history=secret))),
+    }
+    calls=[]
+    def unexpected(*args,**kwargs):
+        calls.append(True)
+        raise AssertionError('malformed configuration reached executable validation')
+    monkeypatch.setattr(CanonicalFeaturePipeline,'_validate_configuration',unexpected)
+    capture_enabled=logging._warnings_showwarning is not None
+    try:
+        if channel=='logging':logging.captureWarnings(True)
+        with warnings.catch_warnings(record=channel=='warnings') as emitted:
+            warnings.simplefilter('always')
+            if channel=='stderr':
+                def stderr_warning(message,category,filename,lineno,file=None,line=None):
+                    print(warnings.formatwarning(message,category,filename,lineno,line),file=file or sys.stderr,end='')
+                warnings.showwarning=stderr_warning
+            with pytest.raises(FeatureExecutionError) as error:
+                CanonicalFeaturePipeline(variants[field])
+            warning_text='' if emitted is None else '\n'.join(str(w.message) for w in emitted)
+    finally:
+        logging.captureWarnings(capture_enabled)
+    output=capsys.readouterr()
+    assert not calls
+    assert not warning_text and not output.err
+    assert secret not in warning_text+output.out+output.err+caplog.text+''.join(traceback.format_exception(error.value))
+    assert str(error.value)=='unsupported executable feature configuration'
+    with warnings.catch_warnings(record=True) as unrelated:
+        warnings.simplefilter('always')
+        warnings.warn('unrelated feature diagnostic warning',UserWarning)
+    assert len(unrelated)==1 and str(unrelated[0].message)=='unrelated feature diagnostic warning'

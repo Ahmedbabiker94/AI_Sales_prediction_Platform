@@ -800,3 +800,44 @@ def test_public_temporal_malformed_plan_diagnostics_are_sanitized(make_temporal,
         warnings.simplefilter('always')
         warnings.warn('unrelated temporal diagnostic warning',UserWarning)
     assert len(unrelated)==1 and str(unrelated[0].message)=='unrelated temporal diagnostic warning'
+
+
+@pytest.mark.parametrize('field',('id','unit'))
+@pytest.mark.parametrize('channel',('warnings','stderr','logging'))
+def test_public_temporal_malformed_configuration_diagnostics_are_sanitized(make_temporal,monkeypatch,capsys,caplog,field,channel):
+    import logging
+    import sys
+    import warnings
+
+    b=make_temporal();config=b['configuration'];secret='CFGKEY42'
+    def malformed(obj,**changes):
+        return type(obj).model_construct(**{**obj.__dict__,**changes})
+    if field=='id':
+        config=malformed(config,configuration_id={secret:secret})
+    else:
+        config=malformed(config,execution=malformed(config.execution,
+            measurement=malformed(config.execution.measurement,unit={secret:secret})))
+    calls=[]
+    def unexpected(*args,**kwargs):
+        calls.append(True)
+        raise AssertionError('malformed configuration reached dataset capture')
+    monkeypatch.setattr(b['service'],'_consume_capture',unexpected)
+    capture_enabled=logging._warnings_showwarning is not None
+    try:
+        if channel=='logging':logging.captureWarnings(True)
+        with warnings.catch_warnings(record=channel=='warnings') as emitted:
+            warnings.simplefilter('always')
+            if channel=='stderr':
+                def stderr_warning(message,category,filename,lineno,file=None,line=None):
+                    print(warnings.formatwarning(message,category,filename,lineno,line),file=file or sys.stderr,end='')
+                warnings.showwarning=stderr_warning
+            with pytest.raises(TrainingPreparationError) as error:
+                b['service'].prepare_temporal(b['plan'],config)
+            warning_text='' if emitted is None else '\n'.join(str(w.message) for w in emitted)
+    finally:
+        logging.captureWarnings(capture_enabled)
+    output=capsys.readouterr()
+    assert not calls
+    assert not warning_text and not output.err
+    assert secret not in warning_text+output.out+output.err+caplog.text+''.join(traceback.format_exception(error.value))
+    assert str(error.value)=='canonical temporal preparation failed'

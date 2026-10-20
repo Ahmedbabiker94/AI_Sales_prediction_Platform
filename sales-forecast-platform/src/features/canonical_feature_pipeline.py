@@ -136,7 +136,7 @@ class CanonicalFeaturePipeline:
                                 ("lag_offsets",self.budgets.max_calculations),("rolling_windows",self.budgets.max_calculations)):
                 fields = getattr(configuration,name)
                 if type(fields) is not tuple or len(fields) > limit: raise ValueError()
-            self.configuration = FeatureConfiguration.model_validate(configuration.model_dump())
+            self.configuration = FeatureConfiguration.model_validate(configuration.model_dump(warnings='error'))
             self._validate_configuration()
             if len(operational_json(self.configuration.model_dump(mode="json")).encode()) > self.budgets.max_configuration_bytes:
                 raise ValueError()
