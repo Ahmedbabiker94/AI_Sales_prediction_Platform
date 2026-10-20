@@ -983,3 +983,64 @@ supported D3 import entry points. Deprecated Pydantic v1 `parse_*` and
 validation retains Pydantic's existing limitations for complex list/tuple fields;
 Python/JSON validation provides the full declaration round-trip. No authorization,
 loading, prediction, scoring or new resource enforcement is implemented here.
+
+### R-04D3-B0 operator-owned publication relationship approvals
+
+`bootstrap_relationship_authority()` in
+`src/services/training_evaluation_relationship_authority.py` creates a private,
+process-local approval ledger and two separate capabilities. Trusted application
+bootstrap retains the `RelationshipApprovalOperator`; ordinary requests receive
+only the pinned `RelationshipApprovalVerifier`. Bootstrap must authenticate the
+operator and protect that separation. Constructing another authority, using the
+same name, knowing a digest, or having a Python type does not establish trust.
+Trusted Python is not a sandbox; this is not production identity infrastructure.
+
+The operator explicitly reviews and approves an exact, guarded D3-A declaration
+with an independent operator decision reference and issuance context. Neither
+constructing a declaration nor requesting verification issues a record. The
+immutable private record snapshots the entire label-free declaration, including
+candidate/artifact/invocation, original plan, state/schema/configuration/runtime,
+both immutable publications and purposes, tenant/series/measurement/calendar,
+and exact validation H1 origins/targets. Approval identity is computed from the
+actual record scope and issuance provenance. The independent operator ledger,
+not a matching digest or individual read permission, supplies relationship
+approval. There are no wildcard approvals or request-selected authorities.
+
+Issuance and every verification call reuse the existing canonical provider's
+`require_current()` for BOTH fixed publications. It reauthorizes exact purposes
+and verifies FINALIZED admission, immutable manifest, mapping, series metadata,
+and unexpired publication evidence. All verified bindings and series dimensions
+must match the approved relationship. B0 opens no data reader, captures no labels,
+and fits/loads/predicts no model. Existing providers and admission rules are not
+changed. Operator-provided metadata is not trusted merely by its type: it must
+match the provider's freshly reconstructed publication metadata.
+
+Approval uses the original opaque handle object in its original registry. New,
+copied, serialized, foreign-registry, or audit-receipt claims confer nothing.
+Revocation is permanent and checked before live verification and again after all
+provider/clock/cancellation callbacks. Expiry rejects at `now >= expires_at`;
+backward/nonfinite clocks reject. No stale receipt bypasses a fresh check. Records
+are re-checkable until expiry/revocation; cancellation aborts the current check,
+not the operator's decision. Future D3-B execution handles must separately enforce
+single-use terminal execution state. Sequential checks are not atomic leases.
+
+Conservative cumulative ceilings bound records, stored declaration/metadata
+bytes and verification attempts (including failed admitted attempts). Each call
+has a cooperative elapsed deadline. Tombstones retain capacity; records cannot
+be reactivated or reapproved in place. A busy registry rejects reentrant/concurrent
+issuance or verification. Registry locks are not held during provider callbacks;
+revocation remains possible during those callbacks. These controls do not impose
+hard operating-system CPU/RSS limits, provide durability, or coordinate processes.
+
+`RelationshipApprovalEvidence` is a label-free `RELATIONSHIP_ONLY` audit receipt,
+not an evaluation-use or model-loading credential. Integrity references are not
+anonymization; keep receipts/declarations within the controlled operator scope.
+D3-A stays `DECLARATION_ONLY`
+with authorization issuance `NOT_IMPLEMENTED`. B0 does not authenticate native
+training or transfer D2 ownership: D3-B must independently pin the original live
+D2 issuer, verify its private original issued candidate, establish model-use
+permission and enforce prediction lifecycle rules. Raw manifests, training rows,
+labels/predictions, native artifacts/Boosters and fitted-state payloads are never
+accepted or exported by the B0 API. Existing D3-A/synthetic-v1 wire identities are
+unchanged. All request validation goes through the guarded D3-A boundary; B0 adds
+fixed errors with detached cause/context and installs no global warning filter.
