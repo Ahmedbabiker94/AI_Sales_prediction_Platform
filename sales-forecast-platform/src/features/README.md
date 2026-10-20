@@ -892,3 +892,55 @@ B2c producer widening or legacy-model migration. Real held-out evaluation,
 production business conversion approvals, durable artifact transport/authenticity,
 atomic authorization snapshots and process resource controls remain later work.
 The accepted D1 malformed-declaration warning P2 is unchanged in its source.
+
+### R-04D3-A fitted-candidate evaluation declarations
+
+`src/data/contracts/model_evaluation.py` adds a separate, frozen D3 contract
+branch. `FittedCandidateCapabilities` version `1.1` declares a fitted XGBoost
+candidate, tabular H1 representation and validation-only coverage. It is **not**
+an extension of synthetic-v1 `PredictorCapabilities`: existing B1/C1/C2 bytes,
+identities and accepted implementation kinds remain unchanged. Existing synthetic
+executors reject the new declaration; no prediction or scoring adapter is added.
+
+`declare_evaluation_eligibility()` checks bounded candidate **content** and makes
+a detached `ModelEvaluationEligibility` snapshot. It binds the original D2
+bundle/artifact identities, D1 invocation and complete original temporal plan,
+original state/schema strings, ordered representation, conversion configuration,
+training authority references, runtime/source declarations and explicit
+training/evaluation publication relationship. The relationship currently requires
+the same organization, source, exact mapping, series definitions and quality
+policy; publications must be different immutable versions with distinct purposes.
+Declared measurement, dimensions, calendar and schema must match original training
+provenance. Verified publication metadata and independent relationship evidence
+must still be established by the future operator-owned service.
+
+The full training/validation/test plan is retained. Only explicitly selected
+original validation origins may appear in D3 coverage. Calendar arithmetic is
+reused from the accepted executor: aligned daily/weekly start periods, H1 target
+starting at O, C <= M <= O, target end <= E, and no training/test target overlap.
+No partition rewriting, state refitting, test execution or H2/H3 fallback exists.
+The numeric requirements are `strict_exact_float32_v1`, finite native float32
+outputs and exact float32-to-float64 widening. The D3 numeric-policy identity also
+binds the original configuration digest, including canonical conversion scopes
+and tolerances. Configuration is revalidated through the accepted constructor;
+raw inputs never go directly to the standalone `configuration_digest()` helper.
+
+**Authorization issuance is NOT_IMPLEMENTED.** Every result says
+`DECLARATION_ONLY`. Neither a valid declaration, a matching hash, reconstructed
+bundle bytes, a source-match flag nor a named authority proves original issuer
+ownership or permission. Candidate-shaped inert metadata can pass content checks;
+this does not prove genuine native training. D3-B must require the same process
+and original live D2 issuer, authenticate the relationship and exact FINALIZED
+purpose admissions, independently measure runtime/source compatibility and make
+fresh scope-specific, revocable evaluation-use checks before loading, per origin
+and before handoff. Cross-process/archival import is excluded. Ordinary requests
+must not select their own authorities. These are obligations, not implemented
+permission checks or an evaluation handle.
+
+The original manifest snapshot contains private training audit rows/labels and
+must never be forwarded as a predictor request. No validation labels are captured
+here. Conservative resource ceilings reject oversized declared geometry/content;
+actual callback/capture/representation accounting, cancellation/deadline checks
+following terminal callbacks, atomic authorization and hard CPU/RSS enforcement
+remain future service/deployment responsibilities. Trusted in-process Python is
+not a sandbox. The standalone digest-helper diagnostic P2 remains deferred.
