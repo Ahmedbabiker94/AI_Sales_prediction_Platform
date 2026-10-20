@@ -751,3 +751,52 @@ def test_terminal_scoped_phase_follows_all_broader_callbacks_and_result_assembly
     assert [e[1] for e in events if e[0]=='scoped_availability']==[b['at'](i) for i in range(4,8)]
     assert [e[1] for e in events if e[0]=='scoped_authorization']==[b['at'](i) for i in range(4,8)]
     if mode=='valid':assert events[-1]==('checkpoint',None)
+
+
+@pytest.mark.parametrize('declaration',('folds','nested_origin','nested_budget'))
+@pytest.mark.parametrize('channel',('warnings','stderr','logging'))
+def test_public_temporal_malformed_plan_diagnostics_are_sanitized(make_temporal,capsys,caplog,declaration,channel):
+    """Reject before collaborators, without serializer disclosure on any channel."""
+    import logging
+    import sys
+    import warnings
+
+    b=make_temporal();plan=b['plan'];secret='P2KEY927'
+    def malformed(obj,**changes):
+        return type(obj).model_construct(**{**obj.__dict__,**changes})
+    if declaration=='folds':
+        plan=malformed(plan,folds=(secret,))
+    elif declaration=='nested_origin':
+        plan=malformed(plan,folds=(malformed(plan.folds[0],training_origins=(secret,)),))
+    else:
+        plan=malformed(plan,budgets=malformed(plan.budgets,max_series=secret))
+    calls=[]
+    def unexpected(*args,**kwargs):
+        calls.append(True)
+        raise AssertionError('malformed plan reached transformation')
+    b['service']._prepare_temporal=unexpected
+    capture_enabled=logging._warnings_showwarning is not None
+    try:
+        if channel=='logging':logging.captureWarnings(True)
+        with warnings.catch_warnings(record=channel=='warnings') as emitted:
+            warnings.simplefilter('always')
+            if channel=='stderr':
+                # Exercise Python's stderr handler rather than pytest's warning hook.
+                def stderr_warning(message,category,filename,lineno,file=None,line=None):
+                    print(warnings.formatwarning(message,category,filename,lineno,line),
+                          file=file or sys.stderr,end='')
+                warnings.showwarning=stderr_warning
+            with pytest.raises(TrainingPreparationError) as error:
+                b['service'].prepare_temporal(plan,b['configuration'])
+            warning_text='' if emitted is None else '\n'.join(str(w.message) for w in emitted)
+    finally:
+        logging.captureWarnings(capture_enabled)
+    output=capsys.readouterr()
+    assert not calls
+    assert secret not in warning_text+output.out+output.err+caplog.text+''.join(traceback.format_exception(error.value))
+    assert not warning_text and not output.err
+    assert str(error.value)=='canonical temporal plan validation failed'
+    with warnings.catch_warnings(record=True) as unrelated:
+        warnings.simplefilter('always')
+        warnings.warn('unrelated temporal diagnostic warning',UserWarning)
+    assert len(unrelated)==1 and str(unrelated[0].message)=='unrelated temporal diagnostic warning'

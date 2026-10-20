@@ -317,7 +317,7 @@ class CanonicalTrainingPreparationService:
             if type(plan) is not TemporalPreparationPlan:
                 raise TrainingPreparationError('explicit temporal plan required')
             # Revalidate even model_copy/model_construct declarations; they grant no trust.
-            plan=TemporalPreparationPlan.model_validate(plan.model_dump())
+            plan=TemporalPreparationPlan.model_validate(plan.model_dump(warnings='error'))
         except Exception:
             raise TrainingPreparationError('canonical temporal plan validation failed') from None
         if plan.capability!='supervised_h1' or plan.forecast_horizon!=1:
