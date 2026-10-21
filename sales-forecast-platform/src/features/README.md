@@ -1119,3 +1119,56 @@ Final `scoped_return` evaluation-use checks cover every original validation
 origin AFTER broader owner/B0/read/global-return callbacks, alongside terminal
 historical attestation. Global permission cannot replace any origin's permission.
 No partial/narrowed result is returned if a later callback revokes an origin.
+
+### R-04D3-C0 original-owner joint H1 sealing (no labels or scores)
+
+Trusted bootstrap may call the original live D2 issuer's
+`bootstrap_joint_h1_prediction()`. It keeps the joint operator private and pins
+its executor/verifier. The hook reuses D2's original-object/private-seal checks
+and D3-B's existing native prediction executor, authorization, numeric conversion
+and original D1 fitted state. No public result, hash, reconstructed bundle or
+caller-built baseline batch becomes a producer credential.
+
+One bounded, exhausted and closed historical capture is frozen using the accepted
+B2c immutable capture implementation. The model and fixed operator-selected B2b
+last-observation or seasonal-naive adapter use detached views of those same bytes.
+Only origin-eligible rows reach either calculation. The category-free baseline
+adapter invokes the existing canonical lag calculation kernel without fitting or
+inventing a FeatureState; ordinary B2b callbacks and synthetic-v1 are unchanged.
+An original baseline owner records its actual tuple; the original model executor
+records its actual result. Both identity and content are checked before a joint
+seal. Raw snapshot views are released after sealing or failure; retained revision
+claims remain private for fresh authorization checks.
+
+C0 uses separately versioned `JointValidationH1Coverage`/`SealedJointH1Result`
+declarations for the exact approved validation-only H1 grid. It does not trim or
+rewrite the original training plan, fabricate training-origin predictions, or
+widen B2c's synthetic/full-fold APIs. The public sealed session is an opaque
+original-object reference. Its guarded verifier returns detached, immutable,
+label-free `SEALED_NOT_SCORED` diagnostics, never proof of model-use authority.
+
+Prediction handles become terminal. Post-seal verification checks the original
+D2 owner, B0 approval, publication and independent model/baseline/joint-use policy,
+original handoff identity/content, original historical evidence and each return
+scope. It performs no native loading, prediction or training-row replay. Operators
+can revoke/cancel sessions; expiry, cancellation and failed admitted execution or
+verification fail closed. Verification never revives prediction capabilities.
+Future C1 must consume the original session through its pinned owner, not import
+these reconstructable diagnostics, and must add separately authorized label use.
+No label capture, scoring or C1 consumption is implemented in C0.
+
+Bootstrap, providers, clocks and authentic authorities remain host-owned security
+assumptions, not something Python privacy/hashes authenticate. Supported ingress
+uses guarded D3 validation; raw compiled/TypeAdapter/deprecated validation remains
+unsupported. Sequential callbacks are not atomic revocation leases. Native calls
+are indivisible, cancellation cooperative, and accounting limits are not hard
+CPU/RSS isolation. Limits include shared snapshot/copies, aggregate baseline work,
+input/origin/native-call budgets, retained evidence, output and verification work.
+A full immutable history version is still captured before filtering: future values
+do not enter accepted feature vectors, while future physical dtype differences
+can cause frozen-schema rejection before native prediction. No claim of complete
+future-storage admission independence is made. The standalone digest-helper P2
+remains deferred; raw configurations do not enter it through this boundary.
+C1 will require a separate original-session consumption transition and explicit
+label-use authority; verification alone does not issue either. It must preserve
+C0's terminal prediction state and may not reconstruct ownership from result JSON.

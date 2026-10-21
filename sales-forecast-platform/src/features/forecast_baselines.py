@@ -136,3 +136,35 @@ def build_baseline_profile(definition, template_configuration, *, feature_budget
         return BaselineProfile(definition.model_dump_json(), cfg.model_dump_json(), cap.model_dump_json())
     except Exception:
         raise BaselineConfigurationError('unsupported baseline configuration') from None
+
+
+def _owned_stateless_h1(profile, owner, history, requests, scopes, origin):
+    """C0-only owner adapter over the existing fixed lag calculation kernel.
+
+    No learned state exists for these category-free lag profiles. In particular,
+    no synthetic FeatureState/compatibility receipt is fabricated and no fit is
+    run. The original trusted owner records/attests the shared history and batch.
+    """
+    from src.services.canonical_joint_model_prediction_service import _BaselineOwner
+    if type(owner) is not _BaselineOwner or not owner.permits(profile):raise ValueError()
+    cfg=profile.configuration;engine=CanonicalFeaturePipeline(cfg)
+    if cfg.execution.categories or cfg.execution.exogenous:raise ValueError()
+    rows=engine._rows(history,observations=True);contexts=engine._rows(requests,observations=False)
+    engine._scope(rows,contexts)
+    points=[]
+    for context,scope in zip(contexts,scopes):
+        if (scope.forecast_origin!=origin or scope.target_period!=origin or scope.horizon_step!=1
+                or scope.target_period_end!=engine._advance(origin,1)
+                or scope.series_id!=context['series_id'] or scope.organization_id!=context['organization_id']):raise ValueError()
+        values={r['period_start']:engine.convert_numeric(r['value']) for r in rows
+            if (r['organization_id'],r['series_id'])==(scope.organization_id,scope.series_id)}
+        if (not values or len(values)<profile.definition.lookback
+                or any(r['period_end']>origin or r['available_at']>origin for r in rows)):
+            raise ValueError()
+        days=(origin.date()-min(values).date()).days
+        if days%engine.step or len(values)!=days//engine.step:raise ValueError()
+        # Exactly the same canonical lag implementation used by B1/B2b.
+        value=engine._calculate({},values,origin)[LAG_FEATURE]
+        points.append(PredictionPoint(scope=scope,value=point(value)))
+    if len(points)!=len(scopes) or len(contexts)!=len(scopes):raise ValueError()
+    return tuple(points)

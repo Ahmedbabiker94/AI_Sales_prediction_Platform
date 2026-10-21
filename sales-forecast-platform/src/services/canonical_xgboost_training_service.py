@@ -283,7 +283,16 @@ class CanonicalXGBoostTrainingService:
         here; only a label-free projection and native execution material enter
         the private prediction owner. Requests must not select this composition.
         """
-        from src.services.canonical_model_prediction_service import _guard, _bootstrap_owned
+        from src.services.canonical_model_prediction_service import _bootstrap_owned
+        return self.__compose_validation(bundle,_bootstrap_owned,composition)
+
+    def bootstrap_joint_h1_prediction(self,bundle,**composition):
+        """Trusted operator-only C0 composition; no public handoff/artifact import."""
+        from src.services.canonical_joint_model_prediction_service import _bootstrap_joint_owned
+        return self.__compose_validation(bundle,_bootstrap_joint_owned,composition)
+
+    def __compose_validation(self,bundle,bootstrap,composition):
+        from src.services.canonical_model_prediction_service import _guard
         from src.data.contracts.model_evaluation import _label_free_provenance
 
         def compose():
@@ -320,5 +329,5 @@ class CanonicalXGBoostTrainingService:
                             _approved(callback,ctx,claims)
                 finally:self.__busy.release()
             current('compose')
-            return _bootstrap_owned(current,material,**composition)
+            return bootstrap(current,material,**composition)
         return _guard(compose)

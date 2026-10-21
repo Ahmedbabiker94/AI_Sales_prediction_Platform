@@ -119,6 +119,7 @@ class _Owner:
             verify_captured_values=verify_history._values)
         self.clock=elapsed_clock;self.previous=None;self.lock=RLock();self.busy=Lock()
         self.handle=None;self.record=None;self.used=False;self.checks=0;self.approval_id=None
+        self.__joint_record=None
         self._admit()
         check=self._checkpoint(None,_continue)
         self._fresh('bootstrap',check)
@@ -131,18 +132,18 @@ class _Owner:
             self.previous=value
         return value
 
-    def _active(self,record):
+    def _active(self,record,*,sealed=False):
         with self.lock:
-            if record is not None and (self.record is not record or record.status not in ('READY','RUNNING')):raise ValueError()
+            if record is not None and (self.record is not record or record.status not in (('COMPLETED',) if sealed else ('READY','RUNNING'))):raise ValueError()
 
-    def _checkpoint(self,record,cancelled):
+    def _checkpoint(self,record,cancelled,*,sealed=False):
         if not callable(cancelled):raise ValueError()
         start=self._now()
         def check():
             stop=cancelled();now=self._now()
             if (type(stop) is not bool or stop or now-start>=self.declaration.resources.max_elapsed_seconds
                     or record is not None and now>=record.expires):raise ValueError()
-            self._active(record)
+            self._active(record,sealed=sealed)
         check();return check
 
     def _admit(self):
@@ -161,7 +162,7 @@ class _Owner:
                 or len(d.coverage.periods)*len(d.relationship.series)*len(d.capabilities.feature_names)*8>b.max_representation_bytes
                 or len(d.coverage.periods)*len(d.relationship.series)*len(d.capabilities.feature_names)>b.max_input_cells):raise ValueError()
 
-    def _fresh(self,stage,check,record=None,origin=None,metadata=None):
+    def _fresh(self,stage,check,record=None,origin=None,metadata=None,*,sealed=False):
         check();self.checks+=1
         if self.checks>self.declaration.resources.max_verification_calls:raise ValueError()
         self.current(stage);check();_source_current(self.runtime)
@@ -172,13 +173,13 @@ class _Owner:
         if metadata is not None:self.provider.require_current(metadata,budgets=self._read_budgets())
         context=EvaluationUseContext(self.encoded,self.approval_id,record.use_id if record else None,origin)
         if self.authorize(context,stage) is not True:raise ValueError()
-        self._gate(check,record)
+        self._gate(check,record,sealed=sealed)
 
-    def _gate(self,check,record):
+    def _gate(self,check,record,*,sealed=False):
         check()
         self.relationship._require_active_for_composition(self.approval,self.declaration.eligibility_id)
         # No collaborator after the B0 liveness check; inspect our own ledger.
-        self._active(record)
+        self._active(record,sealed=sealed)
 
     def _read_budgets(self):
         b=self.declaration.resources
@@ -206,6 +207,14 @@ class _Owner:
     def cancel(self,handle):self.stop(handle,'CANCELLED')
 
     def predict(self,handle,*,cancelled=_continue):
+        return self._run(handle,cancelled,None)
+
+    def _joint_predict(self,shared,handle,*,cancelled=_continue):
+        from src.services.canonical_joint_model_prediction_service import _JointExecution
+        if type(shared) is not _JointExecution or not shared.permits_model(self):raise ValueError()
+        return self._run(handle,cancelled,shared)
+
+    def _run(self,handle,cancelled,shared):
         if not self.busy.acquire(blocking=False):raise ValueError()
         record=None
         try:
@@ -213,7 +222,7 @@ class _Owner:
                 if type(handle) is not EvaluationUse or handle is not self.handle or self.record.status!='READY':raise ValueError()
                 record=self.record;record.status='RUNNING'
             check=self._checkpoint(record,cancelled)
-            return self._execute(record,check)
+            return self._execute(record,check,shared)
         finally:
             with self.lock:
                 if record is not None and record.status=='RUNNING':record.status='FAILED'
@@ -232,7 +241,7 @@ class _Owner:
         import xgboost as xgb
         return model.predict(xgb.DMatrix(matrix,feature_names=list(names),nthread=1),validate_features=True)
 
-    def _execute(self,record,check):
+    def _execute(self,record,check,shared=None):
         d=self.declaration;b=d.resources;engine=self.engine;binding=d.relationship.evaluation
         self._admit();self._fresh('capture',check,record)
         def factory(meta):
@@ -252,6 +261,8 @@ class _Owner:
         meta,base,frame,definitions=preparation._capture(binding.reference,engine,binding.series_ids,
             'offline_forecast_evaluation',factory,engine.budgets,
             PreparationBudgets(b.max_decoded_bytes,b.max_elapsed_seconds),self._read_budgets(),check)
+        if shared is not None:
+            frame=shared.capture(self,record,meta,frame,definitions)
         # Full bounded integrity capture is closed now. No scoring-label reader
         # or target-at-origin extraction exists. Only eligible history is used.
         requests=pd.DataFrame([dict(organization_id=meta.reference.organization_id,series_id=s,
@@ -314,6 +325,10 @@ class _Owner:
         encoded=result.model_dump_json(warnings='error')
         if len(encoded.encode())>2*1024*1024:raise ValueError()
         result=FittedH1PredictionResult.model_validate_json(encoded)
+        if shared is not None:
+            # Original model owner records the actual object BEFORE publication.
+            if self.__joint_record is not None:raise ValueError()
+            self.__joint_record=(shared,result,result.prediction_id,tuple(terminal),meta,record)
         self._fresh('return',check,record,metadata=meta)
         for ctx,claims in terminal:
             check()
@@ -324,6 +339,32 @@ class _Owner:
         with self.lock:
             self._active(record);record.status='COMPLETED'
             return result
+
+    def _joint_seal(self,shared,result):
+        held=self.__joint_record
+        if (held is None or held[0] is not shared or held[1] is not result
+                or result.prediction_id!=held[2] or self.record is not held[5]
+                or self.record.status!='COMPLETED'):raise ValueError()
+        return held[2]
+
+    def _joint_verify(self,shared,result,*,cancelled=_continue,broad=True,origin=None):
+        self._joint_seal(shared,result)
+        _,_,_,terminal,meta,record=self.__joint_record
+        check=self._checkpoint(record,cancelled,sealed=True)
+        if broad:self._fresh('joint_verify',check,record,origin,meta,sealed=True)
+        else:
+            for ctx,claims in terminal:
+                check()
+                if self.history(ctx,claims) is not True:raise ValueError()
+                scoped=EvaluationUseContext(self.encoded,self.approval_id,record.use_id,ctx.forecast_origin)
+                if self.authorize(scoped,'joint_scoped_return') is not True:raise ValueError()
+            self._gate(check,record,sealed=True)
+
+    def _joint_stop(self,shared,status):
+        if self.__joint_record is not None and self.__joint_record[0] is not shared:raise ValueError()
+        if status not in ('REVOKED','CANCELLED','FAILED'):raise ValueError()
+        with self.lock:
+            if self.record is not None:self.record.status=status
 
     def _context(self,meta,origin,end):
         d=self.declaration
