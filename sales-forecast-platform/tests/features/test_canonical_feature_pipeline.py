@@ -12,6 +12,24 @@ from src.data.contracts.forecast import ForecastConfig
 from src.features.canonical_feature_pipeline import CanonicalFeaturePipeline, FeatureBudgets, FeatureExecutionError
 
 
+@pytest.mark.parametrize('base_measurement',[False,True])
+def test_typed_measurement_reuse_preserves_valid_serialization(base_measurement):
+    from src.data.contracts.common import Measurement
+    from src.data.contracts.features import FeatureExecutionRules
+
+    config=feature_config();execution=config.execution
+    measurement=execution.measurement
+    if base_measurement:
+        measurement=Measurement.model_validate(measurement.model_dump())
+    assert measurement.model_dump(warnings='error')==measurement.model_dump()
+    typed=FeatureExecutionRules.model_validate({**dict(execution),'measurement':measurement})
+    plain=FeatureExecutionRules.model_validate(execution.model_dump())
+    assert typed.model_dump_json()==plain.model_dump_json()==execution.model_dump_json()
+    reconstructed=FeatureConfiguration.model_validate({**dict(config),'execution':typed})
+    assert reconstructed.model_dump_json()==config.model_dump_json()
+    assert CanonicalFeaturePipeline(reconstructed).digest==CanonicalFeaturePipeline(config).digest
+
+
 def configured(config, mutate):
     values=config.model_dump();mutate(values)
     return FeatureConfiguration.model_validate(values)

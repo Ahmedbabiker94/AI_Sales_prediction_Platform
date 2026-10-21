@@ -149,7 +149,9 @@ class FeatureExecutionRules(ContractModel):
     @field_validator("measurement", mode="before")
     @classmethod
     def reuse_measurement(cls, value):
-        return value.model_dump() if isinstance(value, Measurement) else value
+        # Owned validation boundaries sanitize exceptions, not warnings already
+        # emitted while converting a malformed typed declaration.
+        return value.model_dump(warnings="error") if isinstance(value, Measurement) else value
 
     @model_validator(mode="after")
     def unambiguous_roles(self):

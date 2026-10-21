@@ -3,8 +3,10 @@ import copy
 from contextlib import contextmanager
 import dataclasses
 import json
+import logging
 import runpy
 import struct
+import sys
 import traceback
 from uuid import uuid4
 import warnings
@@ -46,6 +48,72 @@ def make(genuine):
         op,executor,verifier=g['b']['owner'].bootstrap_joint_h1_prediction(g['bundle'],**args)
         return dict(b=b,op=op,executor=executor,verifier=verifier,control=control,calls=calls,args=args)
     return create
+
+
+@pytest.mark.parametrize('entry',['eligibility','standalone','joint'])
+@pytest.mark.parametrize('channel',['warnings','stderr','logging'])
+@pytest.mark.parametrize('variant',['exact_unit','unit','unit_list','metric','currency'])
+def test_nested_typed_measurement_rejection_has_no_diagnostic_disclosure(
+        genuine,entry,channel,variant,monkeypatch,capsys,caplog):
+    from src.data.contracts.model_evaluation import ModelEvaluationEligibility,EvaluationDeclarationError
+    from src.services.canonical_joint_model_prediction_service import _JointOwner
+
+    g,prepare=genuine;b=prepare()
+    key,value=('C0SEC8297','C0VAL6731') if variant=='exact_unit' else ('K'+uuid4().hex[:9],'V'+uuid4().hex[:9])
+    declaration=ModelEvaluationEligibility.model_validate_json(g['declaration'].model_dump_json())
+    def malformed(obj,**changes):
+        return type(obj).model_construct(**{**dict(obj),**changes})
+    config=declaration.candidate.representation.configuration
+    field='unit' if variant in ('exact_unit','unit','unit_list') else variant
+    payload=[key,value] if variant=='unit_list' else {key:value}
+    measurement=malformed(config.execution.measurement,**{field:payload})
+    execution=malformed(config.execution,measurement=measurement)
+    config=malformed(config,execution=execution)
+    schema=malformed(declaration.candidate.representation,configuration=config)
+    candidate=malformed(declaration.candidate,representation=schema)
+    declaration=malformed(declaration,candidate=candidate)
+    calls=[]
+    def forbidden(*a,**kw):
+        calls.append(True)
+        raise AssertionError('malformed declaration reached execution or issuance')
+    for owner,method in ((_Owner,'_load_native'),(_Owner,'_predict_native'),(_Owner,'issue'),
+                         (_JointOwner,'issue'),(CanonicalFeaturePipeline,'fit_state')):
+        monkeypatch.setattr(owner,method,forbidden)
+    def operation():
+        if entry=='eligibility':return ModelEvaluationEligibility.model_validate(declaration)
+        args={**b['args'],'eligibility':declaration}
+        if entry=='standalone':return g['b']['owner'].bootstrap_validation_prediction(g['bundle'],**args)
+        return g['b']['owner'].bootstrap_joint_h1_prediction(g['bundle'],**args,
+            baseline=BaselineDefinition(algorithm='last_observation_v1',lookback=1,supported_horizon=1),
+            authorize_joint=lambda *a:True,authorize_baseline=lambda *a:True)
+    capture_enabled=logging._warnings_showwarning is not None
+    try:
+        if channel=='logging':logging.captureWarnings(True)
+        with warnings.catch_warnings(record=channel=='warnings') as emitted:
+            warnings.simplefilter('always')
+            if channel=='stderr':
+                def stderr_warning(message,category,filename,lineno,file=None,line=None):
+                    print(warnings.formatwarning(message,category,filename,lineno,line),file=file or sys.stderr,end='')
+                warnings.showwarning=stderr_warning
+            # Guarded rejection must detach even an ambient input-bearing error.
+            try:raise RuntimeError(value)
+            except RuntimeError:
+                with pytest.raises(EvaluationDeclarationError if entry=='eligibility' else ModelPredictionError) as error:
+                    operation()
+            warning_text='' if emitted is None else '\n'.join(str(w.message) for w in emitted)
+    finally:logging.captureWarnings(capture_enabled)
+    output=capsys.readouterr();exc=error.value
+    diagnostics=(str(exc)+repr(exc)+repr(exc.args)+''.join(traceback.format_exception(exc))
+        +warning_text+output.out+output.err+caplog.text)
+    assert key not in diagnostics and value not in diagnostics
+    assert exc.__cause__ is None and exc.__context__ is None
+    assert not calls and not warning_text and not output.err and not caplog.text
+    expected='invalid non-authoritative evaluation declaration' if entry=='eligibility' else 'owned validation prediction unavailable or invalid'
+    assert str(exc)==expected and exc.args==(expected,)
+    with warnings.catch_warnings(record=True) as unrelated:
+        warnings.simplefilter('always');warnings.warn('unrelated nested measurement diagnostic',UserWarning)
+    assert len(unrelated)==1 and str(unrelated[0].message)=='unrelated nested measurement diagnostic'
+
 
 @pytest.mark.parametrize('algorithm,expected',[('last_observation_v1',{'north':32.,'south':132.}),('seasonal_naive_v1',{'north':0.,'south':100.})])
 def test_genuine_shared_native_and_baseline(genuine,make,monkeypatch,algorithm,expected):
