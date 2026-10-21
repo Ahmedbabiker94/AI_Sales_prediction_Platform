@@ -1172,3 +1172,42 @@ remains deferred; raw configurations do not enter it through this boundary.
 C1 will require a separate original-session consumption transition and explicit
 label-use authority; verification alone does not issue either. It must preserve
 C0's terminal prediction state and may not reconstruct ownership from result JSON.
+
+### R-04D3-C1: original-session one-shot scoring
+
+The trusted bootstrap retains C0's original verifier and calls
+`bootstrap_evaluation(session, authorize_labels=..., label_revision_authority=...)`. It must retain the returned label operator privately
+and pin the evaluator. The existing `BaselineAuthorityBinding` pins the exact evaluation publication,
+revision protocol and authority ID/version. These callbacks originate in independent operator-owned
+label permission/revision ledgers; declarations, IDs and receipts grant no access.
+The publication provider, metadata, grid, history identity and clock are pinned
+from the original C0 owner, never supplied by prediction requests.
+
+C0 consumption follows SEALED → CONSUMPTION_CLAIMED → LABELS_AUTHORIZED →
+LABELS_CAPTURED → SCORED → TERMINAL. A separate owner ledger and nonblocking
+claim lock prevent repeated or reentrant consumption across consumers. Failure
+never restores eligibility. Repeatable non-native C0 verification remains available
+but does not authorize another consumption. Separate label-use handles are
+original-object, one-shot, revocable/cancellable and expire at `now >= expires`.
+
+Only after both original handoffs are sealed does C1 capture the evaluation
+publication once through B2a's bounded reader and exact revision-claim helpers.
+Both producers are scored against those same independently attested rows using
+`score_point`, `group_scores`, and `JointScoreDelta`. RMSE retains its exact MSE
+radicand; WAPE with zero denominator stays undefined. No RMSE delta or winner is
+introduced. Output contains label-revision identities and exact sufficient
+statistics, not raw label records or private training/model payloads. Statistics
+can themselves reveal information about truth; this is authorized evaluation
+output, not a confidentiality or differential-privacy guarantee.
+
+Fresh non-native original-owner/B0/publication/model-use and per-origin return
+checks run before capture, after capture, and before publication; independent
+label permission/revision checks also run at final return. No native model,
+baseline or history capture operation is permitted after sealing. Admission
+bounds full label reads, cumulative representations, arithmetic, groups, work,
+output and elapsed time. Sequential checks do not provide atomic revocation
+leases, and native-call preemption, hard CPU/RSS enforcement, cross-process
+restoration and durable authority are not implemented. C0's full-history physical
+dtype admission limitation is unchanged. D3-D and production approval remain out
+of scope. The standalone configuration-digest diagnostic P2 remains deferred;
+C1 accepts no raw configuration ingress.

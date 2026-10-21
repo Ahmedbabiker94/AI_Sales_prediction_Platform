@@ -161,6 +161,7 @@ class _JointOwner:
         self.authorize=authorize_joint;self.phase='BOUND';self.busy=Lock();self.shared=None
         self.use=None;self.use_id=None;self.model_use=None;self.session=None;self.result=None;self.encoded_result=None
         self.model_result=None;self.baseline_points=None
+        self.consumption_owner=None;self.consumption_state="SEALED"
         self.used={'assembly':0,'baseline':0};self.verifications=0;self.cancelled=_continue;self.start=None
         self.baseline=_BaselineOwner(self,definition,self.declaration.candidate.representation.configuration,authorize_baseline)
         self.admit_declared()
@@ -309,6 +310,28 @@ class _JointOwner:
         self.model._gate(lambda:self.check(),self.model.record,sealed=True)
         return result
 
+    def claim_consumption(self,session,consumer):
+        # This lock also excludes reentrant C0 verification during the claim.
+        if not self.busy.acquire(blocking=False):raise ValueError()
+        try:
+            if (type(session) is not SealedJointH1Session or session is not self.session
+                    or self.phase!='SEALED' or self.consumption_owner is not None):raise ValueError()
+            # Claim BEFORE callbacks; failures never restore consumption eligibility.
+            self.consumption_owner=consumer;self.consumption_state='CONSUMPTION_CLAIMED'
+            try:return self.verify_internal()
+            except Exception:
+                self.consumption_state="TERMINAL"
+                raise
+        finally:self.busy.release()
+
+    def consumption_transition(self,consumer,previous,next_state):
+        with self.busy:
+            if self.consumption_owner is not consumer or self.consumption_state!=previous:raise ValueError()
+            allowed={'CONSUMPTION_CLAIMED':'LABELS_AUTHORIZED','LABELS_AUTHORIZED':'LABELS_CAPTURED',
+                'LABELS_CAPTURED':'SCORED','SCORED':'TERMINAL'}
+            if next_state!='TERMINAL' and allowed.get(previous)!=next_state:raise ValueError()
+            self.consumption_state=next_state
+
     def verify(self,session,*,cancelled=_continue):
         if not self.busy.acquire(blocking=False):raise ValueError()
         admitted=False
@@ -355,6 +378,11 @@ class JointH1Verifier:
         if type(owner) is not _JointOwner:raise ValueError('invalid joint composition')
         self.__owner=owner
     def verify(self,*a,**kw):return _guard(self.__owner.verify,*a,**kw)
+    def bootstrap_evaluation(self,session,**composition):
+        """Trusted operator bootstrap only; retain the returned label operator."""
+        from src.services.canonical_joint_model_evaluation_service import _bootstrap_evaluation
+        return _guard(_bootstrap_evaluation,self.__owner,session,**composition)
+
 
 
 def _bootstrap_joint_owned(current,material,**composition):
