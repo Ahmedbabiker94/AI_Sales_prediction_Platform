@@ -1211,3 +1211,106 @@ restoration and durable authority are not implemented. C0's full-history physica
 dtype admission limitation is unchanged. D3-D and production approval remain out
 of scope. The standalone configuration-digest diagnostic P2 remains deferred;
 C1 accepts no raw configuration ingress.
+
+### R-04D3-D: tests-only end-to-end acceptance candidate
+
+`tests/training/test_end_to_end_acceptance.py` exercises the existing trusted
+entrypoints with a fresh genuine XGBoost candidate and isolated synthetic
+FINALIZED publications. Instrumentation starts before setup and training; its
+trace distinguishes setup reads, D1/D2 training, C0 shared history and C1 shared
+evaluation labels. D2 invokes D1 itself. Original issuer, bundle, relationship
+approval, joint owner, sealed session and label-use handles remain in one process.
+No runtime orchestrator or public capability restoration is added.
+
+The scenario runs separately for last-observation and seasonal-naive baselines.
+Its standard-library Fraction oracle uses the approved raw source ledger and
+observed original predictions, independently of production scoring helpers.
+It checks exact sufficient statistics, origin-scoped ordering, RMSE radicands,
+supported signed deltas, zero-denominator WAPE, native float32 widening, replay,
+concurrent consumption and continued non-native verification. Post-seal traps
+forbid native loading/prediction/training, feature fitting, baseline execution
+and historical recapture. Fresh negative sessions cover cancellation, independent
+label-expiry equality while C0 remains live, revocation, revision denial, provider
+cleanup failure, late scoped denial, sanitized diagnostics and no returned result.
+
+The additional C1 resource test measures a successful two-point run, then uses
+fresh original sessions with the exact required allowance and one unit less for
+rows, decoded bytes, points, groups, work, arithmetic reservations, intermediate
+representations and output bytes. Declared geometry/arithmetic admission is
+checked before capture; observed bytes/work are checked when charged.
+
+Run from `sales-forecast-platform` with Python 3.12, XGBoost 3.2.0 and compatible
+repository dependencies plus pytest. Test tooling belongs in an isolated virtual
+environment; no production dependency-manifest change is required. For example:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 /path/to/test-env/bin/python -m pytest -q -s \
+  --import-mode=importlib -p no:cacheprovider --basetemp=/tmp/d3d-acceptance-run \
+  --junitxml=/tmp/d3d-acceptance-run.xml \
+  tests/training/test_end_to_end_acceptance.py
+```
+
+The positive scenarios write bounded allowlisted `acceptance-*.json` reports
+inside their pytest temporary directories and print paths and SHA-256 identities.
+Reports are generated after scenario assertions and record `passed_assertions`;
+the completed pytest/JUnit outcome remains the authority for test-run success.
+They contain source/fixture/runtime identities, public lineage identifiers,
+exact score ratios, supported deltas, lifecycle evidence and named checks. They
+exclude raw label rows, full manifests, fitted state, native bytes, private
+capabilities, credentials and exception payloads. Exact authorized score output
+can still reveal information about truth. A report is test evidence, not durable
+audit, cryptographic attestation, a runtime credential or production approval.
+
+Independent executions must agree on the semantic score projection and fixture
+hashes; run-specific candidate/seal/revision identifiers are retained separately.
+Fresh UUID-bearing executions are not claimed to have byte-identical reports.
+
+The focused compatibility manifest is the following explicit collection, avoiding
+repository-wide discovery and unrelated production integrations:
+
+```bash
+PYTHONPATH=.:tests/features PYTHONDONTWRITEBYTECODE=1 /path/to/test-env/bin/python -m pytest -q \
+  --import-mode=importlib -p no:cacheprovider --junitxml=/tmp/d3d-compatibility.xml \
+  tests/training/test_end_to_end_acceptance.py \
+  tests/training/test_canonical_model_training_preparation.py \
+  tests/training/test_canonical_xgboost_training.py \
+  tests/data/contracts/test_model_training.py \
+  tests/data/contracts/test_model_candidate.py \
+  tests/data/contracts/test_model_evaluation.py \
+  tests/training/test_training_evaluation_relationship_authority.py \
+  tests/training/test_canonical_model_prediction.py \
+  tests/data/contracts/test_model_prediction.py \
+  tests/training/test_joint_model_prediction.py \
+  tests/data/contracts/test_model_joint_prediction.py \
+  tests/training/test_joint_model_evaluation.py \
+  tests/data/contracts/test_model_joint_evaluation.py \
+  tests/training/test_deterministic_forecast_rollout.py \
+  tests/training/test_forecast_evaluation.py \
+  tests/data/contracts/test_forecast_evaluation.py \
+  tests/training/test_forecast_baselines.py \
+  tests/training/test_baseline_trusted_composition.py \
+  tests/training/test_forecast_comparison_shared_execution.py \
+  tests/training/test_forecast_comparison_joint_scoring.py \
+  tests/data/contracts/test_forecast_comparison.py \
+  tests/data/contracts/test_forecast_comparison_scoring.py \
+  tests/features/test_canonical_feature_pipeline.py \
+  tests/features/test_numeric_conversion.py \
+  tests/features/test_feature_schema_compatibility.py \
+  tests/data/contracts/test_configuration_contracts.py \
+  tests/training/test_reference_baseline.py
+```
+
+The import mode avoids duplicate test basenames across contract/training suites;
+the explicit test-only `PYTHONPATH` supports the existing feature tests' direct
+`conftest` imports. Neither setting changes runtime imports in application code.
+
+The frozen reference fixture remains SHA-256
+`c7e42decc737296195db63af82f01437940270804daed1d7bddbcd587cd60adf`.
+Scope remains controlled-offline, trusted-operator, process-local, validation-only
+H1. Sequential authorization is not atomic revocation; budgets are cooperative,
+not hard CPU/RSS isolation. Full-history physical-dtype admission, whole-publication
+label reads with validation-only retention and the deferred standalone
+`configuration_digest()` diagnostic P2 remain unchanged. Deployment, production
+inference, registry promotion, H2/H3, distributed transactions and cross-process
+restoration are excluded. This candidate requires separate independent review
+before D3-D acceptance or promotion.

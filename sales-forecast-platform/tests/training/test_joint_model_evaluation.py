@@ -241,6 +241,60 @@ def test_cumulative_budgets(make,field):
         with pytest.raises(ModelPredictionError):b['evaluator'].evaluate(h)
 
 
+@pytest.mark.parametrize('field,counter',[
+    ('max_label_rows','rows'), ('max_label_bytes','decoded'),
+    ('max_points',None), ('max_groups',None), ('max_work','work'),
+    ('max_arithmetic_units','arithmetic'),
+    ('max_representation_bytes','intermediate'), ('max_output_bytes',None),
+])
+def test_exact_consumption_boundary_and_one_unit_insufficient(make,monkeypatch,field,counter):
+    """Measure accepted work, then use fresh sessions for both sides of its cap.
+
+    Point/group caps are fixed at the two-point geometry in the reference run:
+    those caps enter scoring-plan JSON, so doing this also keeps byte accounting
+    invariant across the three runs. Random identifiers have fixed wire lengths.
+    No private owner data is exported; counters are test instrumentation only.
+    """
+    defaults=dict(max_points=2,max_groups=2)
+    measured=make(budgets=JointH1ScoringBudgets(**defaults))
+    result=measured['evaluator'].evaluate(measured['op'].issue())
+    owner=getattr(measured['evaluator'],'_JointH1Evaluator__owner')
+    required=(owner.used[counter] if counter else
+              len(result.model_dump_json(warnings='error').encode()) if field=='max_output_bytes' else 2)
+    assert required>1
+    for allowance,accepted in ((required,True),(required-1,False)):
+        options={**defaults,field:allowance}
+        b=make(budgets=JointH1ScoringBudgets(**options))
+        provider=b['root']['evaluation_provider'];original=provider.open_read;reads=[]
+        @contextmanager
+        def counted(*a,**kw):
+            reads.append(1)
+            with original(*a,**kw) as session:yield session
+        with monkeypatch.context() as patch:
+            patch.setattr(provider,'open_read',counted)
+            published=[]
+            if accepted:
+                h=b['op'].issue();published.append(b['evaluator'].evaluate(h))
+                actual=getattr(b['evaluator'],'_JointH1Evaluator__owner')
+                assert (actual.used[counter] if counter else
+                        len(published[0].model_dump_json(warnings='error').encode()) if field=='max_output_bytes' else 2)==required
+                assert reads==[1]
+            else:
+                # Row admission can reject during issue(), before claiming C0.
+                h=None
+                with pytest.raises(ModelPredictionError):
+                    h=b['op'].issue();published.append(b['evaluator'].evaluate(h))
+                assert not published
+                if h is not None:
+                    with pytest.raises(ModelPredictionError):b['evaluator'].evaluate(h)
+                else:
+                    with pytest.raises(ModelPredictionError):b['op'].issue()
+                if field in ('max_label_rows','max_points','max_groups','max_arithmetic_units'):
+                    assert reads==[]  # Declared geometry/arithmetic reserved before truth access.
+                else:
+                    assert reads==[1]  # Observed bytes/work checked as charged; no output escapes.
+
+
 @pytest.mark.parametrize('entry',['bootstrap','issue','evaluate','revoke','cancel'])
 def test_sanitized_public_ingress(make,entry,capsys,caplog):
     b=make();h=b['op'].issue();secret='C1_'+uuid4().hex
