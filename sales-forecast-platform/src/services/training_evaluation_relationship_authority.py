@@ -281,6 +281,22 @@ class RelationshipApprovalVerifier:
     def verify(self, *args, **kwargs):
         return _guard(self.__registry.verify, *args, **kwargs)
 
+    def _require_active_for_composition(self, approval, eligibility_id):
+        """Trusted composition liveness gate, NOT publication verification.
+
+        After verify() and later scoped callbacks, inspect this original ledger
+        without repeating publication callbacks. No receipt or new authority is
+        issued. D3-B still needs independent original-owner/model-use approval.
+        """
+        def active():
+            if type(approval) is not RelationshipApproval or type(eligibility_id) is not str:raise ValueError()
+            now=self.__registry.time()
+            with self.__registry.lock:
+                record=self.__registry.records.get(approval)
+                if record is None or record.evidence.eligibility_id!=eligibility_id:raise ValueError()
+                self.__registry.active(approval,record,now)
+        return _guard(active)
+
 
 def _bootstrap(training_provider, evaluation_provider, *, authority_id, authority_version,
                issuance_context, budgets=RelationshipAuthorityBudgets(), elapsed_clock=monotonic):

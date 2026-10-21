@@ -7,6 +7,7 @@ import platform
 import subprocess
 from threading import Lock
 from time import monotonic
+from weakref import ref
 
 import numpy as np
 import pandas as pd
@@ -108,7 +109,7 @@ class CanonicalXGBoostTrainingService:
             self.__bootstrap=(provider,p.model_dump_json(),cfg.model_dump_json(),scope.model_dump_json(),inv.model_dump_json(),
                 options.model_dump_json(),authorize_preparation,verify_availability._availability,verify_availability._values,
                 verify_training_labels,authorize_training,authorize_external_forecast,elapsed_clock)
-            self.__issued=None;self.__busy=Lock();self.__used=False
+            self.__issued=None;self.__evaluation_origin=None;self.__busy=Lock();self.__used=False
         except Exception:raise CandidateTrainingError('invalid owned offline training composition') from None
 
     def __checkpoint(self,cancelled,clock,options):
@@ -178,6 +179,10 @@ class CanonicalXGBoostTrainingService:
             bundle=assemble_candidate(CandidateManifest(**fields,artifact_digest=digest(artifact),artifact_size=len(artifact)),artifact)
             self.__roundtrip(bundle,runtime,checkpoint)
             self.__final(handoff,evidence,authorize,prep,provider,ij,bundle,checkpoint)
+            # D3's future owner-side binding is retained at actual issuance, not
+            # reconstructed later from caller-held bundle metadata. Native bytes
+            # are immutable and private; this adds no fitting/serialization step.
+            self.__evaluation_origin=(bundle.bundle_id,digest(bundle.manifest.model_dump_json().encode()),artifact,ref(self))
             self.__issued=(bundle,handoff,evidence,runtime)
             return bundle
         except Exception:raise CandidateTrainingError('owned offline candidate training failed') from None
@@ -269,3 +274,51 @@ class CanonicalXGBoostTrainingService:
             return result
         except Exception:raise CandidateTrainingError('owned candidate verification failed') from None
         finally:self.__busy.release()
+
+    def bootstrap_validation_prediction(self, bundle, **composition):
+        """TRUSTED bootstrap only. Returns operator/executor capabilities, not data.
+
+        Unlike verify_candidate(), the private ownership check below never loads
+        a model or predicts training rows. Complete manifests/handoffs remain
+        here; only a label-free projection and native execution material enter
+        the private prediction owner. Requests must not select this composition.
+        """
+        from src.services.canonical_model_prediction_service import _guard, _bootstrap_owned
+        from src.data.contracts.model_evaluation import _label_free_provenance
+
+        def compose():
+            if not self.__busy.acquire(blocking=False):raise ValueError()
+            try:
+                original=self.__issued
+                seal=self.__evaluation_origin
+                if (original is None or bundle is not original[0] or seal is None
+                        or seal[3]() is not self or bundle.bundle_id!=seal[0]):raise ValueError()
+                _,handoff,evidence,runtime=original
+                manifest,artifact=bundle.validate()
+                if digest(manifest.model_dump_json().encode())!=seal[1] or artifact!=seal[2]:raise ValueError()
+                native=handoff.provenance.states[0]
+                if (manifest.provenance!=handoff.provenance
+                        or manifest.state_digest!=digest(native.state_json.encode())):raise ValueError()
+                projection=_label_free_provenance(bundle,manifest)
+                material=(projection,seal[2],native.state_json,native.representation_json,
+                          runtime,tuple(sorted(manifest.native_binding.items())),manifest.training.estimators)
+            finally:self.__busy.release()
+
+            def current(stage):
+                if not self.__busy.acquire(blocking=False):raise ValueError()
+                try:
+                    if (self.__issued is not original or self.__evaluation_origin is not seal
+                            or bundle is not original[0] or bundle.bundle_id!=seal[0] or _runtime()!=runtime):
+                        raise ValueError()
+                    # Original owner authority and calibration evidence remain
+                    # private. No training-label verification or native replay.
+                    provider,pj,cj,sj,ij,tj,prep,release,values,labels,authorize,external,clock=self.__bootstrap
+                    _approved(authorize,CandidateAuthorizationContext(ij,None,handoff.provenance.model_dump_json(),bundle.bundle_id),
+                              'evaluation_'+stage)
+                    for kind,callback,ctx,claims in evidence.records:
+                        if kind!='labels' and ctx.target_period_end is None:
+                            _approved(callback,ctx,claims)
+                finally:self.__busy.release()
+            current('compose')
+            return _bootstrap_owned(current,material,**composition)
+        return _guard(compose)

@@ -1044,3 +1044,78 @@ labels/predictions, native artifacts/Boosters and fitted-state payloads are neve
 accepted or exported by the B0 API. Existing D3-A/synthetic-v1 wire identities are
 unchanged. All request validation goes through the guarded D3-A boundary; B0 adds
 fixed errors with detached cause/context and installs no global warning filter.
+
+### R-04D3-B owner-authorized frozen-state validation prediction
+
+The original live `CanonicalXGBoostTrainingService` exposes the trusted-bootstrap
+`bootstrap_validation_prediction()` hook. It accepts only its original issued
+candidate object. Its new ownership/calibration check never replays training-row
+predictions or exposes the full manifest/handoff. The private execution owner
+receives only original native bytes, frozen state/schema and label-free bindings.
+D2 training/verification behavior and accepted synthetic-v1 contracts are unchanged.
+
+Trusted bootstrap pins the original B0 verifier/approval, evaluation provider,
+independent evaluation-purpose release/value authorities and separate evaluation-use
+authorizer. It retains the returned operator; requests receive only the pinned
+executor and original opaque handle. No digest, receipt, reconstructed bundle,
+request-selected provider/clock, or declaration authenticates model use. Arbitrary
+Python running in the same process is outside this capability separation.
+
+Each composition admits one bounded, single-use execution. Issue, capture, native
+load, each origin/prediction and return check original ownership, B0 and independent
+evaluation-use permission. Handles expire, can be revoked/cancelled by the operator,
+and become terminal after execution success/failure; there is no reactivation API.
+An additive private B0 composition gate rechecks its original registry after later
+scoped callbacks without invoking publication callbacks again. It is only liveness,
+not publication verification or model-use permission; full B0 verification remains
+mandatory at bounded operation boundaries.
+
+One complete, bounded, integrity-verified evaluation-publication history capture
+closes before native loading or feature execution. The canonical reader necessarily
+consumes the complete immutable version; no scoring-label capture or target-at-origin
+label selection is performed. Future rows are excluded from origin-specific history.
+Only that eligible history and the original D1 state enter `prepare_inference()`.
+No fit/refit or validation vocabulary learning occurs. This initial adapter rejects
+exogenous and non-identity category configurations rather than inventing availability
+semantics. It supports only original approved validation H1 periods, never training,
+test, H2/H3 or recursive real-model execution.
+
+Typed feature scalars are checked before NumPy can erase Boolean identity. The
+existing strict exact float32 input policy remains mandatory. Native finite float32
+outputs are widened exactly to Python float64 (including signed zero); immutable
+`FittedH1PredictionResult` records use canonical forecast scopes, explicit fitted
+implementation kind, native bit identities and label-free candidate/publication,
+relationship, state/schema, runtime, request and historical evidence references.
+Results are `PREDICTED_NOT_SCORED`, never model-use credentials or accuracy evidence.
+
+The last checked boundary before model loading/prediction verifies original owner,
+B0, evaluation-use policy, applicable history claims, cancellation/deadline and the
+original handle ledgers. Final result assembly precedes broad checks, terminal
+per-origin history checks and final liveness/checkpoint/terminal publication.
+Sequential authorities are not atomic leases. Revocation/cancellation during an
+indivisible native call is observed afterward and prevents result publication;
+no hard preemption or CPU/RSS isolation is promised. Bootstrap/clocks must remain
+trusted and read-only. Limits cover capture rows/bytes, origins/native calls, input
+cells, cumulative representations, artifact/state size, verification calls, and a
+conservative repeated-history work ceiling. No durable/cross-process restoration,
+labels/scoring/comparison, registry, serving or deployment integration is provided.
+
+D2 additionally retains a private issuance seal (original candidate/manifest
+integrity references and original immutable native bytes). D3 checks that seal
+and original object identity, including on later operations; it cannot reconstruct
+ownership from a caller-held manifest. Candidates need the live, current-code
+D2 issuer; no legacy issuer import or retroactive reconstruction is supported.
+Cumulative retained historical-evidence accounting is limited by the declared
+decoded-byte ceiling, and the complete label-free output has a fixed 2 MiB cap.
+These byte-accounting bounds do not represent Python heap or native RSS isolation.
+The seal also binds the exact issuer instance, so a shallow-copied training
+service is not an original issuer. Declaration and result publication references
+are detached through guarded JSON round-trips; raw malformed result identity
+access uses the existing D3 fixed-diagnostic identity boundary.
+The existing feature executor's calculation-cell ceiling also applies to the
+aggregate origins × series × per-target calculation work, admitted before loading;
+individually small origins cannot each obtain a fresh request-wide allowance.
+Final `scoped_return` evaluation-use checks cover every original validation
+origin AFTER broader owner/B0/read/global-return callbacks, alongside terminal
+historical attestation. Global permission cannot replace any origin's permission.
+No partial/narrowed result is returned if a later callback revokes an origin.
