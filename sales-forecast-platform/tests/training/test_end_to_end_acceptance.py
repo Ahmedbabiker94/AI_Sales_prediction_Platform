@@ -100,6 +100,7 @@ class NativeGuard:
         self.owner=None
         self.sealed=False
         self.violations=[]
+        self._reports=[]  # Private (report, original guard) identity bindings; never serialized.
         def install(target,name,label):
             original=getattr(target,name)
             def guarded(*args,**kwargs):
@@ -536,7 +537,7 @@ def test_fresh_native_acceptance(scenario, algorithm, request):
     # Explicitly build public evidence after assertions, never serialize owners.
     report = build_report(s, result, semantic, request.node.nodeid)
     path = s['tmp']/('acceptance-'+algorithm+'.json')
-    write_public_report(report, path)
+    write_public_report(report, path, guard=s['guard'])
     assert len(path.read_bytes()) <= 128*1024
     assert json.loads(path.read_text()) == report
     assert canonical(report['semantic']) == canonical(json.loads(canonical(report))['semantic'])
@@ -556,7 +557,7 @@ def build_report(s, result, semantic, nodeid):
     source = [[str(v) if isinstance(v, pd.Timestamp) else v for v in row]
               for row in s['source'].itertuples(index=False, name=None)]
     sealed = result.sealed
-    return dict(schema_version='d3d-test-evidence-v1',
+    report = dict(schema_version='d3d-test-evidence-v1',
         source=dict(commit=commit, parent=parent, accepted_baseline=BASELINE, tracked_source_clean=clean),
         fixtures=dict(scenario_sha256=sha(canonical(dict(columns=list(s['source'].columns),
                       dtypes=[str(d) for d in s['source'].dtypes],rows=source)).encode()),
@@ -580,6 +581,8 @@ def build_report(s, result, semantic, nodeid):
             'sequential-authorization', 'cooperative-budgets', 'whole-publication-physical-read',
             'full-history-dtype-admission', 'standalone-configuration-digest-P2-deferred',
             'test-report-not-durable-audit-or-attestation', 'not-production-approval'])
+    s['guard']._reports.append((report, s['guard']))
+    return report
 
 
 def assert_public_report(report):
@@ -754,23 +757,41 @@ def assert_public_report(report):
     require(len(canonical(report).encode())+1 <= 128*1024, 'size')
 
 
-def write_public_report(report, path):
-    """The single test evidence sink validates before serialization or writes."""
+def write_public_report(report, path, *, guard):
+    """Publish only with the report's original live guard, checked at the write."""
+    if type(guard) is not NativeGuard:
+        raise AssertionError('acceptance evidence native guard required')
     assert_public_report(report)
-    path.write_text(canonical(report)+'\n')
+    if not any(bound is report and owner is guard for bound, owner in guard._reports):
+        raise AssertionError('acceptance evidence guard mismatch')
+    encoded = canonical(report)+'\n'
+    guard.assert_clean()
+    path.write_text(encoded)
 
 
 @pytest.fixture(scope='module')
-def valid_public_report(tmp_path_factory, request):
-    """Reuse only public JSON from a fresh, fully checked genuine-native run."""
+def valid_evidence(tmp_path_factory, request):
+    """Retain the original report/guard pair privately from a checked native run."""
     path = tmp_path_factory.mktemp('valid-public-report')
+    captured = []
     with pytest.MonkeyPatch.context() as patch:
         s = scenario.__wrapped__(path, patch, request)
+        original = write_public_report
+        def capture(report, target, *, guard):
+            original(report, target, guard=guard)
+            captured.append(report)
+        patch.setitem(globals(), 'write_public_report', capture)
         test_fresh_native_acceptance(s, 'last_observation_v1', request)
-    return json.loads((path/'acceptance-last_observation_v1.json').read_text())
+    assert len(captured) == 1
+    return dict(report=captured[0], guard=s['guard'])
 
 
-def test_public_report_rejects_original_secret_key(valid_public_report, tmp_path):
+@pytest.fixture(scope='module')
+def valid_public_report(valid_evidence):
+    return valid_evidence['report']
+
+
+def test_public_report_rejects_original_secret_key(valid_public_report, valid_evidence, tmp_path):
     bad = copy.deepcopy(valid_public_report)
     bad['diagnostics'] = [
         {'D3D_SECRET_SYNTHETIC_KEY': 'ordinary'}
@@ -779,7 +800,7 @@ def test_public_report_rejects_original_secret_key(valid_public_report, tmp_path
         assert_public_report(bad)
     path = tmp_path/'acceptance-malformed.json'
     with pytest.raises(AssertionError, match='^public report secret sentinel$'):
-        write_public_report(bad, path)
+        write_public_report(bad, path, guard=valid_evidence['guard'])
     assert not path.exists()
 
 
@@ -804,7 +825,7 @@ def test_public_report_rejects_original_secret_key(valid_public_report, tmp_path
     ('non_string_key', 'dictionary key type'),
     ('cyclic', 'cyclic value'),
 ])
-def test_public_report_rejects_malformed_evidence(valid_public_report, tmp_path, fault, category):
+def test_public_report_rejects_malformed_evidence(valid_public_report, valid_evidence, tmp_path, fault, category):
     bad = copy.deepcopy(valid_public_report)
     if fault == 'secret_value':
         bad['run']['label_authority_id'] = 'D3D_SECRET_SYNTHETIC_VALUE'
@@ -853,19 +874,94 @@ def test_public_report_rejects_malformed_evidence(valid_public_report, tmp_path,
         assert_public_report(bad)
     path = tmp_path/'acceptance-malformed.json'
     with pytest.raises(AssertionError, match='^public report '+category+'$'):
-        write_public_report(bad, path)
+        write_public_report(bad, path, guard=valid_evidence['guard'])
     assert not path.exists()
 
 
-def test_public_report_valid_bytes_unchanged(valid_public_report, tmp_path):
+def test_public_report_valid_bytes_unchanged(valid_public_report, valid_evidence, tmp_path):
     before = copy.deepcopy(valid_public_report)
     encoded = canonical(before)+'\n'
     assert_public_report(valid_public_report)
     assert valid_public_report == before
     path = tmp_path/'acceptance-valid.json'
-    write_public_report(valid_public_report, path)
+    write_public_report(valid_public_report, path, guard=valid_evidence['guard'])
     assert path.read_bytes() == encoded.encode()
     assert json.loads(path.read_text()) == before
+
+
+@pytest.mark.parametrize('fault', ['missing', 'foreign', 'copied_guard', 'copied_report', 'fake'])
+def test_evidence_writer_requires_associated_guard(valid_evidence, tmp_path, monkeypatch, fault):
+    report, guard = valid_evidence['report'], valid_evidence['guard']
+    path = tmp_path/'acceptance-unbound.json'
+    if fault == 'missing':
+        with pytest.raises(TypeError, match='guard'):
+            write_public_report(report, path)
+    else:
+        if fault == 'foreign':
+            guard = NativeGuard(monkeypatch)
+        elif fault == 'copied_guard':
+            guard = copy.copy(guard)
+            guard.violations = []
+        elif fault == 'copied_report':
+            report = copy.deepcopy(report)
+            assert_public_report(report)  # Valid JSON alone is not write permission.
+        else:
+            class Fake:
+                def assert_clean(self):
+                    raise RuntimeError('unexpected fake guard call')
+            guard = Fake()
+        category = 'native guard required' if fault == 'fake' else 'guard mismatch'
+        with pytest.raises(AssertionError, match='^acceptance evidence '+category+'$'):
+            write_public_report(report, path, guard=guard)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize('fault', ['recorded', 'after_construction', 'handled_exception',
+                                 'during_validation', 'during_serialization'])
+def test_evidence_writer_rechecks_live_guard(scenario, monkeypatch, request, fault):
+    """Every injection occurs after the real report was built with a clean guard."""
+    s = scenario
+    original_writer, original_validator, original_canonical = write_public_report, assert_public_report, canonical
+    observed, encodings = [], []
+    def intercepted(report, path, *, guard):
+        assert guard is s['guard'] and not guard.violations and guard.sealed
+        assert any(bound is report and owner is guard for bound, owner in guard._reports)
+        observed.append(True)
+        def trip():
+            with pytest.raises(AssertionError, match='^post-seal native operation attempted$'):
+                guard.check('controlled-late-publication')
+        if fault == 'recorded':
+            guard.violations.append('controlled-late-publication')
+        elif fault == 'after_construction':
+            trip()
+        elif fault == 'handled_exception':
+            try:
+                guard.check('controlled-late-publication')
+            except AssertionError:
+                pass
+        elif fault == 'during_validation':
+            def validate(value):
+                original_validator(value)
+                trip()
+            monkeypatch.setitem(globals(), 'assert_public_report', validate)
+        else:
+            def encode(value):
+                encoded = original_canonical(value)
+                if value is report:
+                    encodings.append(True)
+                    if len(encodings) == 2:  # Validator size check, then writer encoding.
+                        trip()
+                return encoded
+            monkeypatch.setitem(globals(), 'canonical', encode)
+        original_writer(report, path, guard=guard)
+    monkeypatch.setitem(globals(), 'write_public_report', intercepted)
+    with pytest.raises(AssertionError, match='post-seal native operation attempted'):
+        test_fresh_native_acceptance(s, 'last_observation_v1', request)
+    assert observed == [True]
+    assert s['guard'].violations == ['controlled-late-publication']
+    assert not list(s['tmp'].glob('acceptance-*.json'))
+    if fault == 'during_serialization':
+        assert encodings == [True, True]
 
 
 @pytest.mark.parametrize('fault', ['diagnostics', 'limitations'])

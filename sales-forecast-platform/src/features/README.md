@@ -1314,3 +1314,26 @@ label reads with validation-only retention and the deferred standalone
 inference, registry promotion, H2/H3, distributed transactions and cross-process
 restoration are excluded. This candidate requires separate independent review
 before D3-D acceptance or promotion.
+
+The test evidence writer requires the original live `NativeGuard` associated
+with the original report object. This association stays private in test memory;
+it is not a JSON field or a restorable capability. Foreign/copied guards and
+detached report copies cannot authorize a write. The single writer validates the
+unchanged public schema, encodes the report, then checks the guard's persistent
+violation latch immediately before opening the output path. A handled guard
+exception cannot restore permission. Validation/guard failures leave no evidence
+file. Clean-report JSON bytes and semantic contents are unchanged. This is a
+sequential check in trusted test code, not an atomic lease against hostile Python
+threads or an atomic filesystem transaction.
+
+For the pinned XGBoost 3.2.0 Python API, `Booster.predict` uses
+`XGBoosterPredictFromDMatrix`; `inplace_predict` uses the Dense, CSR, Columnar,
+CudaArray or CudaColumnar `XGBoosterPredictFrom*` entrypoints. All six appear in
+the existing guard inventory. The genuine CPU negative controls exercise saved
+`predict` and `inplace_predict` methods through the guarded C entrypoints. CUDA
+execution is not tested. This repair does not widen the native inventory or claim
+complete C API interception: direct legacy calls and the unlisted custom-training
+`XGBoosterTrainOneIterWithSplitGrad` path remain outside that inventory. Normal
+public `Booster.boost` calls are guarded; saved custom-training implementations
+are not covered by that statement. The controlled acceptance scenario uses the
+existing standard training and CPU prediction paths.
