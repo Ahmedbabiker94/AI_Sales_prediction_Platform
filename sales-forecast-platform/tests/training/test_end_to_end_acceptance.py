@@ -6,7 +6,8 @@ here. Instrumentation is installed before invoking even that training factory.
 """
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import timedelta
+import copy
+from datetime import datetime, timedelta
 from fractions import Fraction
 import hashlib
 import importlib.metadata
@@ -534,9 +535,8 @@ def test_fresh_native_acceptance(scenario, algorithm, request):
     s['guard'].assert_clean()
     # Explicitly build public evidence after assertions, never serialize owners.
     report = build_report(s, result, semantic, request.node.nodeid)
-    assert_public_report(report)
     path = s['tmp']/('acceptance-'+algorithm+'.json')
-    path.write_text(canonical(report)+'\n')
+    write_public_report(report, path)
     assert len(path.read_bytes()) <= 128*1024
     assert json.loads(path.read_text()) == report
     assert canonical(report['semantic']) == canonical(json.loads(canonical(report))['semantic'])
@@ -583,49 +583,308 @@ def build_report(s, result, semantic, nodeid):
 
 
 def assert_public_report(report):
-    assert set(report) == {'schema_version','source','fixtures','runtime','tests','semantic',
-                           'run','lifecycle','checks','diagnostics','limitations'}
-    assert set(report['source']) == {'commit','parent','accepted_baseline','tracked_source_clean'}
-    assert set(report['fixtures']) == {'scenario_sha256','mapping_sha256','frozen_sha256'}
-    assert set(report['run']) == {'candidate_id','eligibility_id','publication_id','capture_id',
-        'seal_id','model_handoff_id','baseline_handoff_id','label_revision_ids','label_authority_id',
-        'label_authority_version','evaluation_id'}
-    assert set(report['semantic']) == {'scope','baseline_algorithm','groups'}
-    assert set(report['runtime']) == {'python','pytest','xgboost','numpy','pandas','pydantic','pyarrow','scipy'}
-    assert all(set(test) == {'nodeid','outcome'} and test['outcome'] == 'passed_assertions'
-               for test in report['tests'])
-    stats = {'count','sae','sse','saa','mae','mse','rmse_radicand','wape_status','wape'}
-    for group in report['semantic']['groups']:
-        assert set(group) == {'origin','series','model','baseline','deltas'}
-        assert set(group['model']) == set(group['baseline']) == stats
-        assert set(group['deltas']) == {'sae','sse','mae','mse','wape'}
-        for values in (group['model'],group['baseline'],group['deltas']):
-            for name,value in values.items():
-                if name in ('count','wape_status') or value is None:
-                    continue
-                assert set(value) == {'numerator','denominator'}
-                rational = Fraction(int(value['numerator']),int(value['denominator']))
-                assert value == {'numerator':str(rational.numerator),'denominator':str(rational.denominator)}
-    assert set(report['checks']) == {'training_only','genuine_native','original_owner','claim_before_labels',
-        'one_history_capture','one_label_capture','independent_exact_scores','supported_deltas',
-        'no_postseal_producers','replay_rejected','continued_c0_verification','stable_serialization'}
-    assert all(type(v) is bool and v for v in report['checks'].values())
-    assert all(len(event) == 3 and event[0] in ('setup','training','c0','sealed','c1')
-               for event in report['lifecycle'])
-    pending = [report]
-    forbidden = {'manifest','labels','state_json','artifact_base64','matrix_float32_hex',
-                 'predictions_float32_hex','payload','credentials','password','handle','session'}
+    """Explicit public schema; reject before serializing or writing any evidence."""
+    def require(condition, category):
+        if not condition:
+            # Never include a rejected key, value, repr or exception in diagnostics.
+            raise AssertionError('public report '+category)
+
+    # Defense in depth: inspect BOTH dictionary keys and values. Exact builtin
+    # types exclude private objects and subclasses with serialization/equality hooks.
+    pending = [(report, frozenset())]
+    visited = 0
     while pending:
-        item = pending.pop()
-        assert type(item) in (dict,list,str,int,bool,type(None))
-        if type(item) is dict:
-            assert not set(item) & forbidden
-            pending.extend(item.values())
-        elif type(item) is list:
-            pending.extend(item)
+        item, ancestors = pending.pop()
+        visited += 1
+        require(visited <= 128*1024, 'size')
+        item_type = type(item)
+        require(any(item_type is allowed for allowed in (dict, list, str, int, bool, type(None))), 'value type')
+        if item_type is dict or item_type is list:
+            require(id(item) not in ancestors, 'cyclic value')
+            lineage = ancestors | {id(item)}
+            if type(item) is dict:
+                require(all(type(key) is str for key in item), 'dictionary key type')
+                pending.extend((key, lineage) for key in item)
+                pending.extend((value, lineage) for value in item.values())
+            else:
+                pending.extend((value, lineage) for value in item)
         elif type(item) is str:
-            assert 'D3D_SECRET' not in item
-    assert len(canonical(report).encode()) <= 128*1024
+            require('D3D_SECRET' not in item, 'secret sentinel')
+
+    def shape(value, keys, category):
+        require(type(value) is dict and set(value) == set(keys), category+' schema')
+
+    def text(value, category):
+        require(type(value) is str and bool(value), category+' schema')
+
+    def digest(value, size, category):
+        text(value, category)
+        require(len(value) == size and set(value) <= set('0123456789abcdef'), category+' schema')
+
+    def timestamp(value, category):
+        text(value, category)
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            raise AssertionError('public report '+category+' schema') from None
+        require(parsed.tzinfo is not None and parsed.isoformat() == value, category+' schema')
+
+    def ratio(value):
+        shape(value, ('numerator', 'denominator'), 'ratio')
+        for component in value.values():
+            text(component, 'ratio')
+        try:
+            rational = Fraction(int(value['numerator']), int(value['denominator']))
+            normalized = dict(numerator=str(rational.numerator), denominator=str(rational.denominator))
+        except (ValueError, ZeroDivisionError):
+            raise AssertionError('public report ratio schema') from None
+        require(value == normalized, 'ratio schema')
+
+    def statistics(value):
+        shape(value, ('count','sae','sse','saa','mae','mse','rmse_radicand','wape_status','wape'), 'statistics')
+        require(type(value['count']) is int and value['count'] > 0, 'statistics schema')
+        require(value['wape_status'] in ('defined', 'undefined_zero_denominator'), 'statistics schema')
+        for name in ('sae','sse','saa','mae','mse','rmse_radicand'):
+            ratio(value[name])
+        if value['wape_status'] == 'defined':
+            ratio(value['wape'])
+        else:
+            require(value['wape'] is None, 'statistics schema')
+
+    shape(report, ('schema_version','source','fixtures','runtime','tests','semantic',
+                   'run','lifecycle','checks','diagnostics','limitations'), 'root')
+    require(report['schema_version'] == 'd3d-test-evidence-v1', 'version schema')
+    shape(report['source'], ('commit','parent','accepted_baseline','tracked_source_clean'), 'source')
+    for name in ('commit','parent','accepted_baseline'):
+        digest(report['source'][name], 40, 'source')
+    require(report['source']['accepted_baseline'] == BASELINE, 'source schema')
+    require(type(report['source']['tracked_source_clean']) is bool, 'source schema')
+    shape(report['fixtures'], ('scenario_sha256','mapping_sha256','frozen_sha256'), 'fixtures')
+    for value in report['fixtures'].values():
+        digest(value, 64, 'fixtures')
+    require(report['fixtures']['frozen_sha256'] == FROZEN, 'fixtures schema')
+    shape(report['run'], ('candidate_id','eligibility_id','publication_id','capture_id',
+        'seal_id','model_handoff_id','baseline_handoff_id','label_revision_ids','label_authority_id',
+        'label_authority_version','evaluation_id'), 'run')
+    for name in ('candidate_id','eligibility_id','publication_id','capture_id','seal_id',
+                 'model_handoff_id','baseline_handoff_id','evaluation_id'):
+        digest(report['run'][name], 64, 'run')
+    revisions = report['run']['label_revision_ids']
+    require(type(revisions) is list and bool(revisions), 'run schema')
+    for revision in revisions:
+        digest(revision, 64, 'run')
+    for name in ('label_authority_id','label_authority_version'):
+        text(report['run'][name], 'run')
+    shape(report['runtime'], ('python','pytest','xgboost','numpy','pandas','pydantic','pyarrow','scipy'), 'runtime')
+    for value in report['runtime'].values():
+        text(value, 'runtime')
+    require(type(report['tests']) is list and bool(report['tests']), 'tests schema')
+    for test in report['tests']:
+        shape(test, ('nodeid','outcome'), 'tests')
+        text(test['nodeid'], 'tests')
+        require(test['outcome'] == 'passed_assertions', 'tests schema')
+    shape(report['semantic'], ('scope','baseline_algorithm','groups'), 'semantic')
+    require(report['semantic']['scope'] == 'validation_only_h1', 'semantic schema')
+    require(report['semantic']['baseline_algorithm'] in ('last_observation_v1','seasonal_naive_v1'), 'semantic schema')
+    require(type(report['semantic']['groups']) is list and bool(report['semantic']['groups']), 'groups schema')
+    for group in report['semantic']['groups']:
+        shape(group, ('origin','series','model','baseline','deltas'), 'groups')
+        timestamp(group['origin'], 'groups')
+        text(group['series'], 'groups')
+        try:
+            series = str(UUID(group['series']))
+        except ValueError:
+            raise AssertionError('public report groups schema') from None
+        require(group['series'] == series, 'groups schema')
+        statistics(group['model'])
+        statistics(group['baseline'])
+        shape(group['deltas'], ('sae','sse','mae','mse','wape'), 'deltas')
+        for name, value in group['deltas'].items():
+            if name == 'wape' and value is None:
+                require(group['model']['wape_status'] == group['baseline']['wape_status'] ==
+                        'undefined_zero_denominator', 'deltas schema')
+            else:
+                ratio(value)
+    shape(report['checks'], ('training_only','genuine_native','original_owner','claim_before_labels',
+        'one_history_capture','one_label_capture','independent_exact_scores','supported_deltas',
+        'no_postseal_producers','replay_rejected','continued_c0_verification','stable_serialization'), 'checks')
+    require(all(type(v) is bool and v for v in report['checks'].values()), 'checks schema')
+    require(type(report['diagnostics']) is list and
+            report['diagnostics'] == ['guarded_runtime_errors_only'], 'diagnostics schema')
+    limitations = ('controlled-offline','process-local','trusted-operator','validation-only-H1',
+        'sequential-authorization','cooperative-budgets','whole-publication-physical-read',
+        'full-history-dtype-admission','standalone-configuration-digest-P2-deferred',
+        'test-report-not-durable-audit-or-attestation','not-production-approval')
+    require(type(report['limitations']) is list and
+            all(type(v) is str for v in report['limitations']) and
+            len(report['limitations']) == len(limitations) and
+            set(report['limitations']) == set(limitations), 'limitations schema')
+    require(type(report['lifecycle']) is list and bool(report['lifecycle']), 'lifecycle schema')
+    null_events = {'state_fit':'training','native_train':'training','native_load':'c0',
+        'native_predict':'c0','baseline_execute':'c0','relationship_approved':'setup',
+        'both_handoffs':'sealed','revision':'c1'}
+    decision_stages = {
+        ('c0','baseline'): {'execute','origin','scoped_return','verify'},
+        ('c1','baseline'): {'scoped_return','verify'},
+        ('c0','joint'): {'execute','issue','model_bootstrap','model_capture','model_capture_after_read',
+            'model_capture_read','model_issue','model_joint_scoped_return','model_joint_verify',
+            'model_load','model_origin','model_predict','model_return','model_scoped_return','scoped_return','verify'},
+        ('c1','joint'): {'model_joint_scoped_return','model_joint_verify','scoped_return','verify'},
+        ('c0','prediction'): {'bootstrap','capture','capture_after_read','capture_read','issue',
+            'joint_scoped_return','joint_verify','load','origin','predict','return','scoped_return'},
+        ('c1','prediction'): {'joint_scoped_return','joint_verify'},
+        ('c1','label'): {'issue','read','after_read','return','scoped_return'},
+    }
+    for event in report['lifecycle']:
+        require(type(event) is list and len(event) == 3, 'lifecycle schema')
+        phase, name, detail = event
+        require(type(phase) is type(name) is str and phase in ('setup','training','c0','sealed','c1'), 'lifecycle schema')
+        if name in null_events:
+            require(phase == null_events[name] and detail is None, 'lifecycle schema')
+        elif name == 'training_origin':
+            require(phase == 'training', 'lifecycle schema')
+            timestamp(detail, 'lifecycle')
+        elif name in ('read_open','read_close'):
+            purposes = {'setup':('production_training','offline_forecast_evaluation'),
+                'training':('production_training',),'c0':('offline_forecast_evaluation',),
+                'c1':('offline_forecast_evaluation',)}
+            require(type(detail) is str and detail in purposes.get(phase, ()), 'lifecycle schema')
+        else:
+            require(type(detail) is str and detail in decision_stages.get((phase,name), ()), 'lifecycle schema')
+    require(len(canonical(report).encode())+1 <= 128*1024, 'size')
+
+
+def write_public_report(report, path):
+    """The single test evidence sink validates before serialization or writes."""
+    assert_public_report(report)
+    path.write_text(canonical(report)+'\n')
+
+
+@pytest.fixture(scope='module')
+def valid_public_report(tmp_path_factory, request):
+    """Reuse only public JSON from a fresh, fully checked genuine-native run."""
+    path = tmp_path_factory.mktemp('valid-public-report')
+    with pytest.MonkeyPatch.context() as patch:
+        s = scenario.__wrapped__(path, patch, request)
+        test_fresh_native_acceptance(s, 'last_observation_v1', request)
+    return json.loads((path/'acceptance-last_observation_v1.json').read_text())
+
+
+def test_public_report_rejects_original_secret_key(valid_public_report, tmp_path):
+    bad = copy.deepcopy(valid_public_report)
+    bad['diagnostics'] = [
+        {'D3D_SECRET_SYNTHETIC_KEY': 'ordinary'}
+    ]
+    with pytest.raises(AssertionError, match='^public report secret sentinel$'):
+        assert_public_report(bad)
+    path = tmp_path/'acceptance-malformed.json'
+    with pytest.raises(AssertionError, match='^public report secret sentinel$'):
+        write_public_report(bad, path)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(('fault','category'), [
+    ('secret_value', 'secret sentinel'),
+    ('diagnostics_nested', 'diagnostics schema'),
+    ('diagnostics_unapproved', 'diagnostics schema'),
+    ('limitations_nested', 'limitations schema'),
+    ('limitations_unapproved', 'limitations schema'),
+    ('lifecycle_type', 'lifecycle schema'),
+    ('lifecycle_extra_field', 'lifecycle schema'),
+    ('lifecycle_detail_type', 'lifecycle schema'),
+    ('lifecycle_unknown_name', 'lifecycle schema'),
+    ('lifecycle_wrong_purpose', 'lifecycle schema'),
+    ('private_object', 'value type'),
+    ('private_metaclass', 'value type'),
+    ('unsupported_scalar', 'value type'),
+    ('top_key', 'root schema'),
+    ('nested_key', 'runtime schema'),
+    ('ratio_key', 'ratio schema'),
+    ('count_type', 'statistics schema'),
+    ('non_string_key', 'dictionary key type'),
+    ('cyclic', 'cyclic value'),
+])
+def test_public_report_rejects_malformed_evidence(valid_public_report, tmp_path, fault, category):
+    bad = copy.deepcopy(valid_public_report)
+    if fault == 'secret_value':
+        bad['run']['label_authority_id'] = 'D3D_SECRET_SYNTHETIC_VALUE'
+    elif fault == 'diagnostics_nested':
+        bad['diagnostics'] = [{'ordinary': 'ordinary'}]
+    elif fault == 'diagnostics_unapproved':
+        bad['diagnostics'] = ['unapproved']
+    elif fault == 'limitations_nested':
+        bad['limitations'] = [['controlled-offline']]
+    elif fault == 'limitations_unapproved':
+        bad['limitations'][0] = 'unapproved'
+    elif fault == 'lifecycle_type':
+        bad['lifecycle'][0] = dict(phase='setup', event='read_open', detail='production_training')
+    elif fault == 'lifecycle_extra_field':
+        bad['lifecycle'][0].append('unexpected')
+    elif fault == 'lifecycle_detail_type':
+        bad['lifecycle'][0] = ['setup', 'read_open', 1]
+    elif fault == 'lifecycle_unknown_name':
+        bad['lifecycle'][0] = ['setup', 'unapproved', None]
+    elif fault == 'lifecycle_wrong_purpose':
+        bad['lifecycle'][0] = ['training', 'read_open', 'offline_forecast_evaluation']
+    elif fault == 'private_object':
+        bad['run']['label_authority_id'] = object()
+    elif fault == 'private_metaclass':
+        class PrivateType(type):
+            def __eq__(cls, other):
+                raise RuntimeError('private type comparison attempted')
+        class Private(metaclass=PrivateType):
+            pass
+        bad['run']['label_authority_id'] = Private()
+    elif fault == 'unsupported_scalar':
+        bad['runtime']['python'] = float('nan')
+    elif fault == 'top_key':
+        bad['unapproved'] = 'ordinary'
+    elif fault == 'nested_key':
+        bad['runtime']['unapproved'] = 'ordinary'
+    elif fault == 'ratio_key':
+        bad['semantic']['groups'][0]['model']['sae']['unapproved'] = 'ordinary'
+    elif fault == 'count_type':
+        bad['semantic']['groups'][0]['model']['count'] = True
+    elif fault == 'non_string_key':
+        bad['diagnostics'] = [{1: 'ordinary'}]
+    elif fault == 'cyclic':
+        bad['diagnostics'].append(bad)
+    with pytest.raises(AssertionError, match='^public report '+category+'$'):
+        assert_public_report(bad)
+    path = tmp_path/'acceptance-malformed.json'
+    with pytest.raises(AssertionError, match='^public report '+category+'$'):
+        write_public_report(bad, path)
+    assert not path.exists()
+
+
+def test_public_report_valid_bytes_unchanged(valid_public_report, tmp_path):
+    before = copy.deepcopy(valid_public_report)
+    encoded = canonical(before)+'\n'
+    assert_public_report(valid_public_report)
+    assert valid_public_report == before
+    path = tmp_path/'acceptance-valid.json'
+    write_public_report(valid_public_report, path)
+    assert path.read_bytes() == encoded.encode()
+    assert json.loads(path.read_text()) == before
+
+
+@pytest.mark.parametrize('fault', ['diagnostics', 'limitations'])
+def test_positive_scenario_rejects_malformed_evidence(scenario, monkeypatch, request, fault):
+    """Drive a malformed report through the positive scenario's real writer."""
+    original = build_report
+    injected = []
+    def malformed(*args, **kwargs):
+        report = original(*args, **kwargs)
+        report[fault] = ([{'D3D_SECRET_SYNTHETIC_KEY': 'ordinary'}]
+                         if fault == 'diagnostics' else [['controlled-offline']])
+        injected.append(fault)
+        return report
+    monkeypatch.setitem(globals(), 'build_report', malformed)
+    category = 'secret sentinel' if fault == 'diagnostics' else 'limitations schema'
+    with pytest.raises(AssertionError, match='^public report '+category+'$'):
+        test_fresh_native_acceptance(scenario, 'last_observation_v1', request)
+    assert injected == [fault]
+    assert not list(scenario['tmp'].glob('acceptance-*.json'))
 
 
 @pytest.mark.parametrize('fault', ['cancel', 'expiry', 'revoke', 'relationship', 'revision', 'cleanup',
