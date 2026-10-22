@@ -19,6 +19,7 @@ import subprocess
 import traceback
 from uuid import UUID
 import warnings
+import numpy as np
 
 import pandas as pd
 import pytest
@@ -28,7 +29,10 @@ from src.data.contracts.dataset import (
     ConsistencyPolicy, DatasetAccessContext, ScopedWarningAuthorization,
     StoredDatasetReference, VerifiedConsistencyEvidence,
 )
-from src.data.contracts.forecast_evaluation import BaselineDefinition
+from src.data.contracts.backtesting import ForecastScope
+from src.data.contracts.forecast_evaluation import (
+    BaselineDefinition, EvaluationBudgets, ForecastScoringPlan, ScoringArithmeticPolicy,
+)
 from src.data.contracts.model_evaluation import (
     PublicationRelationshipDeclaration, declare_evaluation_eligibility,
 )
@@ -84,6 +88,45 @@ def assert_statistics(actual, expected):
         assert (None if value is None else value.fraction) == expected[name]
 
 
+class NativeGuard:
+    """Test-only, irreversible latch at public AND actual XGBoost C entrypoints.
+
+    Saved genuine Python methods still pass through the C-entrypoint guards.
+    No arguments, model data or native results are retained in diagnostics.
+    """
+    def __init__(self, monkeypatch):
+        from xgboost.core import _LIB
+        self.owner=None
+        self.sealed=False
+        self.violations=[]
+        def install(target,name,label):
+            original=getattr(target,name)
+            def guarded(*args,**kwargs):
+                self.check(label)
+                return original(*args,**kwargs)
+            monkeypatch.setattr(target,name,guarded)
+        install(xgb,'train','xgboost.train')
+        for name in ('predict','inplace_predict','load_model','update','boost'):
+            install(xgb.Booster,name,'Booster.'+name)
+        for name in ('XGBoosterPredictFromDense','XGBoosterPredictFromCSR',
+                     'XGBoosterPredictFromColumnar','XGBoosterPredictFromDMatrix',
+                     'XGBoosterPredictFromCudaArray','XGBoosterPredictFromCudaColumnar',
+                     'XGBoosterLoadModel','XGBoosterLoadModelFromBuffer',
+                     'XGBoosterUnserializeFromBuffer','XGBoosterUpdateOneIter',
+                     'XGBoosterTrainOneIter','XGBoosterBoostOneIter'):
+            if hasattr(_LIB,name):
+                install(_LIB,name,'C.'+name)
+
+    def check(self,label):
+        if self.sealed or self.owner is not None and self.owner.phase=='SEALED':
+            self.sealed=True
+            self.violations.append(label)
+            raise AssertionError('post-seal native operation attempted')
+
+    def assert_clean(self):
+        assert not self.violations, 'post-seal native operation attempted'
+
+
 @pytest.fixture
 def scenario(tmp_path, monkeypatch, request):
     """Each invocation trains a fresh candidate and creates fresh original owners."""
@@ -92,6 +135,9 @@ def scenario(tmp_path, monkeypatch, request):
     native = []
     control = dict(deny=None, hook=None, revision=True)
     read = CanonicalTrainingDataProvider.open_read
+    guard = NativeGuard(monkeypatch)
+    revision_claims=[]
+    scoring_budgets=JointH1ScoringBudgets(max_elapsed_seconds=10)
 
     @contextmanager
     def tracked_read(provider, *args, **kwargs):
@@ -125,6 +171,7 @@ def scenario(tmp_path, monkeypatch, request):
         return prepare(engine, history, requests, fitted, **kwargs)
 
     def fit(*args, **kwargs):
+        guard.check('xgboost.train')
         trace.append((phase[0], 'native_train', None))
         assert phase[0] == 'training'
         return native_train(*args, **kwargs)
@@ -262,7 +309,9 @@ def scenario(tmp_path, monkeypatch, request):
             verify_history=ValueAttestedAvailabilityVerifier(verify_availability=history, verify_captured_values=history_values),
             elapsed_clock=lambda: clock[0], baseline=definition,
             authorize_joint=decision('joint'), authorize_baseline=decision('baseline'))
+        guard.owner=getattr(verifier,'_JointH1Verifier__owner')
         session = executor.execute(op.issue())
+        guard.sealed=True
         sealed = verifier.verify(session)
         sealed_ref.append(sealed)
         assert sum(p == 'c0' and e == 'read_open' for p, e, _ in trace) == 1
@@ -280,14 +329,11 @@ def scenario(tmp_path, monkeypatch, request):
             pytest.fail('post-seal producer operation')
         for name in ('_load_native', '_predict_native', '_joint_predict'):
             monkeypatch.setattr(_Owner, name, staticmethod(forbidden))
-        monkeypatch.setattr(xgb, 'train', forbidden)
         monkeypatch.setattr(CanonicalFeaturePipeline, 'fit_state', forbidden)
         monkeypatch.setattr(CanonicalFeaturePipeline, 'prepare_inference', forbidden)
         monkeypatch.setattr(_BaselineOwner, 'execute', forbidden)
         import src.services.canonical_joint_model_prediction_service as joint_service
         monkeypatch.setattr(joint_service, '_owned_stateless_h1', forbidden)
-        monkeypatch.setattr(xgb.Booster, 'load_model', forbidden)
-        monkeypatch.setattr(xgb.Booster, 'predict', forbidden)
         monkeypatch.setattr(b['owner'], 'verify_candidate', forbidden)
         monkeypatch.setattr(CanonicalTrainingPreparationService, '_capture', forbidden)
         phase[0] = 'c1'
@@ -307,61 +353,150 @@ def scenario(tmp_path, monkeypatch, request):
                 assert c.admission_digest == meta.admission_digest and c.mapping_digest == binding.mapping_digest
                 assert c.source_id == meta.source_id and c.organization_id == ref.organization_id
                 assert c.assessment_cutoff == ctx.assessment_cutoff and c.available_at <= ctx.assessment_cutoff
+            revision_claims.append(tuple(claims))
             return True
 
         authority = BaselineAuthorityBinding('d3d-independent-label-ledger', '1.0', 'captured_value_as_of_E_v1', (binding,), revision)
         composition = dict(authorize_labels=decision('label'), label_revision_authority=authority,
-                           budgets=JointH1ScoringBudgets(max_elapsed_seconds=10))
+                           budgets=scoring_budgets)
         label_op, evaluator = verifier.bootstrap_evaluation(session, **composition)
         return dict(op=op, verifier=verifier, session=session, sealed=sealed,
                     label_op=label_op, evaluator=evaluator, composition=composition)
 
     return dict(seal=seal, trace=trace, phase=phase, control=control, provider=provider,
                 ledger=ledger, source=source, mapping=mapping, bo=bo, approval=approval,
-                clock=clock, eligibility=eligibility, bundle=bundle, tmp=tmp_path)
+                clock=clock, eligibility=eligibility, bundle=bundle, tmp=tmp_path,
+                guard=guard,sealed=sealed_ref,revision_claims=revision_claims,
+                scoring_budgets=scoring_budgets,lineage=lineage)
+
+
+def wire_id(value):
+    # Independent standard-library implementation of the documented JSON hash.
+    return sha(json.dumps(value,sort_keys=True,separators=(',',':'),
+                          ensure_ascii=False,allow_nan=False).encode())
+
+
+def public_stats(values):
+    return {k: ({'numerator':str(v.numerator),'denominator':str(v.denominator)}
+                if isinstance(v,Fraction) else v) for k,v in values.items()}
 
 
 def check_scores(s, result):
-    sealed = result.sealed
-    scopes = sealed.coverage.scopes
-    assert [e.scope for e in result.model_scores.events] == list(scopes)
-    assert [e.label_binding_digest for e in result.model_scores.events] == list(result.label_revision_ids)
-    assert [e.label_binding_digest for e in result.baseline_scores.events] == list(result.label_revision_ids)
-    expected_keys = []
-    semantic = []
-    for i, scope in enumerate(scopes):
-        location = dict(scope.dimensions)['location']
-        rows = [r for r in s['ledger'].values() if r['branch'] == location and r['from'] == scope.target_period]
-        assert len(rows) == 1
-        actual = rows[0]['reported']
-        history = sorted((r for r in s['ledger'].values() if r['branch'] == location
-                          and r['to'] <= scope.forecast_origin and r['released'] <= scope.forecast_origin),
-                         key=lambda r: r['from'])
-        lookback = sealed.baseline_definition.lookback
-        assert exact(sealed.baseline_points[i].value) == exact(history[-lookback]['reported'])
-        model = reference([sealed.model.events[i].point.value], [actual])
-        baseline = reference([sealed.baseline_points[i].value], [actual])
-        for evaluation, expected in ((result.model_scores, model), (result.baseline_scores, baseline)):
-            assert_statistics(evaluation.events[i].statistics, expected)
-            assert_statistics(evaluation.groups[i].statistics, expected)
-            assert evaluation.groups[i].forecast_origin == scope.forecast_origin
-        delta = result.deltas[i]
-        for field in ('sae', 'sse', 'mae', 'mse', 'wape'):
-            value = getattr(delta, field)
-            expected = None if model[field] is None else model[field] - baseline[field]
-            assert (None if value is None else value.fraction) == expected
-        assert delta.wape_status == model['wape_status']
-        assert not {'rmse', 'winner', 'improvement_percentage'} & set(type(delta).model_fields)
-        expected_keys.append((scope.fold_id, str(scope.organization_id), str(scope.series_id), scope.forecast_origin.isoformat()))
-        def public_stats(values):
-            return {k: ({'numerator': str(v.numerator), 'denominator': str(v.denominator)} if isinstance(v, Fraction) else v)
-                    for k, v in values.items()}
-        semantic.append(dict(origin=scope.forecast_origin.isoformat(), series=str(scope.series_id),
-            model=public_stats(model), baseline=public_stats(baseline),
-            deltas={k: None if model[k] is None else public_stats({k: model[k]-baseline[k]})[k]
-                    for k in ('sae', 'sse', 'mae', 'mse', 'wape')}))
-    assert expected_keys == sorted(expected_keys)
-    assert tuple(e.scope for e in result.baseline_scores.events) == scopes
+    # Derive scopes from ORIGINAL operator-approved geometry, never scored groups.
+    d=s['eligibility'];relation=d.relationship
+    assert result.sealed==s['sealed'][0]
+    dimensions={series.series_id:series.dimensions for series in relation.series}
+    scopes=tuple(ForecastScope(plan_digest=d.candidate.training_plan_digest,
+        dataset_version=relation.evaluation.reference.version_id,fold_id=d.coverage.fold_id,
+        organization_id=relation.evaluation.reference.organization_id,series_id=sid,
+        metric=relation.metric,unit=relation.unit,currency=relation.currency,
+        frequency=relation.frequency,timezone=relation.timezone,dimensions=dimensions[sid],
+        forecast_origin=period.forecast_origin,horizon_step=1,target_period=period.target_period,
+        target_period_end=period.target_period_end)
+        for period in d.coverage.periods for sid in relation.evaluation.series_ids)
+    assert result.sealed.coverage.scopes==scopes
+    assert s['revision_claims'] and all(c==s['revision_claims'][0] for c in s['revision_claims'])
+    claims=s['revision_claims'][0]
+    assert len(claims)==len(scopes)
+    cutoff=d.candidate.training_plan.folds[0].assessment_cutoff
+    arithmetic=ScoringArithmeticPolicy(policy_id='canonical-exact-c1-v1')
+    arithmetic_id=wire_id(arithmetic.model_dump(mode='json'))
+    keys=[];actuals=[];label_ids=[]
+    for scope in scopes:
+        location=dict(scope.dimensions)['location']
+        rows=[(rid,row) for rid,row in s['ledger'].items()
+              if row['branch']==location and row['from']==scope.target_period]
+        assert len(rows)==1
+        rid,row=rows[0]
+        actuals.append(row['reported'])
+        sid,lineage=s['lineage'][rid]
+        assert sid==scope.series_id
+        binding=relation.evaluation;ref=binding.reference
+        label_ids.append(wire_id([str(ref.organization_id),str(ref.dataset_id),str(ref.attempt_id),ref.version_id,
+            binding.manifest_digest,binding.admission_digest,str(binding.source_id),binding.mapping_digest,
+            str(scope.organization_id),str(scope.series_id),scope.metric,scope.unit,scope.currency,
+            row['from'].isoformat(),row['to'].isoformat(),rid,str(lineage),row['released'].isoformat(),
+            row['proof'],('float64',struct.pack('>d',float(row['reported'])).hex()),
+            cutoff.isoformat(),'captured_value_as_of_E_v1']))
+        keys.append((scope.fold_id,str(scope.organization_id),str(scope.series_id),1,
+            scope.metric,scope.unit,scope.currency or '', 'validation',
+            cutoff.isoformat(),scope.forecast_origin.isoformat()))
+    assert tuple(label_ids)==result.label_revision_ids==tuple(c.digest for c in claims)
+    expected_keys=tuple(sorted(set(keys)))
+    expected_stats=[]
+    for evaluation,handoff,points in (
+        (result.model_scores,result.sealed.model_handoff_id,tuple(e.point for e in result.sealed.model.events)),
+        (result.baseline_scores,result.sealed.baseline_handoff_id,result.sealed.baseline_points)):
+        assert len(points)==len(scopes)==len(evaluation.events)
+        assert tuple(point.scope for point in points)==scopes
+        plan=ForecastScoringPlan(plan_id='joint-h1-c1',producer_plan_digest=handoff,
+            datasets=(relation.evaluation,),partitions=('validation',),arithmetic=arithmetic,
+            budgets=EvaluationBudgets(max_scored_events=s['scoring_budgets'].max_points,
+                                      max_groups=s['scoring_budgets'].max_groups))
+        assert evaluation.scoring_plan==plan and evaluation.producer_result_id==handoff
+        plan_id=wire_id(plan.model_dump(mode='json'))
+        expected_ids=[]
+        for i,(scope,point,event,claim) in enumerate(zip(scopes,points,evaluation.events,claims,strict=True)):
+            stats=reference([point.value],[actuals[i]])
+            assert_statistics(event.statistics,stats)
+            payload=dict(scope=scope.model_dump(mode='json'),
+                producer_event_id=wire_id([handoff,i,point.model_dump(mode='json')]),
+                label_binding_digest=label_ids[i],scoring_plan_digest=plan_id,
+                arithmetic_policy_digest=arithmetic_id,
+                assessment_cutoff=cutoff.isoformat().replace('+00:00','Z'),
+                partition='validation',statistics=public_stats(stats))
+            expected_id=wire_id(payload)
+            assert event.model_dump(mode='json')==payload
+            assert event.event_id==expected_id
+            expected_ids.append(expected_id)
+        assert len(set(expected_ids))==len(expected_ids)
+        assert len(evaluation.groups)==len(expected_keys)
+        groups={}
+        observed_members=[]
+        for key,group in zip(expected_keys,evaluation.groups,strict=True):
+            # Compare EVERY semantic key field, policy binding and exact member.
+            observed=(group.fold_id,str(group.organization_id),str(group.series_id),
+                group.horizon_step,group.metric,group.unit,group.currency or '',group.partition,
+                group.assessment_cutoff.isoformat(),group.forecast_origin.isoformat())
+            assert observed==key
+            assert group.scoring_plan_digest==plan_id and group.arithmetic_policy_digest==arithmetic_id
+            assert group.label_revision_policy=='captured_value_as_of_E_v1'
+            assert group.event_weighting=='origin_scoped_v1'
+            indices=[i for i,k in enumerate(keys) if k==key]
+            members=tuple(expected_ids[i] for i in indices)
+            assert group.event_ids==members
+            observed_members.extend(group.event_ids)
+            expected=reference([points[i].value for i in indices],[actuals[i] for i in indices])
+            assert_statistics(group.statistics,expected)
+            groups[key]=expected
+        assert len(observed_members)==len(set(observed_members))==len(expected_ids)
+        assert set(observed_members)==set(expected_ids)
+        expected_stats.append(groups)
+    # Independently calculate the owned baseline from eligible raw history too.
+    for scope,point in zip(scopes,result.sealed.baseline_points,strict=True):
+        history=sorted((r for r in s['ledger'].values() if r['branch']==dict(scope.dimensions)['location']
+            and r['to']<=scope.forecast_origin and r['released']<=scope.forecast_origin),key=lambda r:r['from'])
+        assert exact(point.value)==exact(history[-result.sealed.baseline_definition.lookback]['reported'])
+    assert len(result.deltas)==len(expected_keys)
+    semantic=[]
+    for key,delta in zip(expected_keys,result.deltas,strict=True):
+        indices=[i for i,k in enumerate(keys) if k==key]
+        forecast_ids=tuple(sorted(wire_id(scopes[i].model_dump(mode='json')) for i in indices))
+        assert delta.forecast_key_ids==forecast_ids
+        assert delta.semantic_group_id==wire_id(['joint_h1_c1',arithmetic_id,key,forecast_ids])
+        model,baseline=(mapping[key] for mapping in expected_stats)
+        assert_statistics(delta.candidate,model)
+        assert_statistics(delta.baseline,baseline)
+        differences={}
+        for field in ('sae','sse','mae','mse','wape'):
+            expected=None if model[field] is None else model[field]-baseline[field]
+            value=getattr(delta,field)
+            assert (None if value is None else value.fraction)==expected
+            differences[field]=expected
+        assert delta.wape_status==model['wape_status']
+        assert not {'rmse','winner','improvement_percentage'} & set(type(delta).model_fields)
+        semantic.append(dict(origin=scopes[indices[0]].forecast_origin.isoformat(),series=str(scopes[indices[0]].series_id),
+            model=public_stats(model),baseline=public_stats(baseline),deltas=public_stats(differences)))
     return semantic
 
 
@@ -396,6 +531,7 @@ def test_fresh_native_acceptance(scenario, algorithm, request):
     assert sum(p == 'c1' and e == 'read_open' for p, e, _ in s['trace']) == 1
     encoded = result.model_dump_json()
     assert type(result).model_validate_json(encoded).model_dump_json() == encoded
+    s['guard'].assert_clean()
     # Explicitly build public evidence after assertions, never serialize owners.
     report = build_report(s, result, semantic, request.node.nodeid)
     assert_public_report(report)
@@ -409,6 +545,7 @@ def test_fresh_native_acceptance(scenario, algorithm, request):
 
 def build_report(s, result, semantic, nodeid):
     """Strict allowlist at every construction site; no arbitrary object dumping."""
+    s['guard'].assert_clean()
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
     parent = subprocess.check_output(['git', 'rev-parse', 'HEAD^'], text=True).strip()
     clean = not subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=no'], text=True).strip()
@@ -590,3 +727,85 @@ def test_independent_runs_have_equal_semantics(tmp_path, monkeypatch, request):
     assert canonical(reports[0]['semantic']) == canonical(reports[1]['semantic'])
     assert reports[0]['fixtures'] == reports[1]['fixtures']
     assert reports[0]['run']['seal_id'] != reports[1]['run']['seal_id']
+
+
+@pytest.mark.parametrize('fault',['group_identity','group_membership','delta_identity','delta_membership',
+                                'inplace_predict','predict','load_model','update'])
+def test_injected_fault_cannot_publish_affirmative_evidence(tmp_path, monkeypatch, request, fault):
+    """Exercise the positive test itself, including its actual evidence sink."""
+    models=[]
+    genuine_train=xgb.train
+    genuine_inplace=xgb.Booster.inplace_predict
+    genuine_predict=xgb.Booster.predict
+    genuine_load=xgb.Booster.load_model
+    genuine_update=xgb.Booster.update
+    def observed_train(*args,**kwargs):
+        model=genuine_train(*args,**kwargs)
+        models.append(model)
+        return model
+    monkeypatch.setattr(xgb,'train',observed_train)
+    s=scenario.__wrapped__(tmp_path,monkeypatch,request)
+    assert len(models)==1 and type(models[0]) is xgb.Booster
+    matrix=xgb.DMatrix(np.zeros((1,3),dtype=np.float32),label=np.zeros(1,dtype=np.float32),
+                       feature_names=models[0].feature_names,nthread=1)
+    artifact=models[0].save_raw(raw_format='ubj')
+    attempted=[];completed=[];publications=[]
+    if fault.startswith(('group_','delta_')):
+        from src.services.canonical_joint_model_evaluation_service import _EvaluationOwner
+        original=_EvaluationOwner.evaluate
+        def corrupted(owner,handle):
+            result=original(owner,handle)
+            if fault.startswith('group_'):
+                groups=list(result.model_scores.groups)
+                if fault=='group_identity':
+                    groups[0]=groups[0].model_copy(update={'series_id':groups[1].series_id})
+                else:
+                    first,second=groups[0].event_ids,groups[1].event_ids
+                    groups[0]=groups[0].model_copy(update={'event_ids':second})
+                    groups[1]=groups[1].model_copy(update={'event_ids':first})
+                scores=result.model_scores.model_copy(update={'groups':tuple(groups)})
+                mutant=result.model_copy(update={'model_scores':scores})
+            else:
+                deltas=list(result.deltas)
+                update=({'semantic_group_id':'0'*64} if fault=='delta_identity'
+                        else {'forecast_key_ids':('0'*64,)})
+                deltas[0]=deltas[0].model_copy(update=update)
+                mutant=result.model_copy(update={'deltas':tuple(deltas)})
+            # Full public validation succeeds: the independent acceptance oracle
+            # must reject this semantic substitution, not outsource its oracle.
+            mutant=type(result).model_validate_json(mutant.model_dump_json())
+            attempted.append(fault)
+            return mutant
+        monkeypatch.setattr(_EvaluationOwner,'evaluate',corrupted)
+    else:
+        # Positive pre-seal control uses the saved genuine Booster method.
+        assert genuine_inplace(models[0],np.zeros((1,3),dtype=np.float32)).shape==(1,)
+        calls=dict(inplace_predict=lambda:genuine_inplace(models[0],np.zeros((1,3),dtype=np.float32)),
+                   predict=lambda:genuine_predict(models[0],matrix),
+                   load_model=lambda:genuine_load(models[0],artifact),
+                   update=lambda:genuine_update(models[0],matrix,0))
+        def inject(kind,stage):
+            if (kind,stage)==('label','read'):
+                attempted.append(fault)
+                try:
+                    calls[fault]()
+                    completed.append(fault)
+                except AssertionError:
+                    # A collaborator may swallow the guard's exception. The
+                    # persistent violation latch must still prevent evidence.
+                    pass
+        s['control']['hook']=inject
+    original_report=build_report
+    def published(*args,**kwargs):
+        publications.append(True)
+        return original_report(*args,**kwargs)
+    monkeypatch.setitem(globals(),'build_report',published)
+    with pytest.raises(AssertionError):
+        test_fresh_native_acceptance(s,'last_observation_v1',request)
+    assert attempted==[fault]
+    assert not completed
+    assert not publications
+    assert not list(tmp_path.glob('acceptance-*.json'))
+    if not fault.startswith(('group_','delta_')):
+        assert len(s['guard'].violations)==1
+        assert s['guard'].violations[0].startswith('C.XGBooster')
