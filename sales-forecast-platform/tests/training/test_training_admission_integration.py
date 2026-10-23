@@ -131,3 +131,65 @@ def test_invalid_holiday_rejected_before_training_operations(pipeline, monkeypat
     assert 'field=IsHoliday' in str(exc.value)
     for mock in mocks.values(): mock.assert_not_called()
     pd.testing.assert_frame_equal(df, before)
+
+
+@pytest.mark.parametrize('family', [
+    'lightgbm', 'transformer', 'lstm', 'gru', 'catboost', 'unknown',
+    'XGBoost', '', None, True, 1, ['xgboost'],
+])
+def test_unsupported_family_rejects_before_read_or_downstream_work(pipeline, monkeypatch, family):
+    module, mocks = pipeline
+    read = Mock(side_effect=AssertionError('data must not be read'))
+    monkeypatch.setattr(module.pd, 'read_csv', read)
+    with pytest.raises(ValueError, match='unsupported legacy training model family'):
+        module.run_training_pipeline('unused.csv', model_type=family)
+    read.assert_not_called()
+    for mock in mocks.values():
+        mock.assert_not_called()
+
+
+@pytest.mark.parametrize('explicit_family', [False, True])
+def test_explicit_training_returns_without_tracking_registration_or_production_work(
+    pipeline, monkeypatch, explicit_family,
+):
+    module, mocks = pipeline
+    # Synthetic inputs and fake collaborators only: no real fit, report write,
+    # registry client, MLflow server or production pointer is touched.
+    df = pd.DataFrame({
+        'Store': [1, 1, 1], 'Dept': [1, 1, 1],
+        'Date': pd.date_range('2025-01-01', periods=3, freq='7D'),
+        'Weekly_Sales': [1.0, 2.0, 3.0],
+    })
+    monkeypatch.setattr(module.pd, 'read_csv', Mock(return_value=df))
+    monkeypatch.setattr(module, 'validate_dataframe', Mock(return_value=df))
+    mocks['train_test_split'].return_value = (df.iloc[:2], df.iloc[2:])
+    features = pd.DataFrame({'lag1': [0.0, 1.0, 2.0]}, index=df.index)
+    preprocessor = Mock()
+    preprocessor.fit_transform.return_value = (features, df.Weekly_Sales)
+    mocks['get_preprocessor'].return_value = preprocessor
+    model = Mock()
+    model.predict.return_value = np.array([2.0])
+    mocks['train_model'].return_value = model
+    mocks['run_time_series_cv'].return_value = {'avg_mae': 1.0}
+    mocks['evaluate_model'].return_value = {'mae': 1.0}
+    mocks['analyze_prediction_outliers'].return_value = {'report_path': 'not-written.csv'}
+
+    kwargs = {'model_type': 'xgboost'} if explicit_family else {}
+    result = module.run_training_pipeline('synthetic-unused.csv', **kwargs)
+
+    assert result == {
+        'model': model, 'model_type': 'xgboost', 'metrics': {'mae': 1.0},
+        'cv_results': {'avg_mae': 1.0},
+        'outlier_results': {'report_path': 'not-written.csv'},
+    }
+    mocks['get_preprocessor'].assert_called_once_with('xgboost')
+    mocks['train_model'].assert_called_once()
+    assert mocks['train_model'].call_args.kwargs['model_type'] == 'xgboost'
+    mocks['run_time_series_cv'].assert_called_once()
+    assert mocks['run_time_series_cv'].call_args.kwargs['model_class'] is mocks['XGBRegressor']
+    model.predict.assert_called_once()
+    mocks['evaluate_model'].assert_called_once()
+    mocks['analyze_prediction_outliers'].assert_called_once()
+    for name in ('log_model_to_mlflow', 'register_model',
+                 'promote_model_to_production', 'ProductionArtifactSync'):
+        mocks[name].assert_not_called()

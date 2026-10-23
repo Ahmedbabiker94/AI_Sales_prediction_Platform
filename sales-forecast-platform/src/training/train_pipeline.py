@@ -1,48 +1,16 @@
+"""Explicit legacy training only; no tracking, registration, promotion or sync.
+
+This remains the legacy preprocessing/CV path, not the canonical D1/D2 trainer.
+Calling it can fit a model and write the existing local outlier report. Importing
+it does neither. Production lifecycle operations must be invoked separately.
+"""
 import pandas as pd
 import numpy as np
-
-from xgboost import XGBRegressor
-
-from src.monitoring.outlier_analysis import (
-    analyze_prediction_outliers
-)
 
 from src.pipelines.data_validation import (
     validate_dataframe
 )
 
-from src.data.splitter import (
-    train_test_split
-)
-
-from src.training.trainer import (
-    train_model
-)
-
-from src.training.evaluator import (
-    evaluate_model
-)
-
-from src.training.cross_validation import (
-    run_time_series_cv
-)
-
-from src.preprocessing.preprocessing_factory import (
-    get_preprocessor
-)
-
-from src.ml.model_registry import (
-    register_model,
-    promote_model_to_production
-)
-
-from src.ml.mlflow_logger import (
-    log_model_to_mlflow
-)
-
-from src.deployment.production_artifact_sync import (
-    ProductionArtifactSync
-)
 
 def clean_dataframe(df):
 
@@ -80,6 +48,14 @@ def run_training_pipeline(
     model_type: str = "xgboost"
 
 ):
+    """Train supported legacy XGBoost explicitly, returning unregistered results.
+
+    Unsupported families reject before data access or training imports. No
+    registration, stage/alias change, production-pointer write or sync is part
+    of this entry point. The existing local outlier-report behavior is retained.
+    """
+    if type(model_type) is not str or model_type != "xgboost":
+        raise ValueError("unsupported legacy training model family; only xgboost is implemented")
 
     print("Loading data...")
 
@@ -91,6 +67,16 @@ def run_training_pipeline(
 
     # Admission must finish before splitting, preprocessing, or training side effects.
     validate_dataframe(df)
+
+    # Defer training dependencies until explicit invocation and admission. In
+    # particular, module import must not initialize registry or database clients.
+    from xgboost import XGBRegressor
+    from src.monitoring.outlier_analysis import analyze_prediction_outliers
+    from src.data.splitter import train_test_split
+    from src.training.trainer import train_model
+    from src.training.evaluator import evaluate_model
+    from src.training.cross_validation import run_time_series_cv
+    from src.preprocessing.preprocessing_factory import get_preprocessor
 
     print(
         "Splitting data chronologically..."
@@ -195,47 +181,13 @@ def run_training_pipeline(
        )
       )
 
-    run_id = log_model_to_mlflow(
-        model=model,
-        metrics=metrics,
-        model_type=model_type,
-        outlier_report_path=(
-            outlier_results["report_path"]
-        )
-    )
-    print(
-        f"MLflow Run ID: {run_id}"
-    )
-
-    version = register_model(
-        run_id
-    )
-
-    print(
-        f"Registered model version: {version}"
-    )
-
-    promote_model_to_production(
-        version
-    )
-
-    sync_result = (
-        ProductionArtifactSync()
-        .sync()
-    )
-
-    print(
-        "Production artifact synchronized:"
-    )
-
-    print(
-        sync_result
-    )
-
-    print(
-        f"Model version {version} is now @production"
-    )
-
     print(
         "Training pipeline completed."
     )
+    return {
+        "model": model,
+        "model_type": model_type,
+        "metrics": metrics,
+        "cv_results": cv_results,
+        "outlier_results": outlier_results,
+    }
