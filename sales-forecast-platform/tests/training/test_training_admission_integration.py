@@ -16,7 +16,7 @@ from src.data.processing.training_admission import TrainingAdmissionError
 def pipeline(monkeypatch):
     dependencies = {
         'xgboost': ['XGBRegressor'],
-        'src.monitoring.outlier_analysis': ['analyze_prediction_outliers'],
+        'src.monitoring.outlier_analysis': ['export_outlier_report'],
         'src.data.splitter': ['train_test_split'],
         'src.training.trainer': ['train_model'],
         'src.training.evaluator': ['evaluate_model'],
@@ -172,7 +172,6 @@ def test_explicit_training_returns_without_tracking_registration_or_production_w
     mocks['train_model'].return_value = model
     mocks['run_time_series_cv'].return_value = {'avg_mae': 1.0}
     mocks['evaluate_model'].return_value = {'mae': 1.0}
-    mocks['analyze_prediction_outliers'].return_value = {'report_path': 'not-written.csv'}
 
     kwargs = {'model_type': 'xgboost'} if explicit_family else {}
     result = module.run_training_pipeline('synthetic-unused.csv', **kwargs)
@@ -180,7 +179,7 @@ def test_explicit_training_returns_without_tracking_registration_or_production_w
     assert result == {
         'model': model, 'model_type': 'xgboost', 'metrics': {'mae': 1.0},
         'cv_results': {'avg_mae': 1.0},
-        'outlier_results': {'report_path': 'not-written.csv'},
+        'outlier_results': {'status': 'DISABLED'},
     }
     mocks['get_preprocessor'].assert_called_once_with('xgboost')
     mocks['train_model'].assert_called_once()
@@ -189,7 +188,7 @@ def test_explicit_training_returns_without_tracking_registration_or_production_w
     assert mocks['run_time_series_cv'].call_args.kwargs['model_class'] is mocks['XGBRegressor']
     model.predict.assert_called_once()
     mocks['evaluate_model'].assert_called_once()
-    mocks['analyze_prediction_outliers'].assert_called_once()
+    mocks['export_outlier_report'].assert_not_called()
     for name in ('log_model_to_mlflow', 'register_model',
                  'promote_model_to_production', 'ProductionArtifactSync'):
         mocks[name].assert_not_called()

@@ -97,3 +97,32 @@ def test_compatibility_command_rejects_unsupported_families(monkeypatch, family)
         command.main(['synthetic-unused.csv', '--model-type', family])
     assert exc.value.code == 2
     fake.run_training_pipeline.assert_not_called()
+
+
+@pytest.mark.parametrize('overwrite', [False, True])
+def test_compatibility_command_explicit_report_options(monkeypatch, tmp_path, overwrite):
+    from src.training import test_training_pipeline as command
+    from src.monitoring.outlier_analysis import OutlierReportOptions
+    fake = ModuleType('src.training.train_pipeline')
+    fake.run_training_pipeline = Mock(return_value={'model': 'fake'})
+    monkeypatch.setitem(sys.modules, fake.__name__, fake)
+    path = str(tmp_path / 'report.csv')
+    argv = ['synthetic-unused.csv', '--outlier-report', path]
+    if overwrite:
+        argv.append('--overwrite-outlier-report')
+    assert command.main(argv) == {'model': 'fake'}
+    fake.run_training_pipeline.assert_called_once_with(
+        'synthetic-unused.csv', model_type='xgboost',
+        outlier_report=OutlierReportOptions(path, overwrite=overwrite))
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_compatibility_command_rejects_overwrite_without_report(monkeypatch):
+    from src.training import test_training_pipeline as command
+    fake = ModuleType('src.training.train_pipeline')
+    fake.run_training_pipeline = Mock()
+    monkeypatch.setitem(sys.modules, fake.__name__, fake)
+    with pytest.raises(SystemExit) as exc:
+        command.main(['synthetic-unused.csv', '--overwrite-outlier-report'])
+    assert exc.value.code == 2
+    fake.run_training_pipeline.assert_not_called()

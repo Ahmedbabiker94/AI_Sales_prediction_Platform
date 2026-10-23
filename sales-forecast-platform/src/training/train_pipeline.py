@@ -1,8 +1,10 @@
 """Explicit legacy training only; no tracking, registration, promotion or sync.
 
 This remains the legacy preprocessing/CV path, not the canonical D1/D2 trainer.
-Calling it can fit a model and write the existing local outlier report. Importing
-it does neither. Production lifecycle operations must be invoked separately.
+Calling it can fit a model. CSV reporting is opt-in; importing does neither.
+Production lifecycle operations must be invoked separately. Legacy combined-
+partition preprocessing/category leakage is deferred to M3; the legacy wrapper's
+save/load format mismatch is deferred to M6. This is not canonical acceptance.
 """
 import pandas as pd
 import numpy as np
@@ -45,14 +47,17 @@ def prepare_features(df):
 
 def run_training_pipeline(
     data_path: str,
-    model_type: str = "xgboost"
+    model_type: str = "xgboost",
+    *,
+    outlier_report=None,
 
 ):
     """Train supported legacy XGBoost explicitly, returning unregistered results.
 
     Unsupported families reject before data access or training imports. No
     registration, stage/alias change, production-pointer write or sync is part
-    of this entry point. The existing local outlier-report behavior is retained.
+    of this entry point. Pass OutlierReportOptions to opt into bounded CSV export.
+    Reporting errors are returned separately and do not discard the fitted model.
     """
     if type(model_type) is not str or model_type != "xgboost":
         raise ValueError("unsupported legacy training model family; only xgboost is implemented")
@@ -71,7 +76,6 @@ def run_training_pipeline(
     # Defer training dependencies until explicit invocation and admission. In
     # particular, module import must not initialize registry or database clients.
     from xgboost import XGBRegressor
-    from src.monitoring.outlier_analysis import analyze_prediction_outliers
     from src.data.splitter import train_test_split
     from src.training.trainer import train_model
     from src.training.evaluator import evaluate_model
@@ -171,15 +175,15 @@ def run_training_pipeline(
 
     #print(metrics)
 
-    print("Running outlier analysis...")
-
-    outlier_results = (
-       analyze_prediction_outliers(
-          y_true=y_test,
-          y_pred=y_pred,
-          original_df=test_df
-       )
-      )
+    outlier_results = {"status": "DISABLED"}
+    if outlier_report is not None:
+        try:
+            from src.monitoring.outlier_analysis import export_outlier_report
+            outlier_results = export_outlier_report(y_test, y_pred, test_df, outlier_report)
+        except Exception:
+            # No raw report/input/path or exception diagnostics escape here.
+            # Training succeeded even if report construction, I/O or cleanup failed.
+            outlier_results = {"status": "ERROR", "error": "outlier report export failed"}
 
     print(
         "Training pipeline completed."
