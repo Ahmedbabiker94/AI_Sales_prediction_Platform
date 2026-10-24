@@ -1542,3 +1542,100 @@ M4/M5 remain sequence/Transformer execution work. M6 owns actual model adapters,
 framework conversion enforcement, artifact packaging and legacy save/load
 integration. These declarations and detached values confer no model-use or
 production authority. Accepted D1/D2/D3 and M2 files/identities are unchanged.
+
+### M4 — canonical recurrent preprocessing (LSTM/GRU, controlled offline H1)
+
+`CanonicalRecurrentPreparationService` composes the accepted M3 canonical
+preparation service. Repository capture, publication-purpose authorization,
+availability verification, category fitting and feature formulas remain owned by
+the accepted provider/temporal executor. M4 neither reads a second source nor
+implements another feature pipeline. Its intermediate M3 tabular buffers contain
+numeric canonical features; they do not imply an XGBoost model or prediction.
+The final representation explicitly declares `model_family="lstm"` or `"gru"`.
+No model framework, estimator, registration or production operation is invoked.
+
+```python
+request = RecurrentPreparationRequest(
+    model_family="lstm", fold_id="fold-1", origins=approved_sample_origins,
+    feature_names=("location", "lag1"),
+    window=dict(lookback=3, window=3, stride=1,
+                past_offsets=(-3, -2, -1), padding="left"),
+    tensor_dtype="float64", scaling="standard_v1", missing="reject")
+prepared = CanonicalRecurrentPreparationService(tabular_service).prepare(
+    original_plan, original_configuration, request)
+output = prepared.outputs[0]
+state_json = output.state.canonical_json
+array = output.tensor  # a new independent Batch x Time x Features NumPy array
+```
+
+Origins must be explicitly selected from the original H1 plan. The canonical
+feature at each past slot t was calculated as-of t, not using target actuals at t
+or future observations at O. A window slot is fixed at O + its declared offset.
+M2 stride means spacing between slots, not example-generation stride. Windows
+are keyed by organization/series and cannot cross declared Store/Department or
+other series dimensions. Category vocabularies remain the original train-prefix
+state; category codes are converted exactly and are never standardized.
+
+The source feature grid consists of the original plan's prepared origins. M4
+does not silently invent earlier feature rows or execute state before categorical
+cutoff C. Callers must provide sufficient declared warm-up origins and select
+sample origins accordingly. Entirely padded windows reject. Missing leading or
+trailing slots use the declared padding side without moving observations to
+other temporal positions. Interior or opposite-side gaps require explicit
+`missing="mask"`; they remain missing time steps, not padding or genuine zero.
+Sequence length counts non-padding positions, including explicitly masked
+interior time steps. Masks use M2's True=missing/padding convention. Fill is an
+explicit finite value applied after normalization, and never enters scaler fit.
+
+`RecurrentPreprocessingState` v1 serializes the complete original M3 state,
+request/ordered feature schema, exact training-row evidence digest, per-feature
+counts, and finite binary64 centers/scales. Fitting requires complete original
+training-origin/series coverage. The service passes only training feature
+buffers, and the fitter excludes non-training buffers before touching their
+numeric payloads. No labels or overlapping-window duplicates enter statistics.
+Parameters are pooled within the declared fold/organization training scope,
+never across organizations. Held-out rows never contribute to statistics.
+
+Supported scaling is `identity_v1` or `standard_v1`. Standard scaling computes
+population mean and variance using exact rational interpretations of the
+captured binary64 values, then stores binary64 mean and square-root scale.
+Normalization uses the versioned binary64 `(value-center)/scale` policy. Exact
+zero variance explicitly uses scale 1; variance underflow/overflow or nonfinite
+results reject. These are numeric preprocessing parameters, not model weights.
+All categorical columns retain center 0/scale 1. All-missing training features
+reject. Boolean features are unsupported in the homogeneous floating tensor;
+select numeric/categorical fields explicitly rather than implicitly coerce them.
+
+A separately bound M2 `ScalerStateReference` names the actual serialized M4
+state and original plan/M/canonical schema/state. Output validation requires
+that exact reference, dtype, window, positions, masks, feature order and values.
+M3's scaler=None-only policy is unchanged. Float32 is STRICT_EXACT conversion of
+computed values, including fill: typical normalized fractions may reject.
+Callers can select binary64 or exactly representable identity-scaled float32;
+M4 never rounds to satisfy float32 and does not relax D2's numeric policy.
+
+`FrozenRecurrentPreprocessor(loaded_state).transform(feature_batches)` is a pure
+load-only kernel and has no fit operation. The owning provider/service must
+supply authenticated canonical feature buffers. It does not capture history or
+labels; reconstructed declarations, state digests and buffers grant no model or
+publication authority. Inference can use label-free M3 frozen feature outputs
+for origins already approved in the original plan. Runtime capture/composition
+is not introduced here. The preparation service returns separately authorized
+targets for only the selected sample grid; neither fitter nor kernel receives
+that target collection.
+
+Outputs serialize deterministically and bind a new preparation identity to the
+original source preparation plus ordered M4 output identities. Public arrays are
+copies; frozen objects contain immutable scalar tuples. Aggregate cells, source
+representations and output bytes are bounded; each output must fit the inherited
+1 MiB JSON ingress limit, otherwise preparation rejects. Cancellation and elapsed
+checks surround bounded work; they are cooperative, not hard CPU/RSS isolation.
+As in M3, complete immutable storage is read before origin filtering: future
+physical dtype can cause safe admission rejection, while accepted earlier
+sequence values remain independent of future actuals.
+
+M5 owns Transformer stream execution. M6 owns recurrent model adapters/training,
+model/native precision policy and artifact integration. Higher-horizon real
+execution requires an explicit extension of the existing H1 foundation; M4 does
+not reinterpret H1 as H2/H3. Phase 7 runtime migration and production lifecycle
+remain separate. Existing D1/D2/D3 and M1/M2/M3 source and identities are unchanged.
