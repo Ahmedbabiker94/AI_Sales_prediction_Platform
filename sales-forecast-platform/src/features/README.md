@@ -1337,3 +1337,119 @@ complete C API interception: direct legacy calls and the unlisted custom-trainin
 public `Booster.boost` calls are guarded; saved custom-training implementations
 are not covered by that statement. The controlled acceptance scenario uses the
 existing standard training and CPU prediction paths.
+
+## Phase 5/6 M2 — versioned model representation declarations
+
+`src/data/contracts/model_representation.py` adds a separate `1.0` representation
+family. It does not extend synthetic-v1 capabilities, D1/D2 manifests or D3
+execution contracts. Existing services do not automatically accept these types.
+All roots have `status="DECLARATION_ONLY"`; neither a declaration nor its digest
+is fitting, model-use, publication-read or evaluation permission.
+
+The contract reuses the accepted guarded D3 declaration base (including its fixed
+`EvaluationDeclarationError` diagnostics), `TemporalPreparationPlan`, forecast
+point fields, `FeatureState`, `FeatureSchemaCompatibility`, canonical JSON and
+canonical calendar arithmetic. It does not call the standalone configuration
+helper on raw input, fit feature/scaler state, transform observations, read labels,
+import model frameworks or access operational services.
+
+The three roots are:
+
+* `TabularRepresentation`: `(batch, features)`, explicit ordered `InputFeature`
+  declarations, shape, missing mask and latest input availability per example.
+* `RecurrentRepresentation`: `(batch, time, features)`, homogeneous float32 or
+  float64 dtype, window, lengths, padding/missing masks and availability per slot.
+* `TransformerRepresentation`: the recurrent fields describe the `past_observed`
+  stream; separate `static` and `known_future` schemas, axes, shapes, masks and
+  availability describe the other streams. Static and future groups may be
+  explicitly zero-width. Future offsets must cover `0..H-1`. Each future feature
+  must match an original canonical `known_in_advance` or `external_forecast` rule
+  and carry an opaque evidence identity. Actual release verification remains an
+  owner/provider responsibility, including external-forecast authorization.
+
+`RepresentationBinding` retains the original full plan, selected fold/partition,
+canonical state/schema and historical revision/evidence identities. Every batch
+example carries a complete ordered horizon grid of `RepresentationPoint`s.
+Organization/series/origin ordering, partition membership, calendar alignment,
+measurement/dimension scope and exact target intervals are checked. Multi-horizon
+metadata requires the original plan's existing `planning_only` capability; it
+never enables multi-horizon D1/D2 training or D3 execution.
+
+Tensor roots require a `ScalerStateReference`, even for an explicit identity
+scaler. It binds training-only partition/origins, original plan/fold, model-fit
+cutoff, organization scope and canonical state/schema identities. Policy names
+`identity_v1`, `standard_v1` and `minmax_v1` are declarations, not implementations
+or proof that parameters were fitted correctly. No fitted parameter payloads or
+input/target tensor values are stored in these contracts.
+
+Window `stride` means sampling historical calendar periods, not spacing training
+examples. `lookback = 1 + (window - 1) * stride`; offsets run from `-lookback` to
+`-1`. They describe fixed slots relative to each origin. Left/right padding marks
+absent slots without shifting other slots' declared times. True means padding or
+missing. Padding cells must all be missing; missing non-padding cells require an
+explicit feature `missing="mask"` policy. All-present-cell availability claims
+must be aware and no later than the origin. A wholly absent slot has no release
+claim. Availability is the latest release among present cells, not an attestation.
+
+Feature dtype/numeric policies must agree. Categories explicitly reference the
+original vocabulary, Boolean-to-numeric coercion is disallowed, and float-to-int
+coercion is not implied. Fill values are explicit finite Python floats; float32
+fills must be exactly representable. The default is `0.0`; signed zero survives
+serialization. Actual buffer finiteness, representability, values, alignment and
+mask truth must be verified by M3–M5; M2 cannot establish them from metadata.
+
+Canonical use, with already owned/validated foundation objects:
+
+```python
+from src.data.contracts.model_representation import (
+    RepresentationBinding, RepresentationPoint, InputFeature, OrderedFeatures,
+    TabularRepresentation, validate_representation, require_compatible,
+)
+
+binding = RepresentationBinding(
+    plan=original_plan, fold_id="fold-1", partition="validation",
+    canonical_schema=original_descriptor, canonical_state=original_state,
+    historical_revision=owned_history_revision,
+    historical_evidence_digest=owned_history_evidence_digest,
+)
+point = RepresentationPoint(**approved_h1_scope.model_dump())
+representation = TabularRepresentation(
+    binding=binding, samples=((point,),),
+    feature_schema=OrderedFeatures(features=(InputFeature(
+        name="lag1", dtype="float32", numeric_policy="strict_exact_float32_v1",
+    ),)),
+    shape=(1, 1), missing_mask=((False,),), available_at=(point.forecast_origin,),
+)
+restored = validate_representation(representation.model_dump_json())
+assert restored.representation_id == representation.representation_id
+assert require_compatible(representation, restored) == representation.compatibility_id
+```
+
+`representation_id` hashes the full canonical declaration, including batch and
+capture metadata. `canonical_json` and UTF-8 `canonical_bytes` use existing sorted
+canonical JSON; Pydantic `model_dump_json()` remains a supported round-trip wire
+format but is not the mapping-order-independent canonical byte API.
+`compatibility_id` pins family/version, ordered schemas,
+window/dtype/policies, original plan/fold and frozen/scaler state, excluding batch
+origins, lengths, masks, releases and history revision. It therefore proves
+structural compatibility only, not matching input data or authority.
+
+Supported untrusted ingress is `validate_representation()` (dict, JSON or a model
+that is serialized/revalidated) and the inherited guarded constructors/validation
+methods. Unknown fields reject. Global `strict` overrides are unsupported rather
+than permitting callers to weaken new strict fields or rewrite foundation wire
+semantics. Complex `model_validate_strings` inputs retain Pydantic's limitations;
+JSON is the round-trip wire format. Raw compiled validators, TypeAdapter,
+model_construct/model_copy and deprecated parse APIs are not canonical ingress.
+These boundaries are process-local validation, not a hostile-Python sandbox.
+
+Declaration limits are 32 examples, 64 features per stream, 512 historical slots,
+4096 lookback periods, 65,536 mask cells per stream and 1 MiB serialized metadata.
+They are conservative validation bounds, not runtime admission or hard CPU/RSS
+limits. Feature count is model-specific; no new universal 32-feature schema exists.
+
+M3–M5 still need explicit execution decisions: sample-generation stride, scaler
+parameter serialization and per-feature/group scaling, supported tensor backends,
+actual missing-value filling, category handling, trusted buffer/release checking,
+and any versioned numeric policy needed after scaling. M2 does not relax accepted
+D2 exact-float32 behavior, choose model architectures or implement these algorithms.
