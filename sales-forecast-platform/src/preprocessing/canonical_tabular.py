@@ -97,6 +97,12 @@ def checked_cell(value, feature, missing):
             raise ValueError('numeric range exceeded')
 
 
+def _require_unscaled(representation):
+    # M2 can declare scalers; M3 executes none, including identity_v1 references.
+    if representation.binding.scaler is not None:
+        _reject_declaration()
+
+
 class TabularOutput(RepresentationContract):
     """Actual detached values, bound to the complete M2 declaration and M3 state."""
     version: Literal['1.0'] = '1.0'
@@ -108,6 +114,7 @@ class TabularOutput(RepresentationContract):
     @model_validator(mode='after')
     def actual(self):
         r, state = self.representation, self.state
+        _require_unscaled(r)
         b = r.binding
         if (b.plan != state.plan or b.fold_id != state.fold_id or b.canonical_schema != state.canonical_schema
                 or b.canonical_state != state.canonical_state or r.feature_schema != state.feature_schema
@@ -139,6 +146,7 @@ def bind_output(state, representation, matrix, model_family):
     try:
         state = TabularPreprocessingState.model_validate_json(state.canonical_json)
         r = TabularRepresentation.model_validate_json(representation.canonical_json)
+        _require_unscaled(r)
         if type(matrix) is not pd.DataFrame or tuple(matrix.columns) != tuple(f.name for f in r.feature_schema.features):
             raise ValueError()
         expected = tuple((p[0].organization_id, p[0].series_id, pd.Timestamp(p[0].target_period)) for p in r.samples)
@@ -169,6 +177,7 @@ class FrozenTabularPreprocessor:
     def transform(self, observations, requests, representation, *, model_family='xgboost', exogenous=None):
         try:
             r = TabularRepresentation.model_validate_json(representation.canonical_json)
+            _require_unscaled(r)
             state = self.state
             if (r.binding.canonical_state != state.canonical_state or r.binding.canonical_schema != state.canonical_schema
                     or r.binding.plan != state.plan or r.binding.fold_id != state.fold_id): raise ValueError()

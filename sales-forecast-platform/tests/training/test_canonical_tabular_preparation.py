@@ -317,3 +317,87 @@ def test_coherently_rewritten_state_metadata_is_not_calendar_compatible(bundle,f
     changed=FeatureState.model_validate(raw['canonical_state'])
     raw['canonical_schema']['fitted_state_id']=changed.state_id
     with pytest.raises(EvaluationDeclarationError):TabularPreprocessingState.model_validate(raw)
+
+
+def scaler_declaration(output, policy):
+    from src.data.contracts.backtesting import identity
+    from src.data.contracts.model_representation import TabularRepresentation
+    fold=output.state.plan.folds[0]
+    raw=output.representation.model_dump()
+    raw['binding']['scaler']=dict(policy=policy,state_digest='1'*64,
+        training_plan_digest=output.state.plan.digest,fold_id=fold.fold_id,
+        training_origins_digest=identity([o.isoformat() for o in fold.training_origins]),
+        training_cutoff=fold.model_fit_cutoff,canonical_state_id=output.state.canonical_state.state_id,
+        source_schema_id=output.state.canonical_schema.schema_id,
+        organization_ids=output.state.canonical_state.organization_ids)
+    # Deliberately valid M2 metadata: only M3 execution must reject it.
+    declaration=TabularRepresentation.model_validate(raw)
+    assert declaration.binding.scaler.policy==policy
+    return declaration
+
+
+@pytest.mark.parametrize('policy',['standard_v1','minmax_v1','identity_v1'])
+def test_all_scaler_references_reject_at_every_m3_boundary(bundle,monkeypatch,policy,capsys,caplog):
+    import json
+    import uuid
+    output=prepare(bundle()).outputs[0]
+    declaration=scaler_declaration(output,policy)
+    original_bytes=output.canonical_bytes;original_state=output.state.canonical_bytes
+    raw=output.model_dump();raw['representation']=declaration.model_dump()
+    wire=json.dumps(output.model_dump(mode='json') | {'representation':declaration.model_dump(mode='json')})
+    kernel=FrozenTabularPreprocessor(output.state)
+    matrix=output.matrix;before=matrix.copy(deep=True)
+    cells=Mock(side_effect=AssertionError('no row extraction for unsupported scaling'))
+    monkeypatch.setattr(matrix,'itertuples',cells)
+    native_features=Mock(side_effect=AssertionError('no execution for unsupported scaling'))
+    monkeypatch.setattr(CanonicalFeaturePipeline,'prepare_inference',native_features)
+    class NoBuffers:
+        def __getattribute__(self,name):
+            accesses.append(name)
+            raise AssertionError('no input access for unsupported scaling')
+    accesses=[]
+    operations=(lambda:TabularOutput(**raw), lambda:TabularOutput.model_validate(raw),
+        lambda:TabularOutput.model_validate_json(wire),
+        lambda:bind_output(output.state,declaration,matrix,'xgboost'),
+        lambda:kernel.transform(NoBuffers(),NoBuffers(),declaration))
+    secret='SCALER_CONTEXT_'+uuid.uuid4().hex
+    messages=[]
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter('always')
+        for operation in operations:
+            try:raise RuntimeError(secret)
+            except RuntimeError:
+                with pytest.raises(EvaluationDeclarationError) as caught:operation()
+                error=caught.value
+                assert error.__context__ is None and error.__cause__ is None
+                diagnostics=str(error)+repr(error.args)+repr(error)+''.join(traceback.format_exception(error))
+                assert secret not in diagnostics
+                messages.append(str(error))
+    captured=capsys.readouterr()
+    assert messages==['invalid non-authoritative evaluation declaration']*len(operations)
+    assert not seen and secret not in captured.out+captured.err+caplog.text
+    cells.assert_not_called();native_features.assert_not_called();assert not accesses
+    pd.testing.assert_frame_equal(matrix,before)
+    assert output.canonical_bytes==original_bytes and output.state.canonical_bytes==original_state
+    assert output.representation.binding.scaler is None
+    # Failed attempts cannot poison or mutate the original valid output.
+    restored=TabularOutput.model_validate_json(original_bytes)
+    assert restored.output_id==output.output_id and restored.matrix.equals(before)
+
+
+def test_scaler_none_frozen_training_inference_identity_remains_unchanged(bundle,monkeypatch):
+    inputs=[];original=CanonicalFeaturePipeline.prepare_training
+    def capture(self,history,requests,state,**kwargs):
+        inputs.append((history.copy(),requests.copy(),kwargs['exogenous']))
+        return original(self,history,requests,state,**kwargs)
+    monkeypatch.setattr(CanonicalFeaturePipeline,'prepare_training',capture)
+    result=prepare(bundle(exo=True))
+    monkeypatch.setattr(CanonicalFeaturePipeline,'fit_state',Mock(side_effect=AssertionError('no inference refit')))
+    for output,(history,requests,exogenous) in zip(result.outputs,inputs):
+        assert output.representation.binding.scaler is None
+        rebound=bind_output(output.state,output.representation,output.matrix,output.model_family)
+        inferred=FrozenTabularPreprocessor(output.state).transform(history,requests,output.representation,exogenous=exogenous)
+        assert output.values==rebound.values==inferred.values
+        assert output.canonical_bytes==rebound.canonical_bytes==inferred.canonical_bytes
+        assert output.output_id==rebound.output_id==inferred.output_id
+        assert require_compatible(output.representation,inferred.representation)==output.representation.compatibility_id
