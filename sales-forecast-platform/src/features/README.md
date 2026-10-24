@@ -1443,6 +1443,11 @@ JSON is the round-trip wire format. Raw compiled validators, TypeAdapter,
 model_construct/model_copy and deprecated parse APIs are not canonical ingress.
 These boundaries are process-local validation, not a hostile-Python sandbox.
 
+All M2 JSON ingress shares a bounded strict UTF-8 preflight for strings, bytes and
+bytearrays. Duplicate object keys (including escaped-equivalent keys) reject at
+every depth before family dispatch or Pydantic validation. Malformed JSON, invalid
+UTF-8 and nonstandard numeric constants reject through the same sanitized boundary.
+
 Declaration limits are 32 examples, 64 features per stream, 512 historical slots,
 4096 lookback periods, 65,536 mask cells per stream and 1 MiB serialized metadata.
 They are conservative validation bounds, not runtime admission or hard CPU/RSS

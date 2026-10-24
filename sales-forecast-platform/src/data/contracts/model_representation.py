@@ -4,6 +4,7 @@ References, masks and availability claims are structural metadata, not attested
 values or authority. Future providers/services must verify them against owned
 buffers, releases and original fitted state. Existing v1 identities are untouched.
 """
+import json
 import math
 import struct
 from datetime import datetime, timezone
@@ -19,6 +20,40 @@ from .model_evaluation import _Declaration, _declaration_identity
 from .temporal_preparation import TemporalPreparationPlan, _exact_timestamp
 from src.features.canonical_feature_pipeline import CanonicalFeaturePipeline
 from src.features.feature_schema_compatibility import FeatureSchemaCompatibility
+
+
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate JSON object key')
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(_):
+    raise ValueError('invalid JSON numeric constant')
+
+
+def _strict_json(value):
+    """One bounded UTF-8 preflight, including objects inside nested arrays.
+
+    Keep the original text for Pydantic's existing JSON type/number semantics;
+    never round-trip through a Python dictionary before typed validation.
+    """
+    try:
+        if type(value) not in (str, bytes, bytearray):
+            raise ValueError()
+        text = value if type(value) is str else value.decode('utf-8', errors='strict')
+        if len(text.encode('utf-8')) > 1024 * 1024:
+            raise ValueError()
+        decoded = json.loads(text, object_pairs_hook=_unique_json_object,
+                             parse_constant=_reject_json_constant)
+        return text, decoded
+    except Exception:
+        pass
+    from .model_evaluation import _reject_declaration
+    _reject_declaration()
 
 
 def _timestamp(value):
@@ -62,9 +97,10 @@ class RepresentationContract(_Declaration):
         return super().model_validate(*args, **kwargs)
 
     @classmethod
-    def model_validate_json(cls, *args, **kwargs):
+    def model_validate_json(cls, json_data, *args, **kwargs):
         cls._no_validation_override(kwargs)
-        return super().model_validate_json(*args, **kwargs)
+        text, _ = _strict_json(json_data)
+        return super().model_validate_json(text, *args, **kwargs)
 
     @classmethod
     def model_validate_strings(cls, *args, **kwargs):
@@ -476,14 +512,12 @@ def validate_representation(value):
     try:
         if isinstance(value, _Representation):
             value = value.model_dump_json(warnings='error')
-        if type(value) in (str, bytes):
-            import json
-            if len(value.encode('utf-8') if type(value) is str else value) > 1024*1024:
-                raise ValueError()
-            family = json.loads(value).get('family')
+        if type(value) in (str, bytes, bytearray):
+            text, decoded = _strict_json(value)
+            family = decoded.get('family')
             cls = {'tabular': TabularRepresentation, 'recurrent': RecurrentRepresentation,
                    'transformer': TransformerRepresentation}[family]
-            return cls.model_validate_json(value)
+            return cls.model_validate_json(text)
         if type(value) is dict:
             cls = {'tabular': TabularRepresentation, 'recurrent': RecurrentRepresentation,
                    'transformer': TransformerRepresentation}[value.get('family')]

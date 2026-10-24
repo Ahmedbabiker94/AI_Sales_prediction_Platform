@@ -465,3 +465,110 @@ def test_nested_malformed_foundation_models_cannot_emit_serializer_warnings(decl
     diagnostic = str(exc.value)+repr(exc.value)+repr(exc.value.args)+''.join(traceback.format_exception(exc.value))
     assert not seen and secret not in diagnostic+out.out+out.err+caplog.text
     assert exc.value.__context__ is None and exc.value.__cause__ is None
+
+
+def duplicate_wire(valid, fault):
+    wire = valid.canonical_json
+    if fault in ('version','shape','axes'):
+        value = {'version': '999.0', 'shape': [999,999], 'axes': ['features','batch']}[fault]
+        return '{' + json.dumps(fault) + ':' + json.dumps(value) + ',' + wire[1:]
+    if fault == 'numeric_policy':
+        needle = '"numeric_policy":"strict_exact_float32_v1"'
+        replacement = '"numeric_policy":"unsupported","numeric_policy":"strict_exact_float32_v1"'
+    elif fault == 'nested_object':
+        needle = '"historical_revision":"immutable-history-v1"'
+        replacement = '"historical_revision":"wrong","historical_revision":"immutable-history-v1"'
+    elif fault == 'nested_array':
+        needle = '"horizon_step":1'
+        replacement = '"horizon_step":999,"horizon_step":1'
+    elif fault == 'deep_parameters':
+        needle = '"offset":1'
+        replacement = '"offset":999,"offset":1'
+    else:
+        # Keys collide after JSON escape decoding, not merely raw-byte equality.
+        needle = '"numeric_policy":"strict_exact_float32_v1"'
+        replacement = '"numeric_policy":"unsupported","numeric_\\u0070olicy":"strict_exact_float32_v1"'
+    assert needle in wire
+    return wire.replace(needle,replacement,1)
+
+
+@pytest.mark.parametrize('family', ['tabular','recurrent','transformer'])
+@pytest.mark.parametrize('fault', ['version','shape','axes','numeric_policy','nested_object','nested_array','deep_parameters','escaped_key'])
+@pytest.mark.parametrize('entry', ['factory','direct'])
+def test_duplicate_keys_reject_recursively_before_pydantic(declarations, monkeypatch, family, fault, entry):
+    from src.data.contracts.model_evaluation import _Declaration
+    from unittest.mock import Mock
+    valid = validate_representation(declarations[family])
+    wire = duplicate_wire(valid,fault)
+    # A standard last-wins parser would produce the original accepted content.
+    assert json.loads(wire) == json.loads(valid.canonical_json)
+    called = Mock(side_effect=AssertionError('Pydantic must not receive duplicate-key JSON'))
+    monkeypatch.setattr(_Declaration, 'model_validate_json', classmethod(lambda cls,*a,**kw: called(*a,**kw)))
+    operation = validate_representation if entry == 'factory' else type(valid).model_validate_json
+    with pytest.raises(EvaluationDeclarationError): operation(wire)
+    called.assert_not_called()
+
+
+@pytest.mark.parametrize('contract', ['feature','features','window','masks','scaler','binding'])
+@pytest.mark.parametrize('encoding', ['str','bytes','bytearray'])
+def test_nested_m2_direct_json_ingress_rejects_duplicates(declarations, contract, encoding):
+    root = validate_representation(declarations['recurrent'])
+    nested = {'feature':root.feature_schema.features[0], 'features':root.feature_schema,
+              'window':root.window, 'masks':root.masks, 'scaler':root.binding.scaler,
+              'binding':root.binding}[contract]
+    wire = nested.canonical_json
+    key, value = next(iter(json.loads(wire).items()))
+    bad = '{' + json.dumps(key) + ':' + json.dumps(value) + ',' + wire[1:]
+    def encode(text):
+        return text if encoding == 'str' else text.encode() if encoding == 'bytes' else bytearray(text.encode())
+    restored = type(nested).model_validate_json(json_data=encode(wire))
+    assert restored.canonical_bytes == nested.canonical_bytes
+    with pytest.raises(EvaluationDeclarationError): type(nested).model_validate_json(json_data=encode(bad))
+
+
+@pytest.mark.parametrize('family', ['tabular','recurrent','transformer'])
+@pytest.mark.parametrize('encoding', ['str','bytes','bytearray'])
+def test_strict_json_preserves_valid_identity_and_compatibility(declarations, family, encoding):
+    original = validate_representation(declarations[family])
+    wire = original.canonical_json
+    encoded = wire if encoding == 'str' else wire.encode() if encoding == 'bytes' else bytearray(wire.encode())
+    factory = validate_representation(encoded)
+    direct = type(original).model_validate_json(json_data=encoded)
+    assert original.canonical_bytes == factory.canonical_bytes == direct.canonical_bytes
+    assert original.representation_id == factory.representation_id == direct.representation_id
+    assert require_compatible(original,factory) == require_compatible(original,direct) == original.compatibility_id
+
+
+@pytest.mark.parametrize('entry', ['factory','direct','nested'])
+@pytest.mark.parametrize('fault', ['duplicate','syntax','utf8','utf16','surrogate','escaped_surrogate','constant'])
+def test_invalid_json_encoding_and_duplicates_have_sanitized_deterministic_errors(
+    declarations, capsys, caplog, entry, fault,
+):
+    valid = validate_representation(declarations['tabular'])
+    secret = 'JSON_SECRET_' + os.urandom(8).hex()
+    if fault == 'duplicate': payload = '{' + json.dumps(secret) + ':1,' + json.dumps(secret) + ':2}'
+    elif fault == 'syntax': payload = '{' + json.dumps(secret) + ':'
+    elif fault == 'utf8': payload = ('{"name":"'+secret+'"}').encode()+b'\xff'
+    elif fault == 'utf16': payload = ('{"name":"'+secret+'"}').encode('utf-16')
+    elif fault == 'surrogate': payload = '{"'+secret+'":"' + chr(0xD800) + '"}'
+    elif fault == 'escaped_surrogate': payload = '{"'+secret+'":"' + r'\ud800' + '"}'
+    else: payload = '{"'+secret+'":NaN}'
+    operation = (validate_representation if entry == 'factory' else
+                 type(valid).model_validate_json if entry == 'direct' else InputFeature.model_validate_json)
+    messages = []
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter('always')
+        for _ in range(2):
+            # Verify detachment even while a caller is handling a sensitive error.
+            try:
+                raise RuntimeError(secret)
+            except RuntimeError:
+                with pytest.raises(EvaluationDeclarationError) as caught: operation(payload)
+                error = caught.value
+                assert error.__context__ is None and error.__cause__ is None
+                diagnostic = str(error)+repr(error)+repr(error.args)+''.join(traceback.format_exception(error))
+                assert secret not in diagnostic
+                messages.append(str(error))
+    out = capsys.readouterr()
+    assert not seen and secret not in out.out+out.err+caplog.text
+    assert messages == ['invalid non-authoritative evaluation declaration']*2
