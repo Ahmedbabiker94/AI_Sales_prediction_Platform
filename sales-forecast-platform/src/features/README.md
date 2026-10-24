@@ -1458,3 +1458,87 @@ parameter serialization and per-feature/group scaling, supported tensor backends
 actual missing-value filling, category handling, trusted buffer/release checking,
 and any versioned numeric policy needed after scaling. M2 does not relax accepted
 D2 exact-float32 behavior, choose model architectures or implement these algorithms.
+
+
+### M3 — provider-backed frozen tabular preparation (local controlled offline)
+
+`CanonicalTabularPreparationService` composes the accepted
+`CanonicalTrainingPreparationService`, which already owns canonical provider
+capture, publication/availability authorization, per-fold calibration and
+origin-aware execution. It adds no SQL, capture protocol or model authority.
+`prepare(plan, configuration, model_family="xgboost", dtype="float64")` also
+supports the `lightgbm` representation family, without importing either model
+framework or implementing LightGBM training.
+
+Each `TabularOutput` contains immutable actual scalar rows and an unchanged M2
+`TabularRepresentation`. Its shape, exact organization/series/target index,
+ordered schema, masks and raw numeric identities are checked before dataframe
+conversion. Integer and Boolean identities remain explicit. Float32 conversion
+is STRICT_EXACT: nonrepresentable rolling calculations reject, never round.
+Float64 is a preparation policy, not a promise that a future model adapter will
+consume float64 internally. D2's existing strict float32 policy is unchanged.
+
+`TabularPreprocessingState` v1 stores the original temporal plan, fold,
+publication binding, canonical configuration/schema, actual original
+`FeatureState` (including vocabulary), and ordered M2 feature schema. State and
+output identities cover deterministic canonical JSON. No training labels or
+model artifacts enter state. Vocabulary is sorted and fitted only on the
+explicit calibration prefix ending at C, before every training origin. It is
+reused across training, validation, test and frozen inference. Unknown/missing
+categories follow the configuration's existing explicit reject/reserved-negative-
+code rules. Neither transform nor deserialization has a fit operation.
+
+`FrozenTabularPreprocessor(state).transform(history, requests, representation,
+model_family=..., exogenous=...)` is a pure kernel for trusted provider/service
+composition, not authenticated public history ingress. It validates the original
+state, exact request dimensions/grid and schema, selects origin-eligible history,
+and invokes the accepted canonical inference executor. Availability claims and
+M2 metadata are not authorization. Exogenous release evidence must be verified by
+the composing provider/service, as in temporal preparation. Inference is limited
+to H1 origins explicitly present in the original plan; arbitrary new horizons or
+future-origin plans are not silently manufactured. Provider-backed preparation
+still requires labels at each partition's authorized assessment cutoff; the
+load-only inference kernel does not read labels.
+
+`PreparedTabularPartitions.partition(name)` returns detached X/y and rejects
+implicit mixing of folds or organizations with different learned state. Services
+may iterate those states explicitly. Origin histories can include earlier
+held-out observations only after their real release at O (expanding historical
+backtesting), never the current target or unavailable future values. Complete
+immutable publication storage is captured before origin filtering; future
+physical dtype can still cause safe admission rejection. No future-storage
+admission-independence guarantee is added.
+
+The legacy `run_training_pipeline` now requires explicit `tabular_service`,
+`temporal_plan` and `feature_configuration` arguments. With this composition,
+the compatibility CSV path is never read. Raw-only CSV invocations retain M1
+quality admission before rejecting missing temporal provenance; passing that
+quality check alone no longer starts preprocessing or training. Raw TreePreprocessor
+fit/transform fails closed rather than concatenate partitions or recode an
+inference batch. Unsupported training families still reject before data access;
+training remains explicit, XGBoost-only and unregistered. The wrapper is not the
+owned D2 fitting authority. Row-index cross-validation is NOT_RUN: accepted
+training-label evidence is as-of M, not as-of invented intermediate CV origins.
+Operators must use explicit canonical temporal folds. New CV orchestration and
+model/pipeline artifact packaging belong to M6, not this preprocessing change.
+
+M1 reporting remains opt-in, allowlisted, bounded and separate from fitting.
+Canonical dimensions are not guessed to mean Store/Dept. Reporting additionally
+requires caller-supplied `report_context` with the exact test index and original
+report allowlisted columns; absent/incompatible context returns reporting ERROR
+without discarding the model. No registry, promotion or sync is invoked.
+
+Example (trusted composition has already configured provider and callbacks):
+
+```python
+tabular = CanonicalTabularPreparationService(canonical_preparation)
+partitions = tabular.prepare(plan, configuration, model_family="lightgbm")
+output = partitions.outputs[0]
+state_json = output.state.canonical_json
+matrix = output.matrix  # independent copy with explicit per-column dtypes
+```
+
+M4/M5 remain sequence/Transformer execution work. M6 owns actual model adapters,
+framework conversion enforcement, artifact packaging and legacy save/load
+integration. These declarations and detached values confer no model-use or
+production authority. Accepted D1/D2/D3 and M2 files/identities are unchanged.

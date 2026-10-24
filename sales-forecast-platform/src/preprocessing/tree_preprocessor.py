@@ -1,30 +1,14 @@
-from src.features.feature_pipeline import (
-    prepare_features,
-    prepare_inference_features
-)
+"""Legacy raw-frame preprocessing is fail-closed; use canonical tabular service.
 
-from src.preprocessing.base_preprocessor import (
-    BasePreprocessor
-)
+The prior implementation independently encoded inference categories and fitted
+combined partitions. It cannot establish feature availability from CSV values.
+"""
+from src.preprocessing.base_preprocessor import BasePreprocessor
 
-import pandas as pd
-
-from src.features.feature_pipeline import (
-    prepare_features,
-    prepare_inference_features
-)
 
 class TreePreprocessor(BasePreprocessor):
-
     def fit_transform(self, df):
-        return prepare_features(df)
+        raise ValueError("canonical temporal preparation required; raw tabular fitting is disabled")
 
     def transform(self, df):
-
-        df = df.copy()
-
-        df["Date"] = pd.to_datetime(
-            df["Date"]
-        )
-
-        return prepare_inference_features(df)
+        raise ValueError("original frozen canonical tabular state required")

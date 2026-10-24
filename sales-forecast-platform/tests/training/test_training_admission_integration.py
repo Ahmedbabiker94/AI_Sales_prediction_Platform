@@ -71,21 +71,13 @@ def test_allowed_targets_reach_preprocessor_unchanged(pipeline, monkeypatch, cap
     df['Weekly_Sales'] = [-10.5, 0.0, 42.0]
     original = df.copy(deep=True)
     monkeypatch.setattr(module.pd, 'read_csv', Mock(return_value=df))
-    mocks['train_test_split'].return_value = (df.iloc[:2], df.iloc[2:])
-    class ReachedPreprocessing(Exception): pass
-    preprocessor = Mock()
-    preprocessor.fit_transform.side_effect = ReachedPreprocessing
-    mocks['get_preprocessor'].return_value = preprocessor
-    with pytest.raises(ReachedPreprocessing):
+    with pytest.raises(ValueError,match='canonical tabular service'):
         module.run_training_pipeline('unused.csv')
     assert 'negative Weekly_Sales' in caplog.text
     detector.assert_called_once()
     evaluator.assert_called_once()
-    actual = preprocessor.fit_transform.call_args.args[0]
-    pd.testing.assert_series_equal(actual['Weekly_Sales'].sort_index(), original['Weekly_Sales'])
-    assert 'Returns' not in actual
-    for name in ['train_model','run_time_series_cv','log_model_to_mlflow','register_model','promote_model_to_production','ProductionArtifactSync']:
-        mocks[name].assert_not_called()
+    # Quality admission alone cannot establish a temporal/frozen-state scope.
+    for mock in mocks.values(): mock.assert_not_called()
     pd.testing.assert_frame_equal(df, original)
 
 
@@ -149,7 +141,7 @@ def test_unsupported_family_rejects_before_read_or_downstream_work(pipeline, mon
 
 
 @pytest.mark.parametrize('explicit_family', [False, True])
-def test_explicit_training_returns_without_tracking_registration_or_production_work(
+def test_raw_training_cannot_bypass_canonical_temporal_admission(
     pipeline, monkeypatch, explicit_family,
 ):
     module, mocks = pipeline
@@ -162,33 +154,9 @@ def test_explicit_training_returns_without_tracking_registration_or_production_w
     })
     monkeypatch.setattr(module.pd, 'read_csv', Mock(return_value=df))
     monkeypatch.setattr(module, 'validate_dataframe', Mock(return_value=df))
-    mocks['train_test_split'].return_value = (df.iloc[:2], df.iloc[2:])
-    features = pd.DataFrame({'lag1': [0.0, 1.0, 2.0]}, index=df.index)
-    preprocessor = Mock()
-    preprocessor.fit_transform.return_value = (features, df.Weekly_Sales)
-    mocks['get_preprocessor'].return_value = preprocessor
-    model = Mock()
-    model.predict.return_value = np.array([2.0])
-    mocks['train_model'].return_value = model
-    mocks['run_time_series_cv'].return_value = {'avg_mae': 1.0}
-    mocks['evaluate_model'].return_value = {'mae': 1.0}
-
     kwargs = {'model_type': 'xgboost'} if explicit_family else {}
-    result = module.run_training_pipeline('synthetic-unused.csv', **kwargs)
-
-    assert result == {
-        'model': model, 'model_type': 'xgboost', 'metrics': {'mae': 1.0},
-        'cv_results': {'avg_mae': 1.0},
-        'outlier_results': {'status': 'DISABLED'},
-    }
-    mocks['get_preprocessor'].assert_called_once_with('xgboost')
-    mocks['train_model'].assert_called_once()
-    assert mocks['train_model'].call_args.kwargs['model_type'] == 'xgboost'
-    mocks['run_time_series_cv'].assert_called_once()
-    assert mocks['run_time_series_cv'].call_args.kwargs['model_class'] is mocks['XGBRegressor']
-    model.predict.assert_called_once()
-    mocks['evaluate_model'].assert_called_once()
-    mocks['export_outlier_report'].assert_not_called()
-    for name in ('log_model_to_mlflow', 'register_model',
-                 'promote_model_to_production', 'ProductionArtifactSync'):
-        mocks[name].assert_not_called()
+    with pytest.raises(ValueError,match='canonical tabular service'):
+        module.run_training_pipeline('synthetic-unused.csv', **kwargs)
+    # Genuine orchestration with canonical providers and estimator stubs is in
+    # test_training_entrypoint_integration; raw self-authored frames fail closed.
+    for mock in mocks.values(): mock.assert_not_called()

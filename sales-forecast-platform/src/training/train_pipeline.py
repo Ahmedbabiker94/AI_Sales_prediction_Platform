@@ -1,9 +1,10 @@
 """Explicit legacy training only; no tracking, registration, promotion or sync.
 
-This remains the legacy preprocessing/CV path, not the canonical D1/D2 trainer.
+This is a compatibility training wrapper over canonical M3 preparation,
+not the accepted owned D2 trainer.
 Calling it can fit a model. CSV reporting is opt-in; importing does neither.
-Production lifecycle operations must be invoked separately. Legacy combined-
-partition preprocessing/category leakage is deferred to M3; the legacy wrapper's
+Production lifecycle operations must be invoked separately. Raw CSV training
+is disabled: callers must supply canonical temporal preparation. The wrapper's
 save/load format mismatch is deferred to M6. This is not canonical acceptance.
 """
 import pandas as pd
@@ -50,107 +51,51 @@ def run_training_pipeline(
     model_type: str = "xgboost",
     *,
     outlier_report=None,
+    tabular_service=None,
+    temporal_plan=None,
+    feature_configuration=None,
+    report_context=None,
 
 ):
     """Train supported legacy XGBoost explicitly, returning unregistered results.
 
+    With an explicit canonical service, the compatibility CSV argument is not
+    read. Raw-only invocations retain M1 quality admission, then fail closed:
+    quality admission alone does not establish temporal preprocessing evidence.
     Unsupported families reject before data access or training imports. No
     registration, stage/alias change, production-pointer write or sync is part
     of this entry point. Pass OutlierReportOptions to opt into bounded CSV export.
     Reporting errors are returned separately and do not discard the fitted model.
+    An explicit report_context with matching canonical row index is required;
+    canonical dimensions are never guessed to mean Store or Dept.
     """
     if type(model_type) is not str or model_type != "xgboost":
         raise ValueError("unsupported legacy training model family; only xgboost is implemented")
 
-    print("Loading data...")
+    # Preserve the M1 quality-admission boundary for legacy CSV invocations,
+    # but an admitted CSV alone cannot authorize leakage-safe preprocessing.
+    if tabular_service is None:
+        validate_dataframe(pd.read_csv(data_path))
 
-    df = pd.read_csv(
-        data_path
-    )
-
-    print("Validating data...")
-
-    # Admission must finish before splitting, preprocessing, or training side effects.
-    validate_dataframe(df)
-
-    # Defer training dependencies until explicit invocation and admission. In
-    # particular, module import must not initialize registry or database clients.
-    from xgboost import XGBRegressor
-    from src.data.splitter import train_test_split
+    # A raw CSV has no authenticated temporal origins, category calibration,
+    # release evidence, or frozen state. Do not guess these from target rows.
+    from src.services.canonical_tabular_preparation_service import CanonicalTabularPreparationService
+    if type(tabular_service) is not CanonicalTabularPreparationService:
+        raise ValueError("canonical tabular service, temporal plan and configuration required; raw CSV training is disabled")
+    prepared = tabular_service.prepare(temporal_plan, feature_configuration, model_family=model_type)
+    X_train, y_train = prepared.partition('training')
+    X_test, y_test = prepared.partition('test')
+    # Calibration is earlier than every training origin.
     from src.training.trainer import train_model
     from src.training.evaluator import evaluate_model
-    from src.training.cross_validation import run_time_series_cv
-    from src.preprocessing.preprocessing_factory import get_preprocessor
-
-    print(
-        "Splitting data chronologically..."
-    )
-
-    train_df, test_df = (
-        train_test_split(df)
-    )
-
-    print(
-    "Running feature engineering "
-        "with historical context..."
-    )
-
-    preprocessor = get_preprocessor(model_type)
-
-    # Keep the original indexes so we can separate
-    # train and test after feature engineering.
-    train_indices = train_df.index
-    test_indices = test_df.index
-
-    # Combine train and test chronologically so that
-    # test rows can use previous train/test observations
-    # for lag and rolling features.
-    combined_df = pd.concat(
-        [train_df, test_df]
-    ).sort_values(
-        by=["Store", "Dept", "Date"]
-    )
-
-    # Build all history-dependent features once.
-    X_all, y_all = preprocessor.fit_transform(
-        combined_df
-    )
-
-    # Separate train and test again using their original indexes.
-    X_train = X_all.loc[train_indices]
-    y_train = y_all.loc[train_indices]
-
-    X_test = X_all.loc[test_indices]
-    y_test = y_all.loc[test_indices]
-    print(
-        "Cleaning NaN and infinite values..."
-    )
-
-    train_df = clean_dataframe(
-        train_df
-    )
-
-    test_df = clean_dataframe(
-        test_df
-    )
-
-    print(
-        "Running TimeSeries "
-        "Cross Validation..."
-    )
-
-    cv_results = run_time_series_cv(
-        model_class=XGBRegressor,
-        X=X_train,
-        y=y_train,
-        n_splits=5
-    )
-
-    print(
-        "\nCross Validation Results:"
-    )
-
-    print(cv_results)
+    # A canonical result cannot be mislabeled as Store/Dept/Date CSV context.
+    test_df = report_context
+    if outlier_report is not None and (type(test_df) is not pd.DataFrame or not test_df.index.equals(X_test.index)):
+        test_df = None
+    # Do not invent earlier label-availability evidence for row-index CV.
+    # The plan attests training labels at M, not at each hypothetical CV origin.
+    # Operators prepare explicit temporal folds instead; no validation labels fit.
+    cv_results = {"status": "NOT_RUN", "reason": "use explicit canonical temporal folds"}
 
     print("Training model...")
 
@@ -171,14 +116,12 @@ def run_training_pipeline(
     )
     print(metrics)
 
-    #metrics = evaluate_model(model, X_test, y_test)
-
-    #print(metrics)
-
     outlier_results = {"status": "DISABLED"}
     if outlier_report is not None:
         try:
             from src.monitoring.outlier_analysis import export_outlier_report
+            if test_df is None:
+                raise ValueError('explicit aligned report context required')
             outlier_results = export_outlier_report(y_test, y_pred, test_df, outlier_report)
         except Exception:
             # No raw report/input/path or exception diagnostics escape here.
@@ -193,5 +136,7 @@ def run_training_pipeline(
         "model_type": model_type,
         "metrics": metrics,
         "cv_results": cv_results,
+        "tabular_preparation_id": prepared.preparation_id,
+        "tabular_states": tuple({o.state.state_id:o.state for o in prepared.outputs}.values()),
         "outlier_results": outlier_results,
     }

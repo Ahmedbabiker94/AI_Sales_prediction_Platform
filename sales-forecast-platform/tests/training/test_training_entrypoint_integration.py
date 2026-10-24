@@ -1,12 +1,13 @@
 """Real legacy orchestration, fake estimator only; no native fit or operations.
 
-Combined-partition/category leakage remains deferred to M3. Legacy wrapper
-serialization remains deferred to M6. These tests do not certify either issue.
+M3 uses real FINALIZED publication admission and canonical temporal features.
+Legacy model-wrapper serialization remains deferred to M6.
 """
 import importlib
 import importlib.abc
 import importlib.util
 import os
+import runpy
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -82,10 +83,6 @@ def execution(monkeypatch, tmp_path):
     # Wrap actual implementations, preserving their behavior and call graph.
     spies = {}
     for module_name, name in (
-        ('src.training.train_pipeline', 'validate_dataframe'),
-        ('src.data.splitter', 'train_test_split'),
-        ('src.preprocessing.tree_preprocessor', 'prepare_features'),
-        ('src.training.cross_validation', 'run_time_series_cv'),
         ('src.training.trainer', 'train_model'),
         ('src.training.evaluator', 'evaluate_model'),
     ):
@@ -128,10 +125,36 @@ def execution(monkeypatch, tmp_path):
     sys.addaudithook(audit)
     monkeypatch.setattr(sys, 'dont_write_bytecode', True)
 
+    # Actual canonical provider, finalization, train-only calibration and frozen
+    # execution; only estimator operations and operational boundaries are stubbed.
+    factory = runpy.run_path('tests/training/test_temporal_training_preparation.py')['make_temporal'].__wrapped__(tmp_path/'canonical')
+    bundle = factory()
+    from src.data.contracts.temporal_preparation import TemporalFold, TemporalPreparationPlan
+    from src.services.canonical_tabular_preparation_service import CanonicalTabularPreparationService
+    fold = bundle['plan'].folds[0].model_dump()
+    fold.update(training_origins=tuple(bundle['at'](n) for n in range(4,10)),
+                validation_origins=(bundle['at'](10),),test_origins=(bundle['at'](11),),
+                model_fit_cutoff=bundle['at'](10),assessment_cutoff=bundle['at'](12))
+    plan = bundle['plan'].model_dump();plan['folds']=(TemporalFold.model_validate(fold),)
+    plan = TemporalPreparationPlan.model_validate(plan)
+    service = CanonicalTabularPreparationService(bundle['service'])
+    spies['prepare'] = Mock(wraps=service.prepare)
+    monkeypatch.setattr(service,'prepare',spies['prepare'])
+    # Explicit reporting context; no invented Store/Dept mapping from canonical
+    # dimensions. The report writer still enforces its original allowlist/cap.
+    reference_result = service.prepare(plan,bundle['configuration'])
+    report_index = reference_result.partition('test')[0].index
+    import pandas as pd
+    report_context = pd.DataFrame({'Store':[1]*len(report_index),'Dept':list(range(len(report_index))),
+        'Date':[bundle['at'](11)]*len(report_index),'unrelated_private_column':['NEVER_EXPORT_THIS']*len(report_index)},index=report_index)
+    spies['prepare'].reset_mock()
+    state['initial_files'] = sorted(p.name for p in tmp_path.iterdir())
+
     def run(**kwargs):
         state['active'] = True
         try:
-            return pipeline.run_training_pipeline(str(data_path), **kwargs)
+            return pipeline.run_training_pipeline(str(data_path), tabular_service=service, temporal_plan=plan,
+                feature_configuration=bundle['configuration'], report_context=report_context, **kwargs)
         finally:
             state['active'] = False
     try:
@@ -144,9 +167,10 @@ def execution(monkeypatch, tmp_path):
 
 def assert_training(result, state, spies):
     assert result['model_type'] == 'xgboost'
-    assert len(state['fits']) == 6  # five real CV iterations, one final fake fit
-    assert state['predictions'] == 6
-    assert all(len(columns) == 32 for _, columns in state['fits'])
+    assert len(state['fits']) == 1  # explicit final fit; no unattested row-index CV
+    assert state['predictions'] == 1
+    assert result['cv_results']['status'] == 'NOT_RUN'
+    assert all(columns == tuple(result['tabular_states'][0].canonical_schema.configuration.ordered_outputs) for _, columns in state['fits'])
     assert state['external'] == []
     for spy in spies.values():
         spy.assert_called_once()
@@ -162,7 +186,7 @@ def test_actual_orchestration_has_no_default_reporting(execution, monkeypatch):
     assert_training(result, state, spies)
     assert result['outlier_results'] == {'status': 'DISABLED'}
     export.assert_not_called()
-    assert sorted(p.name for p in root.iterdir()) == ['synthetic.csv']
+    assert sorted(p.name for p in root.iterdir()) == state['initial_files']
 
 
 def test_actual_orchestration_opt_in_report(execution):
@@ -188,7 +212,12 @@ def test_report_failures_preserve_actual_training_result(execution, monkeypatch,
     elif failure == 'exists':
         path.write_bytes(b'original')
     elif failure == 'write':
-        monkeypatch.setattr(report.os, 'fsync', Mock(side_effect=OSError('SECRET_WRITE')))
+        original_export = report.export_outlier_report
+        def failing_export(*a, **kw):
+            with monkeypatch.context() as scoped:
+                scoped.setattr(report.os, 'fsync', Mock(side_effect=OSError('SECRET_WRITE')))
+                return original_export(*a, **kw)
+        monkeypatch.setattr(report, 'export_outlier_report', failing_export)
     elif failure == 'cleanup':
         real_unlink = report.os.unlink
         calls = []
@@ -197,7 +226,12 @@ def test_report_failures_preserve_actual_training_result(execution, monkeypatch,
             if len(calls) == 1:
                 raise OSError('SECRET_CLEANUP')
             return real_unlink(*a, **kw)
-        monkeypatch.setattr(report.os, 'unlink', unlink)
+        original_export = report.export_outlier_report
+        def failing_export(*a, **kw):
+            with monkeypatch.context() as scoped:
+                scoped.setattr(report.os, 'unlink', unlink)
+                return original_export(*a, **kw)
+        monkeypatch.setattr(report, 'export_outlier_report', failing_export)
     else:
         options = object()
     result = run(outlier_report=options)
@@ -216,7 +250,7 @@ def test_report_failures_preserve_actual_training_result(execution, monkeypatch,
         assert path.read_bytes().startswith(b'Store,Dept,Date,actual,')
 
 
-@pytest.mark.parametrize('fit_call', [1, 6])
+@pytest.mark.parametrize('fit_call', [1])
 def test_cv_or_final_fit_failure_has_no_reporting_or_production_work(execution, monkeypatch, fit_call):
     run, state, spies, root = execution
     state['fail_fit'] = fit_call
@@ -227,7 +261,7 @@ def test_cv_or_final_fit_failure_has_no_reporting_or_production_work(execution, 
         run(outlier_report=OutlierReportOptions(str(root / 'report.csv')))
     export.assert_not_called()
     assert state['external'] == []
-    assert sorted(p.name for p in root.iterdir()) == ['synthetic.csv']
+    assert sorted(p.name for p in root.iterdir()) == state['initial_files']
 
 
 @pytest.mark.parametrize('phase', ['prediction', 'evaluation'])
@@ -237,12 +271,12 @@ def test_prediction_or_evaluation_failure_never_exports(execution, monkeypatch, 
     export = Mock(side_effect=AssertionError('report after failed evaluation'))
     monkeypatch.setattr(report, 'export_outlier_report', export)
     if phase == 'prediction':
-        state['fail_predict'] = 6
+        state['fail_predict'] = 1
     else:
         spies['evaluate_model'].side_effect = RuntimeError('fake evaluation failure')
     with pytest.raises(RuntimeError):
         run(outlier_report=OutlierReportOptions(str(root / 'report.csv')))
     export.assert_not_called()
-    assert len(state['fits']) == 6
+    assert len(state['fits']) == 1
     assert state['external'] == []
-    assert sorted(p.name for p in root.iterdir()) == ['synthetic.csv']
+    assert sorted(p.name for p in root.iterdir()) == state['initial_files']
