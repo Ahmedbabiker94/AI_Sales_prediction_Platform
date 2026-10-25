@@ -414,3 +414,92 @@ def test_default_capability_probe_never_returns_stale_finalized_tracking(setup):
     b = setup(); r, _ = publish(b); file(b, r).unlink()
     observed = b['packaging'].package(b['result'].candidate)
     assert observed.status == 'INVALID' and observed.package_id == r.package_id
+
+
+@pytest.mark.parametrize('phase', ['initial', 'repeated'])
+@pytest.mark.parametrize('fault', [
+    'conflicting_bytes', 'invalid_type', 'bytearray', 'wrong_size', 'wrong_digest',
+    'malformed_manifest', 'unvalidated_manifest', 'mismatched_candidate',
+    'unsupported_format', 'self_consistent_wrong_content',
+])
+def test_provider_validates_every_request_before_tracking_changes(setup, tmp_path, capsys, caplog, phase, fault):
+    b = setup(); record, manifest = publish(b)
+    original_bytes = file(b, record).read_bytes()
+    start = len(MAGIC)+4
+    length = struct.unpack('>I', original_bytes[len(MAGIC):start])[0]
+    payload = original_bytes[start+length:]
+    supplied_manifest, supplied_payload = manifest, payload
+    secret = 'M7REPAIR_KEY_'+os.urandom(6).hex()
+    secret_value = 'M7REPAIR_VAL_'+os.urandom(6).hex()
+    if fault == 'conflicting_bytes': supplied_payload = payload[:-1]+bytes([payload[-1]^1])
+    elif fault == 'invalid_type': supplied_payload = {secret: secret_value}
+    elif fault == 'bytearray': supplied_payload = bytearray(payload)
+    elif fault == 'wrong_size': supplied_payload = payload[:-1]
+    elif fault == 'wrong_digest': supplied_manifest = manifest.model_copy(update={'payload_sha256': '0'*64})
+    elif fault == 'malformed_manifest': supplied_manifest = {secret: secret_value}
+    elif fault == 'unvalidated_manifest': supplied_manifest = manifest.model_copy(update={'payload_size': {secret: secret_value}})
+    elif fault == 'mismatched_candidate': supplied_manifest = manifest.model_copy(update={'candidate_id': 'f'*64})
+    elif fault == 'unsupported_format': supplied_manifest = manifest.model_copy(update={'payload_format': secret})
+    else:
+        supplied_payload = payload[:-1]+bytes([payload[-1]^1])
+        supplied_manifest = manifest.model_copy(update={'payload_sha256': hashlib.sha256(supplied_payload).hexdigest()})
+    repository, provider, directory = b['repository'], b['provider'], b['directory']
+    separate = None
+    if phase == 'initial':
+        root = tmp_path/'initial-provider'; root.mkdir(mode=0o700)
+        separate = repository = CandidatePackageRepository(str(root))
+        provider = CandidatePackageProvider(repository); directory = root/'candidate-packages-v1'
+    records_before = dict(provider._records)
+    files_before = {p.name: p.read_bytes() for p in directory.iterdir()}
+    try:
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter('always')
+            with pytest.raises(PackageStoreError) as caught:
+                # Also verify detachment from an ambient secret-bearing exception.
+                try: raise ValueError(secret, secret_value)
+                except ValueError: provider.publish(supplied_manifest, supplied_payload)
+        error = caught.value
+        observed = str(error)+repr(error)+repr(error.args)+''.join(traceback.format_exception(error))
+        observed += str([str(w.message) for w in seen])+caplog.text+str(capsys.readouterr())
+        assert secret not in observed and secret_value not in observed
+        assert not seen and error.__context__ is None and error.__cause__ is None
+        assert provider._records == records_before
+        assert {p.name: p.read_bytes() for p in directory.iterdir()} == files_before
+        assert not list(directory.glob('.stage-*'))
+        assert file(b, record).read_bytes() == original_bytes
+        assert b['repository'].verify(record.package_id) == manifest
+        assert CandidatePackageProvider(b['repository']).lookup(record.package_id) == record
+        if phase == 'repeated':
+            assert provider.status(record.candidate_id) == record
+            assert b['packaging'].verify(record.package_id, candidate=b['result'].candidate) == manifest
+    finally:
+        if separate is not None: separate.close()
+
+
+def test_direct_provider_initial_and_equivalent_repeat_preserve_service_evidence(setup, tmp_path, monkeypatch):
+    b = setup(); original_record, manifest = publish(b)
+    raw = file(b, original_record).read_bytes(); start = len(MAGIC)+4
+    size = struct.unpack('>I', raw[len(MAGIC):start])[0]; payload = raw[start+size:]
+    root = tmp_path/'direct-provider'; root.mkdir(mode=0o700)
+    repository = CandidatePackageRepository(str(root)); provider = CandidatePackageProvider(repository)
+    try:
+        first = provider.publish(manifest, payload)
+        assert first.status == 'FINALIZED'
+        path = root/'candidate-packages-v1'/(first.package_id+'.candidate')
+        before = path.read_bytes()
+        with monkeypatch.context() as patch:
+            write = Mock(side_effect=AssertionError('idempotent repeat must not write'))
+            patch.setattr(repository, 'publish', write)
+            equivalent = CandidatePackageManifest.model_validate_json(manifest.canonical_json)
+            assert equivalent.canonical_bytes == manifest.canonical_bytes
+            assert provider.publish(equivalent, bytes(payload)) == first
+            write.assert_not_called()
+        assert path.read_bytes() == before == raw
+        assert repository.verify(first.package_id) == manifest
+        assert CandidatePackageProvider(repository).lookup(first.package_id) == first
+        assert not list(path.parent.glob('.stage-*'))
+        assert b['packaging'].package(b['result'].candidate, test_only=True) == original_record
+        assert manifest.deployability == 'TEST_ONLY_NON_DEPLOYABLE'
+        assert b'NO_MODEL_PAYLOAD' in raw
+    finally:
+        repository.close()

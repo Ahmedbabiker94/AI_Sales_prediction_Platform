@@ -6,7 +6,7 @@ that discovery authenticates bytes only, not the original M6 execution owner.
 """
 from threading import RLock
 from src.data.contracts.candidate_package import PackageTrackingRecord
-from src.repositories.candidate_package_repository import CandidatePackageRepository, package_key, reject_store
+from src.repositories.candidate_package_repository import CandidatePackageRepository, package_key, reject_store, validate_publication
 
 
 class CandidatePackageProvider:
@@ -34,13 +34,15 @@ class CandidatePackageProvider:
 
     def publish(self, manifest, payload):
         with self._lock:
+            manifest, _ = validate_publication(manifest, payload)
             cid, pid = manifest.candidate_id, manifest.package_id
             previous = self._records.get(cid)
             if previous is not None and previous.status != 'UNAVAILABLE':
                 # Never retry INVALID/STAGED or silently replace a candidate ID.
                 if previous.status != 'FINALIZED' or previous.package_id != pid:
                     reject_store()
-                self._repository.verify(pid)
+                if self._repository.verify(pid) != manifest:
+                    reject_store()
                 return previous
             self._record(cid, pid, 'STAGED')
             try:

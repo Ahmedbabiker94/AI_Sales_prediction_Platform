@@ -75,6 +75,17 @@ def _decode_package(data, expected_id):
     return manifest
 
 
+def validate_publication(manifest, payload):
+    """Pure, guarded request validation shared by first and repeated writes."""
+    try:
+        data = _encode_package(manifest, payload)
+        canonical = _decode_package(data, manifest.package_id)
+        return canonical, data
+    except Exception:
+        pass
+    reject_store()
+
+
 class CandidatePackageRepository:
     def __init__(self, root):
         self._fd = None
@@ -125,8 +136,7 @@ class CandidatePackageRepository:
             with os.scandir(self._fd) as entries:
                 if sum(1 for _ in islice(entries, 64)) >= 64:
                     raise ValueError()
-            data = _encode_package(manifest, payload)
-            _decode_package(data, manifest.package_id)  # full verification before any write
+            manifest, data = validate_publication(manifest, payload)
             key = package_key(manifest.package_id)+'.candidate'
             staged = '.stage-'+uuid4().hex
             fd = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self._fd)
