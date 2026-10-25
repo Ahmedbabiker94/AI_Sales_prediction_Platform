@@ -172,3 +172,30 @@ needs separately authorized original-owner prediction handoffs and native
 verification; M8 cannot upgrade M7 non-deployable packages. M9 approval/promotion,
 Phase 7 runtime migration, native loaders, portable state, learned ensembles,
 metrics persistence, cross-process ownership and legacy cleanup remain deferred.
+
+## Scoped ensemble evaluation identity
+
+`configuration_id` remains the unchanged reusable recipe identity. It is no longer
+used as the ensemble metric producer ID. `EnsembleEvaluationBinding` version 1.0,
+policy `m8_ensemble_evaluation_v1`, canonically binds that recipe to the admitted
+request, original plan digest and assessment cutoff, full evaluation-publication
+binding, ordered H1 keys/target semantics/split/fold, coverage policy/eligible
+count, ordered member source/package/state/representation references, prediction
+batch IDs, captured label-revision root/population and exact scoring-policy ID.
+
+The service constructs this binding only after original-owner/package/grid
+admission and authorized truth capture. Its canonical digest is the required
+serialized `ensemble_evaluation_id`, used by the ensemble metric and its series
+groups. Result validation checks the digest and binding against the enclosing
+report; legacy scopeless ensemble outputs reject. Recipe/request semantics and
+metric values do not change. The report identity now includes this scoped evidence.
+No caller-provided scoped ID is accepted on requests. A matching declaration or
+digest remains integrity evidence, not authority.
+
+An immutable publication cannot legitimately acquire a different value revision
+in place. Revision tests use separately finalized, independently authorized
+publications with unchanged prediction values and new revision evidence. Cutoff
+changes require an original M6 plan/candidate binding for that cutoff. Unsupported
+fold/unit/transformation rewrites still reject; binding sensitivity tests do not
+claim that arbitrary constructed declarations are owner-authorized evaluations.
+Cross-run external weight selection and the other limitations above are unchanged.

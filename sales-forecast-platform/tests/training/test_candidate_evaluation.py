@@ -397,3 +397,170 @@ def test_nested_versions_public_graph_and_immutable_roundtrips(setup):
     assert report.canonical_bytes==original
     req=b['request'].model_dump(mode='json');req['truth']=[1.,2.]
     with pytest.raises(CandidateEvaluationError):b['evaluate'](req)
+
+
+def test_scoped_ensemble_identity_full_subset_policy_and_repeat(setup):
+    b=setup();full=b['evaluate']();same=b['evaluate']()
+    assert same.canonical_bytes==full.canonical_bytes
+    assert same.ensemble.ensemble_evaluation_id==full.ensemble.ensemble_evaluation_id
+    d=b['request'].model_dump(mode='json');d['coverage']='declared_common_subset_v1'
+    policy_only=b['evaluate'](d)
+    d['keys']=d['keys'][:1]
+    for batch in d['batches']:batch['observations']=batch['observations'][:1]
+    subset=b['evaluate'](d)
+    results=(full,policy_only,subset)
+    assert len({r.ensemble.configuration.configuration_id for r in results})==1
+    assert len({r.ensemble.ensemble_evaluation_id for r in results})==3
+    for result in results:
+        e=result.ensemble
+        assert e.metric.producer_id==e.ensemble_evaluation_id==e.evaluation_binding.ensemble_evaluation_id
+        assert e.metric.producer_id!=e.configuration.configuration_id
+        assert all(g.metric.producer_id in (*result.ranking,e.ensemble_evaluation_id) for g in result.series_metrics)
+        assert MultiCandidateComparison.model_validate_json(result.canonical_json)==result
+        assert result.evidence=='TEST_ONLY' and result.deployability=='TEST_ONLY_NON_DEPLOYABLE'
+    # JSON object iteration order is irrelevant; tuple ordering stays canonical.
+    def reverse_objects(value):
+        if isinstance(value,dict):return {k:reverse_objects(v) for k,v in reversed(tuple(value.items()))}
+        if isinstance(value,list):return [reverse_objects(v) for v in value]
+        return value
+    reordered=b['evaluate'](reverse_objects(b['request'].model_dump(mode='json')))
+    assert reordered.canonical_bytes==full.canonical_bytes
+
+
+def test_scoped_identity_changes_with_predictions_and_fixed_weights(setup):
+    b=setup();full=b['evaluate']();recipe=full.ensemble.configuration.configuration_id
+    d=b['request'].model_dump(mode='json');d['batches'][0]['observations'][0]['value']+=1.
+    changed=b['evaluate'](d)
+    assert changed.ensemble.configuration.configuration_id==recipe
+    assert changed.prediction_batch_ids!=full.prediction_batch_ids
+    assert changed.truth_revision_id==full.truth_revision_id and changed.population_id==full.population_id
+    assert changed.ensemble.ensemble_evaluation_id!=full.ensemble.ensemble_evaluation_id
+    d=b['request'].model_dump(mode='json');d['ensemble'].update(mode='fixed_mean_v1',weights=[
+        {'numerator':'1','denominator':'4'},{'numerator':'3','denominator':'4'}])
+    weighted=b['evaluate'](d)
+    assert weighted.ensemble.configuration.configuration_id!=recipe
+    assert weighted.ensemble.ensemble_evaluation_id not in (full.ensemble.ensemble_evaluation_id,changed.ensemble.ensemble_evaluation_id)
+
+
+def test_scoped_identity_changes_with_split_and_membership(setup):
+    b=setup(families=('xgboost','lightgbm','gru'));full=b['evaluate']()
+    d=b['request'].model_dump(mode='json');d['partition']='test'
+    for key in d['keys']:
+        key['partition']='test';key['scope'].update(forecast_origin=b['at'](7).isoformat(),
+            target_period=b['at'](7).isoformat(),target_period_end=b['at'](8).isoformat())
+    for batch in d['batches']:
+        for p,k in zip(batch['observations'],d['keys']):p['key']=k
+    test=b['evaluate'](d)
+    assert test.ensemble.configuration.configuration_id==full.ensemble.configuration.configuration_id
+    assert test.ensemble.ensemble_evaluation_id!=full.ensemble.ensemble_evaluation_id
+    d=b['request'].model_dump(mode='json');d['batches']=d['batches'][:2]
+    d['ensemble']['members']=d['ensemble']['members'][:2]
+    fewer=b['evaluate'](d)
+    assert fewer.ensemble.configuration.configuration_id!=full.ensemble.configuration.configuration_id
+    assert len({r.ensemble.ensemble_evaluation_id for r in (full,test,fewer)})==3
+
+
+def _republish_identity_truth(b,root):
+    """New genuine local FINALIZED revision; same candidate refs/prediction values."""
+    reference=runpy.run_path('tests/data/adapters/test_integration_foundation.py')
+    training=b['metadata'][0];mapping=training.mapping;now=b['service'].provider.clock()
+    raw=b['raws'][2].copy(deep=True);raw['proof']=raw['proof']+'-independent-revision-2'
+    store=LocalDatasetRepository(root)
+    provider=CanonicalTrainingDataProvider(store,authorize_read=lambda *_:True,clock=lambda:now)
+    asset=reference['asset'].__wrapped__().model_copy(update={'organization_id':training.reference.organization_id,'timezone':mapping.timezone})
+    publication=DatasetIngestionService(store,authorize_ingestion=lambda *_:True).ingest(
+        reference['MemoryAdapter'](raw,asset),mapping,dataset_id=training.reference.dataset_id,batch_size=3)
+    ref=StoredDatasetReference(publication.organization_id,publication.dataset_id,publication.attempt_id,publication.version_id)
+    scope=DatasetAccessContext(ref,publication.source_id,publication.ingestion_batch_id,mapping.mapping_id,mapping.version,
+        publication.mapping_digest,mapping.target_metric,mapping.business_scope,'opaque-source','connection-1','offline_forecast_evaluation')
+    consistency=VerifiedConsistencyEvidence(scope,'snapshot','snapshot_external_v1','method-1','1.0',now-timedelta(days=2),
+        now-timedelta(hours=1),now-timedelta(minutes=1),now+timedelta(days=1))
+    warning=ScopedWarningAuthorization(scope,'NEGATIVE_VALUE','value','keep','m8-revision-2',now-timedelta(hours=1),now+timedelta(days=1))
+    DatasetFinalizationService(store,authorize=lambda *_:True,verify_consistency=lambda *_:True,verify_policy=lambda *_:True,
+        verify_warning=lambda *_:True,decision_context_reference='m8-revision-2',clock=lambda:now).finalize(ref,mapping,
+        connection_reference='connection-1',purpose='offline_forecast_evaluation',consistency_policy=ConsistencyPolicy(scope,'SALES_GENERAL','1.0.0'),
+        consistency_evidence=consistency,warning_authorizations=(warning,))
+    with provider.open_read(ref,purpose='offline_forecast_evaluation') as session:
+        meta=session.metadata;rows=[row for frame in session.batches() for row in frame.to_dict('records')]
+    expected={(r['series_id'],r['period_start']):(numeric_identity(r['value']),r['available_at'],r['availability_reference'],r['source_record_id'],r['lineage_id']) for r in rows}
+    def attest(c):return expected.get((c.series_id,c.period_start))==(c.value_identity,c.available_at,c.evidence_reference,c.source_record_id,c.lineage_id)
+    truth_provider=CandidateEvaluationProvider(provider,authorize_labels=b['truth_provider']._authorize,verify_label_revision=attest)
+    service=CandidateEvaluationService(truth_provider,tuple(b['bindings']),authorize_evaluation=b['evaluator']._authorize,elapsed_clock=lambda:0.)
+    d=b['request'].model_dump(mode='json')
+    d['evaluation']=CanonicalTrainingPreparationService._temporal_binding(meta,b['plan'].datasets[0].series_ids).model_dump(mode='json')
+    for key in d['keys']:key['scope']['dataset_version']=ref.version_id
+    for batch in d['batches']:
+        for p,k in zip(batch['observations'],d['keys']):p['key']=k
+    return service.evaluate(d)
+
+
+def test_scoped_identity_new_authorized_publication_and_label_revision(setup,tmp_path):
+    b=setup();original=b['evaluate']();revised=_republish_identity_truth(b,tmp_path/'new-authorized-revision')
+    assert original.ensemble.configuration.configuration_id==revised.ensemble.configuration.configuration_id
+    assert original.ensemble.configuration.members==revised.ensemble.configuration.members
+    assert original.truth_revision_id!=revised.truth_revision_id
+    assert original.evaluation.reference!=revised.evaluation.reference
+    assert original.ensemble.ensemble_evaluation_id!=revised.ensemble.ensemble_evaluation_id
+    assert original.ensemble.metric.statistics==revised.ensemble.metric.statistics
+    assert original.ensemble.metric.smape==revised.ensemble.metric.smape
+    assert original.ensemble.metric.mean_signed_error==revised.ensemble.metric.mean_signed_error
+    assert tuple(p.value for p in original.ensemble.points)==tuple(p.value for p in revised.ensemble.points)
+
+
+def test_scoped_identity_admitted_original_cutoff(setup):
+    b=setup();original=b['evaluate']()
+    from src.data.contracts.temporal_preparation import TemporalPreparationPlan
+    from src.services.candidate_evaluation_service import evidence
+    d=b['plan'].model_dump(mode='json');d['folds'][0]['assessment_cutoff']=b['at'](9).isoformat()
+    b['plan']=TemporalPreparationPlan.model_validate_json(json.dumps(d))
+    results=[b['run'](family) for family in ('xgboost','lightgbm')]
+    bindings=[];sources=[]
+    for result in results:
+        assert result.status=='SUCCESS'
+        tracked=b['packaging'].package(result.candidate,test_only=True)
+        m=b['packaging'].verify(tracked.package_id,candidate=result.candidate)
+        bindings.append((b['packaging'],result.candidate,tracked.package_id));sources.append(evidence(m))
+    d=b['request'].model_dump(mode='json');d['plan']=b['plan'].model_dump(mode='json')
+    for key in d['keys']:key['scope']['plan_digest']=b['plan'].digest
+    for batch in d['batches']:
+        source=next(s for s in sources if s.family==batch['source']['family'])
+        batch['source']=source.model_dump(mode='json')
+        for p,k in zip(batch['observations'],d['keys']):p.update(source=batch['source'],key=k)
+    d['batches'].sort(key=lambda x:x['source']['candidate_id'])
+    d['ensemble']['members']=[x['source']['candidate_id'] for x in d['batches']]
+    service=CandidateEvaluationService(b['truth_provider'],tuple(bindings),authorize_evaluation=b['evaluator']._authorize,elapsed_clock=lambda:0.)
+    revised=service.evaluate(d)
+    assert revised.ensemble.evaluation_binding.assessment_cutoff==b['at'](9)
+    assert revised.ensemble.ensemble_evaluation_id!=original.ensemble.ensemble_evaluation_id
+
+
+@pytest.mark.parametrize('field',['assessment_cutoff','truth_revision_id','prediction_batch_ids','evaluation','keys'])
+def test_scoped_binding_canonical_preimage_sensitivity(setup,field):
+    b=setup();binding=b['evaluate']().ensemble.evaluation_binding
+    d=binding.model_dump(mode='json')
+    if field=='assessment_cutoff':d[field]=b['at'](9).isoformat()
+    elif field=='truth_revision_id':
+        d[field]='e'*64;d['population_id']=identity([[k.key_id for k in binding.keys],d[field]])
+    elif field=='prediction_batch_ids':d[field][0]='e'*64
+    elif field=='evaluation':d[field]['reference']['attempt_id']=str(UUID(int=987))
+    else:
+        for key in d['keys']:key['scope']['unit']='other-declared-unit'
+        keys=tuple(EvaluationKey.model_validate_json(json.dumps(k)) for k in d['keys'])
+        d['population_id']=identity([[k.key_id for k in keys],d['truth_revision_id']])
+    # Structural identity sensitivity is NOT proof this declaration is authorized.
+    altered=EnsembleEvaluationBinding.model_validate_json(json.dumps(d))
+    assert altered.ensemble_evaluation_id!=binding.ensemble_evaluation_id
+    assert EnsembleEvaluationBinding.model_validate_json(altered.canonical_json)==altered
+
+
+def test_scoped_ids_are_not_caller_authority_and_output_substitution_rejects(setup):
+    b=setup();report=b['evaluate']();data=b['request'].model_dump(mode='json')
+    data['ensemble_evaluation_id']=report.ensemble.ensemble_evaluation_id
+    with pytest.raises(CandidateEvaluationError):b['evaluate'](data)
+    for fault in ('id','producer','binding','recipe'):
+        d=report.model_dump(mode='json')
+        if fault=='id':d['ensemble']['ensemble_evaluation_id']='f'*64
+        elif fault=='producer':d['ensemble']['metric']['producer_id']=report.ensemble.configuration.configuration_id
+        elif fault=='binding':d['ensemble']['evaluation_binding']['request_id']='f'*64
+        else:d['ensemble']['evaluation_binding']['configuration_id']='f'*64
+        with pytest.raises(Exception):MultiCandidateComparison.model_validate_json(json.dumps(d))

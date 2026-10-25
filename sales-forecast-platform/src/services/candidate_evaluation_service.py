@@ -5,7 +5,7 @@ from time import monotonic
 from src.data.contracts.backtesting import identity
 from src.data.contracts.dataset import operational_json
 from src.data.contracts.candidate_evaluation import (
-    CandidateEvaluationRequest,CandidateEvidence,EnsembleResult,EnsemblePoint,MultiCandidateComparison,SeriesMetric)
+    CandidateEvaluationRequest,CandidateEvidence,EnsembleResult,EnsemblePoint,MultiCandidateComparison,SeriesMetric,EnsembleEvaluationBinding)
 from src.data.processing.candidate_evaluation import metrics,ensemble_values,rational,POLICY,signed
 from src.providers.candidate_evaluation_provider import CandidateEvaluationProvider
 from src.services.candidate_packaging_service import CandidatePackagingService
@@ -155,13 +155,20 @@ class CandidateEvaluationService:
                 score(batch.source.candidate_id,{p.key.key_id:rational(p.value,POLICY) for p in batch.observations})
             model_scores=tuple(scores)
             ensemble=ensemble_values(req.ensemble,req.batches,req.keys,check)
-            score(req.ensemble.configuration_id,{k.key_id:v for k,v in ensemble})
+            binding=EnsembleEvaluationBinding(configuration_id=req.ensemble.configuration_id,request_id=req.request_id,
+                plan_digest=req.plan.digest,evaluation=req.evaluation,assessment_cutoff=req.plan.folds[0].assessment_cutoff,
+                coverage=req.coverage,eligible_count=eligible,keys=req.keys,sources=tuple(b.source for b in req.batches),
+                prediction_batch_ids=tuple(b.batch_id for b in req.batches),truth_revision_id=revision,
+                population_id=population,arithmetic_policy_id=POLICY.digest)
+            ensemble_evaluation_id=binding.ensemble_evaluation_id
+            score(ensemble_evaluation_id,{k.key_id:v for k,v in ensemble})
             result=MultiCandidateComparison(request_id=req.request_id,evaluation=req.evaluation,coverage=req.coverage,
                 eligible_count=eligible,evaluated_count=len(req.keys),excluded_count=eligible-len(req.keys),keys=req.keys,
                 sources=tuple(b.source for b in req.batches),prediction_batch_ids=tuple(b.batch_id for b in req.batches),
                 truth_revision_id=revision,population_id=population,metrics=model_scores,series_metrics=tuple(series_scores),
                 ranking=tuple(s.producer_id for s in sorted(model_scores,key=lambda s:(s.statistics.mae.fraction,s.producer_id))),
-                ensemble=EnsembleResult(configuration=req.ensemble,points=tuple(EnsemblePoint(key=k,value=signed(v)) for k,v in ensemble),metric=scores[-1]))
+                ensemble=EnsembleResult(configuration=req.ensemble,evaluation_binding=binding,
+                    ensemble_evaluation_id=ensemble_evaluation_id,points=tuple(EnsemblePoint(key=k,value=signed(v)) for k,v in ensemble),metric=scores[-1]))
             if len(result.canonical_bytes)>req.resources.max_output_bytes:raise ValueError()
             self._owned(req,check);self._provider._fresh(req,metadata,check)
             for key in req.keys:approve('return:'+key.key_id)

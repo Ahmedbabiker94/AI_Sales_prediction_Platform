@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import Field, StrictInt, model_validator
 from src.data.contracts.backtesting import ForecastScope, identity
 from src.data.contracts.candidate_package import Digest
-from src.data.contracts.model_representation import RepresentationContract
+from src.data.contracts.model_representation import RepresentationContract, RepresentationTimestamp
 from src.data.contracts.temporal_preparation import TemporalPreparationPlan, TemporalDatasetBinding
 from src.data.contracts.training_adapter import Family, FiniteFloat
 from src.data.contracts.forecast_evaluation import ExactRatio, ScoringStatistics
@@ -174,9 +174,55 @@ class EnsemblePoint(RepresentationContract):
     value: SignedRatio
 
 
+class EnsembleEvaluationBinding(RepresentationContract):
+    """Canonical admitted evaluation evidence; a declaration is not authority."""
+    version: Literal['1.0'] = '1.0'
+    policy: Literal['m8_ensemble_evaluation_v1'] = 'm8_ensemble_evaluation_v1'
+    configuration_id: Digest
+    request_id: Digest
+    plan_digest: Digest
+    evaluation: TemporalDatasetBinding
+    assessment_cutoff: RepresentationTimestamp
+    coverage: Literal['exact_grid_v1', 'declared_common_subset_v1']
+    eligible_count: StrictInt = Field(ge=1, le=131072)
+    keys: tuple[EvaluationKey, ...] = Field(min_length=1, max_length=256)
+    sources: tuple[CandidateEvidence, ...] = Field(min_length=2, max_length=8)
+    prediction_batch_ids: tuple[Digest, ...] = Field(min_length=2, max_length=8)
+    truth_revision_id: Digest
+    population_id: Digest
+    metric_policy: Literal['m8_exact_metrics_v1'] = 'm8_exact_metrics_v1'
+    arithmetic_policy_id: Digest
+
+    @model_validator(mode='after')
+    def consistent(self):
+        ids=tuple(s.candidate_id for s in self.sources)
+        semantics={(k.partition,k.scope.fold_id,k.scope.metric,k.scope.unit,k.scope.currency,
+                    k.scope.frequency,k.scope.timezone,k.transformation) for k in self.keys}
+        if (ids!=tuple(sorted(set(ids))) or len(self.prediction_batch_ids)!=len(ids)
+                or len(set(self.prediction_batch_ids))!=len(ids) or len(semantics)!=1
+                or self.keys!=tuple(sorted(self.keys,key=key_order))
+                or len({k.key_id for k in self.keys})!=len(self.keys)
+                or self.eligible_count<len(self.keys)
+                or self.coverage=='exact_grid_v1' and self.eligible_count!=len(self.keys)
+                or self.population_id!=identity([[k.key_id for k in self.keys],self.truth_revision_id])
+                or any(k.scope.plan_digest!=self.plan_digest
+                    or k.scope.dataset_version!=self.evaluation.reference.version_id
+                    or k.scope.organization_id!=self.evaluation.reference.organization_id
+                    or k.scope.series_id not in self.evaluation.series_ids
+                    or k.scope.target_period_end>self.assessment_cutoff for k in self.keys)):
+            raise ValueError('exact ensemble evaluation binding required')
+        return self
+
+    @property
+    def ensemble_evaluation_id(self):
+        return identity(self.model_dump(mode='json',warnings='error'))
+
+
 class EnsembleResult(RepresentationContract):
     version: Literal['1.0'] = '1.0'
     configuration: EnsembleConfiguration
+    evaluation_binding: EnsembleEvaluationBinding
+    ensemble_evaluation_id: Digest
     points: tuple[EnsemblePoint, ...] = Field(min_length=1, max_length=256)
     metric: MetricResult
     evidence: Literal['TEST_ONLY'] = 'TEST_ONLY'
@@ -184,7 +230,12 @@ class EnsembleResult(RepresentationContract):
     @model_validator(mode='after')
     def bound(self):
         keys=tuple(p.key for p in self.points)
-        if (self.metric.producer_id!=self.configuration.configuration_id or self.metric.statistics.count!=len(keys)
+        if (self.ensemble_evaluation_id!=self.evaluation_binding.ensemble_evaluation_id
+                or self.evaluation_binding.configuration_id!=self.configuration.configuration_id
+                or self.configuration.members!=tuple(s.candidate_id for s in self.evaluation_binding.sources)
+                or keys!=self.evaluation_binding.keys
+                or self.metric.population_id!=self.evaluation_binding.population_id
+                or self.metric.producer_id!=self.ensemble_evaluation_id or self.metric.statistics.count!=len(keys)
                 or keys!=tuple(sorted(keys,key=key_order)) or len({k.key_id for k in keys})!=len(keys)):
             raise ValueError('exact ensemble result required')
         return self
@@ -224,6 +275,13 @@ class MultiCandidateComparison(RepresentationContract):
                 or self.ensemble.metric.population_id!=self.population_id):raise ValueError('consistent comparison required')
         if self.population_id!=identity([[k.key_id for k in self.keys],self.truth_revision_id]):
             raise ValueError('exact population identity required')
+        binding=self.ensemble.evaluation_binding
+        if (binding.request_id!=self.request_id or binding.evaluation!=self.evaluation
+                or binding.coverage!=self.coverage or binding.eligible_count!=self.eligible_count
+                or binding.keys!=self.keys or binding.sources!=self.sources
+                or binding.prediction_batch_ids!=self.prediction_batch_ids
+                or binding.truth_revision_id!=self.truth_revision_id or binding.population_id!=self.population_id):
+            raise ValueError('exact comparison ensemble context required')
         series=tuple(sorted({k.scope.series_id for k in self.keys},key=str))
         producers=tuple(self.metrics)+(self.ensemble.metric,)
         expected_groups=tuple((m.producer_id,sid) for m in producers for sid in series)
