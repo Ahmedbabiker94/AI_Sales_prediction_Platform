@@ -1639,3 +1639,100 @@ model/native precision policy and artifact integration. Higher-horizon real
 execution requires an explicit extension of the existing H1 foundation; M4 does
 not reinterpret H1 as H2/H3. Phase 7 runtime migration and production lifecycle
 remain separate. Existing D1/D2/D3 and M1/M2/M3 source and identities are unchanged.
+
+### M5 — canonical Transformer stream preparation (controlled offline H1)
+
+`CanonicalTransformerPreparationService` composes the accepted M3 provider-backed
+preparation service. It captures no second source, has no SQL or model-framework
+requirement, and implements no model, registry, promotion or runtime operation.
+The canonical executor continues to own availability verification, publication
+purpose, immutable revision, category-prefix fitting and feature formulas.
+
+```python
+request = TransformerPreparationRequest(
+    fold_id="fold-1", origins=approved_sample_origins,
+    feature_names=("lag1",),             # encoder past-observed stream
+    static_names=("location",),          # original encoded dimension
+    known_future_names=("promotion",),   # direct canonical exogenous field
+    window=dict(lookback=3, window=3, stride=1,
+                past_offsets=(-3, -2, -1), padding="left"),
+    decoder_horizon=1, future_offsets=(0,),
+    scaling="standard_v1", tensor_dtype="float64", missing="reject")
+prepared = CanonicalTransformerPreparationService(tabular_service).prepare(
+    original_plan, original_configuration, request)
+output = prepared.outputs[0]
+encoder, static, decoder = (
+    output.encoder_tensor, output.static_tensor, output.decoder_tensor)
+loaded = TransformerPreprocessingState.model_validate_json(output.state.canonical_json)
+repeated = FrozenTransformerPreprocessor(loaded).transform(authenticated_feature_batches)
+```
+
+Each group is explicit, ordered and nonempty; groups are disjoint. Static inputs
+are direct, original categorical dimensions, encoded with the original frozen
+vocabulary. Actual output validation checks static codes against point dimensions.
+Known-future inputs must be direct canonical exogenous outputs configured as
+`known_in_advance` or `external_forecast`, with explicit availability/evidence
+fields and missing=`reject`. Calculated aliases, lagged/observed-only covariates,
+zero-substitution rules and target actuals cannot serve as decoder inputs.
+External forecasts still require the existing independent canonical authorization
+callback. Missing source evidence, unpublished values and denied availability
+claims fail in the original preparation boundary.
+
+Execution is H1 because the accepted provider-backed preparation is H1. Decoder
+offset 0 represents target interval [O, O+1 period); horizon step is 1. Requests
+cannot relabel H1 as H2/H3. Encoder geometry, stride (spacing between past slots),
+warm-up and expanding-history semantics remain M4's. Every slot is keyed by
+organization/series/origin; no Store/Department boundary is crossed. Static and
+decoder rows use the identical original canonical state, scope and immutable
+revision as the encoder. Future actual values never become feature inputs.
+The inherited full-storage/future-physical-dtype admission limitation remains.
+
+`TransformerPreprocessingState` v1 binds the request, original plan/publication,
+canonical schema/category state and two original M4 numeric-state contracts:
+`encoder` for past features and `context` for ordered static+decoder features.
+M4's internal GRU-family numeric buffer declaration is reused solely as a scaler
+and sequence-kernel contract; it denotes no fitted model or predictor capability.
+The public output and M2 representation explicitly declare Transformer semantics.
+Both numerical fits use only complete original training-origin feature buffers,
+excluding held-out payloads before serialization. No target collection enters
+fitting or frozen transformation. Numeric parameters use M4's versioned population
+standard arithmetic; categories retain center 0/scale 1. Zero variance uses scale
+1. Identity scaling is also supported. State serialization includes parameter
+counts and exact fitting-evidence digests. State identity binds all three schemas,
+geometry, parameters, original provenance and availability configuration.
+
+The M2 scaler reference names the **whole Transformer state**, not merely the
+encoder. Actual output binding requires exact equality to that reference, group
+schemas, periods, masks and numeric policies. Encoder values are checked by M4's
+actual-output validator. Context shape, finite exact values, static vocabulary
+codes, availability and decoder positions are checked locally. Float32 conversion
+is STRICT_EXACT **after** scaling; ordinary normalized values may reject. Float64
+is available; no rounding is introduced to satisfy float32. Missing/padded encoder
+slots use explicit M4 masks and post-normalization fill. Context values must be
+present; static/decoder missing masks are explicitly false and decoder lengths
+must be complete. Missing future values are rejected rather than fabricated.
+
+Decoder/static availability timestamps record O, a conservative upper bound;
+they do not claim that publication happened exactly at O. The original canonical
+executor has already verified actual release times and source evidence at O.
+Per-field availability evidence identities bind the whole frozen state and ordered
+current canonical output identities. These digests are integrity references, not
+authentication or standalone proof that arbitrary caller-created buffers were
+published. The pure frozen kernel requires owner-authenticated canonical feature
+buffers; declarations and reconstructed metadata grant no authority. Inference
+uses only already-approved original-plan origins, without fitting or label reads.
+
+`TransformerOutput` stores immutable tuples, typed encoder/decoder positions,
+context evidence identities and the full M2 declaration. JSON ingress uses the
+accepted guarded duplicate-key/diagnostic boundary. Canonical bytes and output
+identities are deterministic; NumPy accessors return fresh arrays. Preparation
+returns targets separately for the selected grid. Aggregate cells and source,
+evidence and output representations are bounded, including 1 MiB per wire output.
+Cancellation/deadline checks are cooperative, not hard CPU/RSS isolation.
+
+M6 owns model adapters/training, framework precision decisions and artifact
+integration. Phase 7 owns runtime capture and new-origin composition. Empty input
+groups, continuous static dimensions, context imputation and horizons beyond H1
+require explicit compatible execution extensions; M5 does not silently claim
+these capabilities. This implementation closes the bounded Phase 5 Transformer
+preparation increment, not model acceptance, production readiness or Phase 6.
