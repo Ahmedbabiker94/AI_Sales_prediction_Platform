@@ -391,3 +391,73 @@ def test_equivalent_utc_origins_preserve_non_utc_calendar_admission(setup):
     assert result.status=='SUCCESS' and result.metadata.plan_digest==b['plan'].digest
     assert result.metadata.training_rows==4
     assert len([c for c in b['calls'] if c[0]=='fit'])==1
+
+
+def _callback_repair_case(bundle,monkeypatch,boundary,action):
+    """Exercise the real provider/service sequence with the existing fake fit."""
+    baseline=bundle['run']()
+    assert baseline.status=='SUCCESS'
+    final_call=sum(c[0]=='approve' for c in bundle['calls'])
+    trigger={'initial':1,'before_backend':2,'before_fit':3,'final':final_call}[boundary]
+    assert final_call>3
+    bundle['calls'].clear()
+    import src.services.canonical_adapter_training_service as module
+    clock=[0];calls=[0]
+    monkeypatch.setattr(module,'monotonic',lambda:clock[0])
+    def approve(context):
+        calls[0]+=1
+        if calls[0]==trigger:
+            if action=='deadline':clock[0]=context.specification.resources.max_elapsed_seconds
+            elif action in ('cancel','deny'):bundle['status']['cancelled']=True
+            if action=='deny':return False
+            if action=='exception':raise RuntimeError('CALLBACK_REPAIR_PRIVATE_83491')
+        return True
+    # Callback is supplied at the supported trusted composition boundary.
+    original=bundle['trainer']
+    bundle['trainer']=CanonicalAdapterTrainingService(bundle['tabular'],bundle['recurrent'],bundle['transformer'],
+        authorize_training=approve,backend_factory=original._backend_factory)
+    result=bundle['run']()
+    return result,bundle['trainer'],trigger,calls[0],clock[0]
+
+
+@pytest.mark.parametrize('boundary',['initial','before_backend','before_fit','final'])
+@pytest.mark.parametrize('action',['cancel','deadline'])
+def test_post_approval_callback_cancellation_and_deadline(setup,monkeypatch,boundary,action):
+    b=setup()
+    result,owner,trigger,calls,elapsed=_callback_repair_case(b,monkeypatch,boundary,action)
+    assert result.status=='CANCELLED_OR_EXPIRED'
+    assert result.candidate is None and result.metadata is None
+    assert result.public_report.metadata is None and not owner._candidates
+    assert calls==trigger  # rejection immediately after this approval, no extra approval
+    assert sum(c[0]=='fit' for c in b['calls'])==(1 if boundary=='final' else 0)
+    assert sum(c[0]=='construct' for c in b['calls'])==(1 if boundary in ('before_fit','final') else 0)
+    if action=='deadline':assert elapsed==TrainingSpecification(family='xgboost').resources.max_elapsed_seconds
+
+
+@pytest.mark.parametrize('boundary',['initial','final'])
+@pytest.mark.parametrize('action,expected',[('deny','DENIED'),('exception','FAILED')])
+def test_post_approval_denial_and_exception_semantics(setup,monkeypatch,capsys,caplog,boundary,action,expected):
+    b=setup()
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter('always')
+        result,owner,trigger,calls,_=_callback_repair_case(b,monkeypatch,boundary,action)
+    assert result.status==expected and calls==trigger
+    assert result.candidate is None and result.metadata is None and not owner._candidates
+    assert sum(c[0]=='fit' for c in b['calls'])==(1 if boundary=='final' else 0)
+    assert 'CALLBACK_REPAIR_PRIVATE_83491' not in repr(result)+result.public_report.canonical_json+capsys.readouterr().err+caplog.text
+    assert not seen
+
+
+def test_post_approval_normal_execution_preserves_metadata(setup,monkeypatch):
+    b=setup();first=b['run']()
+    assert first.status=='SUCCESS'
+    approvals=sum(c[0]=='approve' for c in b['calls'])
+    b['calls'].clear()
+    import src.services.canonical_adapter_training_service as module
+    monkeypatch.setattr(module,'monotonic',lambda:0)
+    second=b['run']()
+    assert second.status=='SUCCESS' and b['trainer'].owns(second.candidate)
+    assert second.public_report.canonical_bytes==first.public_report.canonical_bytes
+    assert second.metadata.candidate_id==first.metadata.candidate_id
+    assert sum(c[0]=='approve' for c in b['calls'])==approvals
+    assert sum(c[0]=='fit' for c in b['calls'])==1

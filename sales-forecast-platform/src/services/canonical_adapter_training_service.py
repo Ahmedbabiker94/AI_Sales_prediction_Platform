@@ -142,7 +142,10 @@ class CanonicalAdapterTrainingService:
             started=monotonic();context=None;preparation_interrupted=False
             def checkpoint():
                 if cancelled() is not False or monotonic()-started>=spec.resources.max_elapsed_seconds:raise _Interrupted()
-                if context is not None and self._authorize(context) is not True:raise _Denied()
+                if context is not None:
+                    if self._authorize(context) is not True:raise _Denied()
+                    # Approval may itself cancel work or consume the deadline.
+                    if cancelled() is not False or monotonic()-started>=spec.resources.max_elapsed_seconds:raise _Interrupted()
             def preparation_cancelled():
                 nonlocal preparation_interrupted
                 preparation_interrupted=cancelled() is not False or monotonic()-started>=spec.resources.max_elapsed_seconds
