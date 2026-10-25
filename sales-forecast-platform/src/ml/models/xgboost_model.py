@@ -1,6 +1,6 @@
-import joblib
-
-from xgboost import XGBRegressor
+# Lazy constructor hook retained for legacy safe estimator stubs.
+# Persistence is fail-closed until a versioned artifact compatibility policy exists.
+XGBRegressor = None
 
 from src.ml.models.base_model import (
     BaseForecastModel
@@ -15,7 +15,10 @@ class XGBoostForecastModel(
 
     def __init__(self):
 
-        self.model = XGBRegressor(
+        factory = XGBRegressor
+        if factory is None:
+            from xgboost import XGBRegressor as factory
+        self.model = factory(
 
             n_estimators=300,
 
@@ -51,20 +54,8 @@ class XGBoostForecastModel(
             X
         )
 
-    def save(
-        self,
-        path
-    ):
-
-        joblib.dump(
-            self.model,
-            path
-        )
+    def save(self, path):
+        raise ValueError("legacy persistence unsupported; versioned candidate packaging required")
 
     def load(self, path):
-
-        self.model.load_model(
-            path
-        )
-
-        return self.model
+        raise ValueError("legacy persistence unsupported; original owned candidate required")

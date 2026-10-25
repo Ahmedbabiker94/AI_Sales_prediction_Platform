@@ -1736,3 +1736,121 @@ groups, continuous static dimensions, context imputation and horizons beyond H1
 require explicit compatible execution extensions; M5 does not silently claim
 these capabilities. This implementation closes the bounded Phase 5 Transformer
 preparation increment, not model acceptance, production readiness or Phase 6.
+
+### M6 — controlled multi-family training adapters (candidate only)
+
+Dependency inventory: `CanonicalTabularPreparationService` supplies M3 tabular
+outputs for XGBoost/LightGBM. M4/M5 services supply recurrent/Transformer outputs
+and original frozen category/scaler states, and reuse that same tabular service.
+M2 owns input identities and compatibility. Original D1/D2/D3 services are unchanged;
+M6 is not a replacement issuer for D2 CandidateBundle or model-use authority.
+The legacy factory used placeholder LightGBM/Transformer classes and had no
+LSTM/GRU adapter. Legacy XGBoost persistence wrote joblib but attempted native
+loading: B04 is quarantined by explicit failure, not by untrusted deserialization.
+Legacy save/load now reject every format before I/O, including .pkl/.joblib and
+.json/.ubj. No artifact migration or production pointer is attempted. The legacy
+factory now supports only its implemented XGBoost training path; all other names
+reject before dependency loading. Placeholder modules remain, pending later cleanup.
+
+`training_adapter.py` provides guarded immutable v1 capability, specification,
+resource, metadata and public report declarations. Digests/metadata are not
+permission. `CanonicalAdapterTrainingService` must be composed by the trusted host
+with the original canonical services and an independent `authorize_training`
+callback. Requests cannot supply the callback, provider, backend factory or clock.
+The operator supplies a backend factory only at composition; tests use fake
+engines. Trusted bootstrap is process-local API separation, not deployment IAM.
+
+```python
+service = CanonicalAdapterTrainingService(
+    tabular_service, recurrent_service, transformer_service,
+    authorize_training=operator_training_approval)
+result = service.train(
+    TrainingSpecification(family="gru", input_dtype="float64", seed=42, steps=2),
+    plan=original_plan, feature_configuration=original_configuration,
+    preparation_request=approved_gru_request, cancelled=cancelled)
+report_json = result.public_report.canonical_json
+# On SUCCESS only: result.candidate is an opaque original-owner reference.
+# No registry, model loading, production approval or prediction API is provided.
+```
+
+| Family | Accepted representation | Input precision | Target precision | Native backend |
+|---|---|---|---|---|
+| XGBoost | M3 tabular | STRICT_EXACT float32 | STRICT_EXACT float32 | optional XGBoost 2.x/3.x |
+| LightGBM | M3 tabular | STRICT_EXACT float32/64 | STRICT_EXACT float32 | optional LightGBM 4.x |
+| LSTM / GRU | M4 recurrent | exact declared float32/64 | same as input | optional CPU PyTorch 2.x |
+| Transformer | M5 past/static/future | exact declared float32/64 | same as input | optional CPU PyTorch 2.x |
+
+Unknown families/invalid precision and wrong recurrent requests reject before
+capture or framework initialization. There is no fallback to legacy training or
+another family. Optional imports occur only after preparation, admission and fresh
+training-use approval. Missing/broken dependencies and unsupported API major
+versions report FRAMEWORK_UNAVAILABLE. Supported version declarations identify
+the implemented API range, not genuine native fitting acceptance.
+
+The service calls preparation itself; arbitrary detached prepared inputs and
+matching hashes are not public ingress. Initial scope is one original publication,
+one fold, H1 and one frozen compatible state. Preparation providers own publication
+purpose, availability, labels and category fitting. Operator training approval is
+separate and checked before native work, at cooperative backend checkpoints and
+before returning a candidate. Preparation permission alone is not model fitting
+permission. Provider authorization is freshly checked by the accepted preparation
+handoff; this does not create a continuous publication-read lease during fitting.
+The host callback must implement its intended fresh training-use authorization.
+
+Only training-partition buffers and their aligned H1 targets reach the adapter.
+Held-out value/target payloads are not visited by assembly. Plan/state/schema
+compatibility and complete selected-origin series coverage are checked. Recurrent
+windows may select a subset of training origins to satisfy declared warm-up.
+Multiple org/fold/state aggregation, H2/H3 and inference are unsupported. No
+cross-validation or evaluation result is invented, and no held-out early stopping
+or scoring runs. Metadata binds source preparation, plan, frozen state, ordered
+geometry, canonical-endian input identity, exact precision and seed. Its candidate
+ID identifies execution provenance, not serialized weight integrity; M7 must bind
+the actual artifact separately. Input identity
+includes labels as opaque integrity evidence; it is not confidentiality protection.
+
+Adapters do not recompute features or fit preprocessing. Tree inputs reject
+Boolean/missing/nonfinite/inexact values before NumPy conversion. LightGBM target
+float32 is explicitly checked even when feature dtype is float64. Tree categorical codes remain numeric ordinal inputs; native categorical mode is
+not enabled. The hidden_size parameter is neural-only and must retain its fixed
+default for trees. No lossy rounding, automatic feature dropping or scaler
+substitution is allowed. XGBoost
+preparation therefore rejects ordinary rolling fractions not exactly float32;
+operators must explicitly choose compatible canonical configurations. Neural
+values retain their declared dtype, including float64. Native model arithmetic
+itself is not claimed to be exact or identical across framework versions.
+
+Neural adapters expose M2 missing flags and original past offsets as additional
+exact discrete channels. Declared missing cells are zeroed only together with
+their explicit mask channels. Padding is excluded from RNN packing/Transformer
+pooling; temporal order and interior missing positions remain explicit. The H1
+Transformer uses one encoder layer/head and a static/known-future conditioning
+head. There is no multi-horizon autoregression or refitting. Model modules do not
+retain closed-over training tensors; original frozen preprocessing state stays
+private with the candidate owner. Genuine native training has NOT been run in M6;
+verification uses fake estimators/engines. Native training and downstream accuracy
+require separate bounded acceptance, not a SUCCESS status from a test stub.
+
+SUCCESS publishes an opaque identity-checked process-local reference and immutable
+CANDIDATE_ONLY metadata. Backend kind distinguishes test_stub from native_framework;
+it is not production approval. Copied references/owners and reconstructed metadata
+cannot authenticate the original reference. The owner stores model and original
+frozen state privately; no raw model, labels, rows or state payload is returned by
+the public report. Candidate metadata does not authorize D2 loading or prediction.
+At most eight live references are retained; discard invalidates a reference.
+
+Requests have bounded rows, cells, bytes, work estimate, steps, neural parameters,
+tree nodes and elapsed time. Model admission precedes framework import. Tree
+native fits are indivisible; cancellation/deadline checks before/after cannot
+preempt a running native call. Neural checks occur each epoch. CPU/RSS limits are
+not hard OS limits. Training calls on one service are non-reentrant/serialized.
+PyTorch CPU RNG state is restored, but the trusted host must coordinate other
+concurrent Torch users; cross-version/host bitwise model determinism is not claimed.
+Failures return fixed structured statuses without raw exceptions or partial
+candidate issuance. No automatic registration, promotion, synchronization,
+artifact writes, job/database logging or deployment occurs.
+
+M7–M9 retain multi-family artifact packaging/versioning/tracking, independent
+native acceptance, evaluation/ensemble and explicit lifecycle approval work.
+Original D2 artifact handling remains unchanged. Phase 7 runtime migration and
+legacy cleanup remain deferred. No production model approval is implied.

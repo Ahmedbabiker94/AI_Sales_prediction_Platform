@@ -1,7 +1,5 @@
 MODEL_REGISTRY = {
     "xgboost": "src.ml.models.xgboost_model.XGBoostForecastModel",
-    "lightgbm": "src.ml.models.lightgbm_model.LightGBMForecastModel",
-    "transformer": "src.ml.models.transformer_model.TransformerForecastModel",
 }
 
 
@@ -25,6 +23,9 @@ def _load_model_class(model_path: str):
 
 def get_model(model_type: str):
 
+    if type(model_type) is not str or model_type != "xgboost":
+        raise ValueError("unsupported legacy model family; use canonical adapters")
+
     model_path = MODEL_REGISTRY.get(
         model_type
     )
@@ -32,7 +33,7 @@ def get_model(model_type: str):
     if model_path is None:
 
         raise ValueError(
-            f"Unsupported model type: {model_type}"
+            "unsupported legacy model family"
         )
 
     model_class = _load_model_class(
