@@ -316,10 +316,24 @@ def test_actual_apscheduler_retains_ids_and_deferred_dispatch():
     registry=build_job_registry(Runtime(factories));scheduler=BlockingScheduler(timezone='UTC')
     register_jobs(scheduler_instance=scheduler,registry=registry)
     assert {job.id for job in scheduler.get_jobs()}==set(JOBS)
+    assert {job.id:job.name for job in scheduler.get_jobs()}=={
+        'forecast_job':'ForecastJob.run',
+        'accuracy_job':'ForecastAccuracyJob.run',
+        'report_job':'ReportGenerationJob.run',
+        'production_model_sync_job':'ProductionModelSyncJob.run',
+    }
+    from apscheduler.triggers.interval import IntervalTrigger
+    assert str(scheduler.timezone)=='UTC'
+    for job in scheduler.get_jobs():
+        assert isinstance(job.trigger,IntervalTrigger)
+        assert job.trigger.interval.total_seconds()==JOBS[job.id]*60
+        assert str(job.trigger.timezone)=='UTC'
     assert not any(factory.called for factory in factories.values())
+    assert not any(job.mock_calls for job in jobs.values())
     assert scheduler.running is False
     for job in scheduler.get_jobs():job.func()
     assert all(job.run.call_count==1 for job in jobs.values())
+    assert all(factory.call_count==1 for factory in factories.values())
 
 
 @pytest.mark.parametrize('mode',['success','denied','failure'])

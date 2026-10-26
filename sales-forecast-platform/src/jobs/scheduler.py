@@ -9,6 +9,13 @@ scheduler = None
 lock_service = None
 _lock_held = False
 
+JOB_DISPLAY_NAMES = {
+    'forecast_job': 'ForecastJob.run',
+    'accuracy_job': 'ForecastAccuracyJob.run',
+    'report_job': 'ReportGenerationJob.run',
+    'production_model_sync_job': 'ProductionModelSyncJob.run',
+}
+
 
 def configure_runtime(runtime):
     """Protected startup only. Do not reconfigure a running scheduler."""
@@ -27,6 +34,8 @@ def register_jobs(*, scheduler_instance=None, registry=None):
     for job_name, config in configured.items():
         trigger = config['trigger']
         job_args = dict(func=config['job'].run, trigger=trigger, id=job_name, replace_existing=True)
+        if job_name in JOB_DISPLAY_NAMES:
+            job_args['name'] = JOB_DISPLAY_NAMES[job_name]
         fields = ('minutes', 'hours') if trigger == 'interval' else ('day', 'day_of_week', 'hour', 'minute')
         for field in fields:
             if config.get(field) is not None:
