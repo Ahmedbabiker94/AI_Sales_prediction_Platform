@@ -226,6 +226,11 @@ class CanonicalRuntimeSnapshotService:
             value=engine.convert_numeric(row['value']),source_record_id=row['source_record_id'],
             lineage_id=row['lineage_id'],available_at=row['available_at'],evidence_reference=row['availability_reference'],
             original_value_identity=operational_json(historical_value_identity(row['value']))) for row in rows)
+        def scope_for(sid):
+            return dict(organization_id=metadata.reference.organization_id,series_id=sid,
+                metric=engine.configuration.target_metric,unit=engine.rules.measurement.unit,
+                currency=engine.rules.measurement.currency,frequency=engine.temporal.frequency.value,
+                **definitions[sid].dimensions)
         def external_values():
             if not external_rows: return ()
             # Preserve source scalars before accepted numeric admission/coercion.
@@ -234,10 +239,7 @@ class CanonicalRuntimeSnapshotService:
             index = engine._exo_index(exo); result = []
             for item in external_rows:
                 check()
-                dims = definitions[item['series_id']].dimensions
-                scope = dict(organization_id=metadata.reference.organization_id,series_id=item['series_id'],
-                    metric=engine.configuration.target_metric,unit=engine.rules.measurement.unit,
-                    currency=engine.rules.measurement.currency,frequency=engine.temporal.frequency.value,**dims)
+                scope = scope_for(item['series_id'])
                 rule = next(x for x in engine.rules.exogenous if x.field == item['field'])
                 value = engine._exo(scope,origin,origin,rule,index); check()
                 result.append(RuntimeCovariate(series_id=item['series_id'],field=rule.field,
@@ -246,31 +248,41 @@ class CanonicalRuntimeSnapshotService:
                     lineage_id=item['lineage_id'],value=value))
             return tuple(result)
         external = external_values()
-        past = []
-        if past_exo is not None:
-            candidates = {(row['series_id'], engine._time(row['period_start']), row['field']):row
-                          for row in past_exo.to_dict('records')}
-            for source in rows:
-                for rule in engine.rules.exogenous:
-                    item = candidates[(source['series_id'], source['period_start'], rule.field)]
-                    if engine._time(item['available_at']) > cutoff: raise ValueError()
-                    value = item['value']
-                    if rule.field in engine.configuration.category_encoding:
-                        value = engine._text(value); engine._category(rule.field,value,state)
-                    elif type(value) is not bool:
-                        value = engine.convert_numeric(value,rule.field)
-                    past.append(RuntimeCovariate(series_id=source['series_id'],field=rule.field,
-                        period_start=source['period_start'],period_end=source['period_end'],
-                        available_at=item['available_at'],evidence_reference=item['evidence_reference'],
-                        source_record_id=source['source_record_id'],lineage_id=source['lineage_id'],value=value))
+        def historical_values():
+            past = []
+            if past_exo is not None:
+                index = engine._exo_index(past_exo)
+                candidates = {(row['series_id'], engine._time(row['period_start']), row['field']):row
+                              for row in past_exo.to_dict('records')}
+                for source in rows:
+                    for rule in engine.rules.exogenous:
+                        check()
+                        item = candidates[(source['series_id'], source['period_start'], rule.field)]
+                        if engine._time(item['available_at']) > cutoff: raise ValueError()
+                        value = item['value']
+                        if rule.availability == 'external_forecast':
+                            # Historical P is authorized as of the request's O,
+                            # not a fabricated earlier encoder forecast origin.
+                            value = engine._exo(scope_for(source['series_id']),source['period_start'],origin,rule,index)
+                            check()
+                        if rule.field in engine.configuration.category_encoding:
+                            value = engine._text(value); engine._category(rule.field,value,state)
+                        elif rule.availability != 'external_forecast' and type(value) is not bool:
+                            value = engine.convert_numeric(value,rule.field)
+                        past.append(RuntimeCovariate(series_id=source['series_id'],field=rule.field,
+                            period_start=source['period_start'],period_end=source['period_end'],
+                            available_at=item['available_at'],evidence_reference=item['evidence_reference'],
+                            source_record_id=source['source_record_id'],lineage_id=source['lineage_id'],value=value))
+            return tuple(past)
+        past = historical_values()
         snapshot = RuntimeInputSnapshot(request=r,target_period_end=engine._advance(origin,1),
-            history=history_records,static=static,external=external,historical_covariates=tuple(past),
+            history=history_records,static=static,external=external,historical_covariates=past,
             source_dtypes=tuple((field,repr(history[field].dtype)) for field in
                 _STRUCTURAL+('available_at',)+engine.configuration.canonical_inputs),captured_rows=sizes['rows'],
             captured_bytes=sizes['bytes'],source_schema_digest=engine._schema(history))
         self._provider.require_current(metadata,budgets=read_budgets); check()
         verify()
-        if external_values() != external: raise ValueError()
+        if external_values() != external or historical_values() != past: raise ValueError()
         authorize(ctx,'return')
         check()
         return snapshot

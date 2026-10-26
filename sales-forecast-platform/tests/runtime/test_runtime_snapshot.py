@@ -1,5 +1,6 @@
 """R7-02: real finalized repository/provider fixtures; no model operations."""
 from contextlib import contextmanager
+from collections import Counter
 import hashlib
 import json
 from pathlib import Path
@@ -26,11 +27,13 @@ from src.services.canonical_training_preparation_service import (
 @pytest.fixture
 def source(tmp_path):
     factory = runpy.run_path('tests/training/test_temporal_training_preparation.py')['make_temporal'].__wrapped__(tmp_path)
-    def make(*, exo=False, four=True, rule=None):
+    def make(*, exo=False, four=True, rule=None, distinct_covariates=False):
         def expand(raw):
             if four:
                 other=raw.copy(deep=True);other['group']='food';other['reported']+=1000
                 for row in other.to_dict('records'):raw.loc[len(raw)]=row
+            if distinct_covariates:
+                raw['offer']=[f'{r.branch}-{r.group}-'+('A' if i%12<4 else 'B') for i,r in raw.iterrows()]
         b=factory(exo=exo,raw_change=expand)
         if rule is not None:
             cfg=b['configuration'].model_dump();cfg['execution']['exogenous'][0].update(availability=rule,offset=None)
@@ -252,12 +255,30 @@ def test_secret_diagnostics_and_duplicate_json(source,caplog,capsys):
     with pytest.raises(Exception):RuntimeSnapshotRequest.model_validate_json(encoded[:-1]+',"version":"1.0"}')
 
 
+def expected_external_requests(s, snapshot):
+    """Independent publication-ledger oracle, not implementation-built values."""
+    from src.features.canonical_feature_pipeline import ExternalFeatureRequest
+    cfg=s['b']['configuration'];meta=s['b']['metadata'][0]
+    definitions={v.series_id:v for v in meta.series}
+    expected=[]
+    for value in snapshot.external+snapshot.historical_covariates:
+        sid,lineage,raw=s['ledger'][value.source_record_id]
+        assert (value.series_id,value.lineage_id)==(sid,lineage)
+        assert (value.period_start,value.period_end,value.value)==(raw['from'],raw['to'],raw.offer)
+        expected.append(ExternalFeatureRequest(meta.reference.organization_id,sid,cfg.target_metric,
+            'promotion',raw['from'],raw['to'],s['request'].forecast_origin,raw.promo_release,raw.offer,
+            raw.promo_proof,CanonicalFeaturePipeline(cfg).digest,cfg.execution.measurement.unit,
+            cfg.execution.measurement.currency,cfg.execution.temporal.frequency.value,
+            tuple(sorted(definitions[sid].dimensions.items()))))
+    return tuple(expected)
+
+
 @pytest.mark.parametrize('rule',['known_in_advance','external_forecast'])
 def test_authorized_future_covariates_not_future_actuals(source,monkeypatch,rule):
     s=source(exo=True,rule=rule);seen=[]
     def approved(req):
         seen.append(req)
-        return (req.period_start==s['request'].forecast_origin and req.value=='B'
+        return (req.forecast_origin==s['request'].forecast_origin and req.value in ('A','B')
                 and req.available_at<=s['request'].capture_cutoff and req.field=='promotion')
     args=dict(s['args'],authorize_external_forecast=approved)
     service=CanonicalRuntimeSnapshotService(s['b']['provider'],**args)
@@ -270,7 +291,8 @@ def test_authorized_future_covariates_not_future_actuals(source,monkeypatch,rule
     result=service.capture(s['request'])
     assert all(c.period_start==s['request'].forecast_origin and c.value=='B' for c in result.external)
     assert all(h.value!=999999999. for h in result.history)
-    assert len(seen)==(8 if rule=='external_forecast' else 0)  # creation + terminal recheck
+    expected=expected_external_requests(s,result) if rule=='external_forecast' else ()
+    assert tuple(seen)==expected+expected  # every exact H1/past scope, then terminal replay
     if rule=='external_forecast':
         with pytest.raises(RuntimeSnapshotError):s['service'].capture(s['request'])
 
@@ -285,7 +307,7 @@ def test_future_covariate_failures(source,monkeypatch,fault):
         elif fault=='later_revision':frame.loc[future,'promotion']='SUBSTITUTED'
         return meta,ctx,frame,defs
     monkeypatch.setattr(CanonicalTrainingPreparationService,'_capture',changed)
-    def authorize(req):return fault!='denied' and req.value=='B'
+    def authorize(req):return fault!='denied' and req.value in ('A','B')
     service=CanonicalRuntimeSnapshotService(s['b']['provider'],**dict(s['args'],authorize_external_forecast=authorize))
     with pytest.raises(RuntimeSnapshotError):service.capture(s['request'])
 
@@ -409,3 +431,68 @@ def test_past_exogenous_encoder_context_is_not_falsely_claimed(source):
     data=s['request'].model_dump();data.update(forecast_origin=b['at'](7),capture_cutoff=b['at'](7),history_periods=7)
     request=RuntimeSnapshotRequest.model_validate(data)
     with pytest.raises(RuntimeSnapshotError):s['service'].validate_preparation_context(request,state,model_family='lstm')
+
+
+def test_h1_only_external_policy_rejects_historical_export(source,monkeypatch):
+    s=source(exo=True,rule='external_forecast',distinct_covariates=True);seen=[]
+    frozen=s['base'].fitted_state.model_dump_json()
+    def h1_only(req):
+        seen.append(req)
+        return req.period_start==s['request'].forecast_origin
+    service=CanonicalRuntimeSnapshotService(s['b']['provider'],**dict(s['args'],authorize_external_forecast=h1_only))
+    monkeypatch.setattr(CanonicalFeaturePipeline,'fit_state',forbidden)
+    monkeypatch.setattr(CanonicalFeaturePipeline,'prepare_inference',forbidden)
+    with pytest.raises(RuntimeSnapshotError):service.capture(s['request'])
+    assert all(req.period_start==s['request'].forecast_origin for req in seen[:-1])
+    assert seen[-1].period_start<s['request'].forecast_origin
+    assert s['base'].fitted_state.model_dump_json()==frozen and 'return' not in s['events']
+
+
+def test_all_external_values_exact_scope_twice_one_capture(source,monkeypatch):
+    s=source(exo=True,rule='external_forecast',distinct_covariates=True);seen=[];reads=[]
+    provider=s['b']['provider'];original=provider.open_read
+    @contextmanager
+    def counted(*a,**kw):
+        reads.append(1)
+        with original(*a,**kw) as session:yield session
+    monkeypatch.setattr(provider,'open_read',counted)
+    def approved(req):seen.append(req);return True
+    service=CanonicalRuntimeSnapshotService(provider,**dict(s['args'],authorize_external_forecast=approved))
+    monkeypatch.setattr(CanonicalFeaturePipeline,'fit_state',forbidden)
+    monkeypatch.setattr(CanonicalFeaturePipeline,'prepare_inference',forbidden)
+    snapshot=service.capture(s['request']);expected=expected_external_requests(s,snapshot)
+    assert tuple(seen)==expected+expected
+    assert len(set(expected))==20 and Counter(seen)==Counter({req:2 for req in expected})
+    assert len({v.value for v in snapshot.external})==4 and len(reads)==1
+    assert all(req.field=='promotion' for req in seen)  # actual-value claims are not external forecasts
+    assert all(req.forecast_origin==s['request'].forecast_origin for req in seen)
+    assert snapshot.request.dataset==s['request'].dataset
+    assert snapshot.request.capture_cutoff==s['request'].capture_cutoff
+
+
+@pytest.mark.parametrize('mode',['deny_initial','revoke_final','malformed','exception_final','cancel_final','deadline_final'])
+def test_one_historical_external_failure_is_atomic(source,monkeypatch,mode):
+    s=source(exo=True,rule='external_forecast',distinct_covariates=True)
+    sid=s['request'].dataset.series_ids[1];period=s['b']['at'](3);key=(sid,period,'promotion')
+    seen=[];counts=Counter();frozen=s['base'].fitted_state.model_dump_json()
+    def policy(req):
+        current=(req.series_id,req.period_start,req.field);seen.append(req);counts[current]+=1
+        if current!=key:return True
+        if mode=='deny_initial':return False
+        if mode=='malformed':return object()  # truthy is not authorization
+        if counts[current]==2:
+            if mode=='revoke_final':return False
+            if mode=='exception_final':raise RuntimeError('R702_HISTORICAL_SECRET_6159')
+            if mode=='cancel_final':s['control']['cancel']=True
+            if mode=='deadline_final':s['control']['clock']=s['request'].budgets.max_elapsed_seconds
+        return True
+    service=CanonicalRuntimeSnapshotService(s['b']['provider'],**dict(s['args'],authorize_external_forecast=policy))
+    monkeypatch.setattr(CanonicalFeaturePipeline,'fit_state',forbidden)
+    monkeypatch.setattr(CanonicalFeaturePipeline,'prepare_inference',forbidden)
+    with pytest.raises(RuntimeSnapshotError) as caught:
+        service.capture(s['request'],cancelled=lambda:s['control']['cancel'])
+    assert counts[key]==(1 if mode in ('deny_initial','malformed') else 2)
+    assert (seen[-1].series_id,seen[-1].period_start,seen[-1].field)==key
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+    assert 'R702_HISTORICAL_SECRET_6159' not in ''.join(traceback.format_exception(caught.value))
+    assert s['base'].fitted_state.model_dump_json()==frozen and 'return' not in s['events']
