@@ -1,35 +1,21 @@
-from src.services.forecast_accuracy_service import (
-    ForecastAccuracyService
-)
-
-from src.services.job_tracker_service import (
-    JobTrackerService
-)
-
-from src.services.job_execution_service import (
-    JobExecutionService
-)
-
-from src.core.metrics import (
-    ACCURACY_EVALUATIONS,
-    ACCURACY_JOB_COUNTER,
-    JOB_DURATION
-)
+"""Legacy job orchestration; operational collaborators require host composition."""
+from src.runtime.bootstrap import Runtime, require_runtime
 
 
 class ForecastAccuracyJob:
-
-    def __init__(self):
-
-        self.service = ForecastAccuracyService()
-
-        self.tracker = JobTrackerService()
-
-        self.execution_service = JobExecutionService()
+    def __init__(self, *, runtime=None):
+        self._runtime = require_runtime(runtime) if runtime is not None else Runtime()
 
     def run(self):
+        service = self._runtime.get('accuracy_service')
+        tracker = self._runtime.get('job_tracker')
+        execution_service = self._runtime.get('job_execution')
+        metrics = self._runtime.get('job_metrics')
+        ACCURACY_EVALUATIONS = metrics.ACCURACY_EVALUATIONS
+        ACCURACY_JOB_COUNTER = metrics.ACCURACY_JOB_COUNTER
+        JOB_DURATION = metrics.JOB_DURATION
 
-        started_at = self.execution_service.start()
+        started_at = execution_service.start()
 
         ACCURACY_JOB_COUNTER.inc()
 
@@ -40,7 +26,7 @@ class ForecastAccuracyJob:
             try:
 
                 results = (
-                    self.service
+                    service
                     .evaluate_all_pending_forecasts()
                 )
 
@@ -48,11 +34,11 @@ class ForecastAccuracyJob:
                     len(results)
                 )
 
-                self.tracker.mark_success(
+                tracker.mark_success(
                     "accuracy_job"
                 )
 
-                self.execution_service.finish_success(
+                execution_service.finish_success(
 
                     job_name="accuracy_job",
 
@@ -70,11 +56,11 @@ class ForecastAccuracyJob:
 
             except Exception as e:
 
-                self.tracker.mark_failed(
+                tracker.mark_failed(
                     "accuracy_job"
                 )
 
-                self.execution_service.finish_failed(
+                execution_service.finish_failed(
 
                     job_name="accuracy_job",
 

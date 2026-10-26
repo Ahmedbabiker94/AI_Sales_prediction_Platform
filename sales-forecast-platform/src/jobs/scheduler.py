@@ -1,121 +1,75 @@
-from apscheduler.schedulers.blocking import BlockingScheduler
+"""Explicit scheduler startup; imports/registry inspection perform no operations."""
 import signal
 import sys
-from src.jobs.job_registry import JOB_REGISTRY
-from src.services.scheduler_lock_service import (
-    SchedulerLockService
-)
+from src.jobs import job_registry
+from src.runtime.bootstrap import Runtime, require_runtime, unavailable
 
-scheduler = BlockingScheduler()
-lock_service = SchedulerLockService()
+_runtime = Runtime()
+scheduler = None
+lock_service = None
+_lock_held = False
 
 
-def register_jobs():
+def configure_runtime(runtime):
+    """Protected startup only. Do not reconfigure a running scheduler."""
+    global _runtime, scheduler, lock_service
+    if _lock_held:
+        unavailable()
+    _runtime = require_runtime(runtime)
+    job_registry.configure_runtime(_runtime)
+    scheduler = None
+    lock_service = None
 
-    for job_name, config in JOB_REGISTRY.items():
 
-        trigger = config["trigger"]
+def register_jobs(*, scheduler_instance=None, registry=None):
+    active = scheduler_instance if scheduler_instance is not None else _runtime.get('scheduler')
+    configured = job_registry.JOB_REGISTRY if registry is None else registry
+    for job_name, config in configured.items():
+        trigger = config['trigger']
+        job_args = dict(func=config['job'].run, trigger=trigger, id=job_name, replace_existing=True)
+        fields = ('minutes', 'hours') if trigger == 'interval' else ('day', 'day_of_week', 'hour', 'minute')
+        for field in fields:
+            if config.get(field) is not None:
+                job_args[field] = config[field]
+        active.add_job(**job_args)
+        print(f'Registered {job_name} ({trigger})')
 
-        job_args = {
 
-            "func": config["job"].run,
+def _release_lock():
+    global _lock_held
+    if _lock_held:
+        lock_service.release()
+        _lock_held = False
 
-            "trigger": trigger,
-
-            "id": job_name,
-
-            "replace_existing": True
-
-        }
-
-        if trigger == "interval":
-
-            if config.get("minutes") is not None:
-
-                job_args["minutes"] = config["minutes"]
-
-            if config.get("hours") is not None:
-
-                job_args["hours"] = config["hours"]
-
-        elif trigger == "cron":
-
-            if config.get("day") is not None:
-
-                job_args["day"] = config["day"]
-
-            if config.get("day_of_week") is not None:
-
-                job_args["day_of_week"] = config["day_of_week"]
-
-            if config.get("hour") is not None:
-
-                job_args["hour"] = config["hour"]
-
-            if config.get("minute") is not None:
-
-                job_args["minute"] = config["minute"]
-
-        scheduler.add_job(**job_args)
-
-        print(f"Registered {job_name} ({trigger})")
 
 def shutdown_scheduler(signum, frame):
-
-    print("\nStopping Scheduler...")
-
     try:
-
-        lock_service.release()
-
-        print("Scheduler lock released.")
-
-    except Exception as e:
-
-        print(
-            f"Failed to release scheduler lock: {e}"
-        )
-
-    scheduler.shutdown(wait=True)
-
-    print("Scheduler stopped successfully.")
-
+        _release_lock()
+    finally:
+        if scheduler is not None:
+            scheduler.shutdown(wait=True)
     sys.exit(0)
 
-def start_scheduler():
 
-    acquired = lock_service.acquire()
-
-    if not acquired:
-
-        print(
-            "Another scheduler is already running."
-        )
-
+def start_scheduler(*, install_signal_handlers=True):
+    global scheduler, lock_service, _lock_held
+    if _lock_held:
+        unavailable()
+    scheduler = _runtime.get('scheduler')
+    lock_service = _runtime.get('scheduler_lock')
+    if lock_service.acquire() is not True:
+        print('Another scheduler is already running.')
         return
+    _lock_held = True
+    try:
+        register_jobs(scheduler_instance=scheduler)
+        if install_signal_handlers:
+            signal.signal(signal.SIGINT, shutdown_scheduler)
+            signal.signal(signal.SIGTERM, shutdown_scheduler)
+        scheduler.start()
+    finally:
+        _release_lock()
 
-    print(
-        "Scheduler lock acquired."
-    )
 
-    register_jobs()
-
-    signal.signal(
-        signal.SIGINT,
-        shutdown_scheduler
-    )
-
-    signal.signal(
-        signal.SIGTERM,
-        shutdown_scheduler
-    )
-
-    print(
-        "Scheduler started..."
-    )
-
-    scheduler.start()
-    
-if __name__ == "__main__":
-
+if __name__ == '__main__':
     start_scheduler()

@@ -10,28 +10,20 @@ No direct XGBoost.
 No direct preprocessing.
 """
 
-from pathlib import Path
-import sys
+
+import logging
+from src.runtime.bootstrap import Runtime, RuntimeUnavailable, require_runtime
+
+api_logger = logging.getLogger(__name__ + ".requests")
+error_logger = logging.getLogger(__name__ + ".errors")
 
 import pandas as pd
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.celery_app import (
-    celery_app
-)
-from src.tasks import (
-    forecast_next_week_task
-)
 
-from src.services.forecast_service import (
-    ForecastService
-)
 
-from src.services.recursive_forecast_service import (
-    RecursiveForecastService
-)
 
 from api.schemas import (
     PredictRequest,
@@ -58,49 +50,19 @@ from starlette.middleware.base import (
     BaseHTTPMiddleware
 )
 
-from src.core.logger import (
-    api_logger
-)
 # from src.core.metrics import (
 #     metrics_service
 # )
 from src.core.model_monitor import (
     model_monitor
 )
-from src.services.dashboard_service import (
-    DashboardService
-)
-from src.insights import (
-    generate_forecast_insights
-)
-from src.services.report_service import (
-    ReportService
-)
-from src.services.monitoring_service import (
-    MonitoringService
-)
-from src.services.monitoring_service import (
-    MonitoringService
-)
 from fastapi.responses import Response
 
-from prometheus_client import (
-    generate_latest,
-    CONTENT_TYPE_LATEST
-)
-from src.services.job_health_metrics_service import (
-    JobHealthMetricsService
-)
 # ─────────────────────────────────────
 # PATH SETUP
 # ─────────────────────────────────────
 
-ROOT = Path(__file__).resolve().parent.parent
 
-sys.path.insert(
-    0,
-    str(ROOT / "src")
-)
 
 #_____________________________________
 # class Middleware 
@@ -146,9 +108,6 @@ app = FastAPI(
     version="3.0.0"
 )
 
-from src.core.logger import (
-    error_logger
-)
 
 app.add_middleware(
     CORSMiddleware,
@@ -166,47 +125,24 @@ app.add_middleware(
 # GLOBAL FORECAST SERVICE
 # ─────────────────────────────────────
 
-forecast_service = None
-recursive_forecast_service = None
-dashboard_service = DashboardService()
-# dashboard_service = None
-report_service = ReportService()
-# monitoring_service = MonitoringService()
-monitoring_service = (
-    MonitoringService()
-)
-job_health_metrics_service = JobHealthMetricsService()
+app.state.runtime = Runtime()
 
-# ─────────────────────────────────────
-# STARTUP
-# ─────────────────────────────────────
+
+def configure_runtime(runtime):
+    """Trusted startup only. Configure before serving; never from request data."""
+    app.state.runtime = require_runtime(runtime)
+
+
+def _dependency(name):
+    return app.state.runtime.get(name)
+
 
 @app.on_event("startup")
 def startup_event():
+    # Import, OpenAPI inspection and startup never construct operational services.
+    # Runtime-dependent requests fail closed until the host explicitly composes.
+    pass
 
-    global forecast_service
-    global recursive_forecast_service
-    global dashboard_service
-
-    dashboard_service = (
-        DashboardService()
-    )
-
-    print(
-        "Initializing Forecast Service..."
-    )
-
-    forecast_service = ForecastService(
-    model_type="production"
-    )
-
-    recursive_forecast_service = (
-        RecursiveForecastService()
-    )
-    print(
-        "Forecast Service initialized."
-    )
-    
 
 # ─────────────────────────────────────
 # HEALTH
@@ -220,7 +156,7 @@ def health():
 
     return HealthResponse(
         status="ok",
-        model_loaded=True,
+        model_loaded=False,
         model_version="production"
     )
 
@@ -239,7 +175,7 @@ def predict(req: PredictRequest):
     ])
 
     prediction = (
-        forecast_service.forecast_single(df)
+        _dependency("forecast").forecast_single(df)
     )
 
     prediction = round(
@@ -277,7 +213,7 @@ def batch_predict(req: BatchPredictRequest):
     df = pd.DataFrame(rows)
 
     predictions = (
-        forecast_service.forecast_dataframe(df)
+        _dependency("forecast").forecast_dataframe(df)
     )
 
     predictions = [
@@ -305,7 +241,7 @@ def forecast_week(req: ForecastWeekRequest):
     )
 
     predictions = (
-        recursive_forecast_service.forecast(
+        _dependency("recursive_forecast").forecast(
             store=req.Store,
             dept=req.Dept,
             weeks=1
@@ -340,7 +276,7 @@ def forecast(req: ForecastRequest):
     )
 
     predictions = (
-        recursive_forecast_service.forecast(
+        _dependency("recursive_forecast").forecast(
             store=req.Store,
             dept=req.Dept,
             weeks=req.weeks
@@ -381,7 +317,7 @@ def forecast_async(
     dept: int
 ):
 
-    task = forecast_next_week_task.delay(
+    task = _dependency("forecast_task").delay(
         store,
         dept
     )
@@ -398,7 +334,7 @@ def forecast_async(
 def task_status(task_id: str):
 
     task_result = (
-        celery_app.AsyncResult(task_id)
+        _dependency("task_backend").AsyncResult(task_id)
     )
 
     response = {
@@ -445,7 +381,7 @@ def model_stats():
 def dashboard_accuracy():
 
     data = (
-        dashboard_service
+        _dependency("dashboard")
         .get_accuracy_summary()
     )
 
@@ -462,7 +398,7 @@ def dashboard_accuracy():
 def worst_forecasts():
 
     return (
-        dashboard_service
+        _dependency("dashboard")
         .get_worst_forecasts()
     )
 
@@ -476,7 +412,7 @@ def worst_forecasts():
 def dashboard_insights():
 
     result = (
-        dashboard_service
+        _dependency("dashboard")
         .get_forecast_insights()
     )
 
@@ -494,7 +430,7 @@ def dashboard_insights():
 def generate_dashboard_report():
 
     return (
-        report_service
+        _dependency("report")
         .generate_report()
     )
 
@@ -508,7 +444,7 @@ def generate_dashboard_report():
 def monitoring_health():
 
     result = (
-        monitoring_service
+        _dependency("monitoring")
         .get_health_status()
     )
 
@@ -538,7 +474,7 @@ def monitoring_health():
 # def monitoring_metrics():
 
 #     metrics = (
-#         monitoring_service
+#         _dependency("monitoring")
 #         .get_metrics()
 #     )
 
@@ -552,7 +488,9 @@ def monitoring_health():
 @app.get("/metrics")
 def prometheus_metrics():
 
-    job_health_metrics_service.refresh()
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+    _dependency("job_health").refresh()
 
     return Response(
         generate_latest(),
@@ -569,7 +507,7 @@ def prometheus_metrics():
 def dashboard_job_history():
 
     rows = (
-        dashboard_service
+        _dependency("dashboard")
         .get_job_history()
     )
 
@@ -615,9 +553,7 @@ async def global_exception_handler(
     exc: Exception
 ):
 
-    error_logger.exception(
-        f"Unhandled Exception: {str(exc)}"
-    )
+    error_logger.error("Unhandled API exception")
 
     return JSONResponse(
         status_code=500,
@@ -625,3 +561,7 @@ async def global_exception_handler(
             "detail": "Internal Server Error"
         }
     )
+
+@app.exception_handler(RuntimeUnavailable)
+async def runtime_unavailable_handler(request: Request, exc: RuntimeUnavailable):
+    return JSONResponse(status_code=503, content={"detail": "Runtime dependency unavailable"})

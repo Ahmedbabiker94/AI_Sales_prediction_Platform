@@ -1,34 +1,20 @@
-from src.services.recursive_forecast_service import (
-    RecursiveForecastService
-)
-
-from src.repositories.job_status_repository import (
-    JobStatusRepository
-)
-
-from src.services.job_execution_service import (
-    JobExecutionService
-)
-
-from src.core.metrics import (
-    FORECAST_JOB_COUNTER,
-    JOB_DURATION
-)
+"""Legacy job orchestration; operational collaborators require host composition."""
+from src.runtime.bootstrap import Runtime, require_runtime
 
 
 class ForecastJob:
-
-    def __init__(self):
-
-        self.service = RecursiveForecastService()
-
-        self.status_repo = JobStatusRepository()
-
-        self.execution_service = JobExecutionService()
+    def __init__(self, *, runtime=None):
+        self._runtime = require_runtime(runtime) if runtime is not None else Runtime()
 
     def run(self):
+        service = self._runtime.get('recursive_forecast')
+        status_repo = self._runtime.get('job_status')
+        execution_service = self._runtime.get('job_execution')
+        metrics = self._runtime.get('job_metrics')
+        FORECAST_JOB_COUNTER = metrics.FORECAST_JOB_COUNTER
+        JOB_DURATION = metrics.JOB_DURATION
 
-        started_at = self.execution_service.start()
+        started_at = execution_service.start()
 
         FORECAST_JOB_COUNTER.inc()
 
@@ -60,7 +46,7 @@ class ForecastJob:
 
                 for item in forecast_targets:
 
-                    predictions = self.service.forecast(
+                    predictions = service.forecast(
 
                         store=item["store"],
                         dept=item["dept"],
@@ -71,14 +57,14 @@ class ForecastJob:
                     total_predictions += len(predictions)
 
 
-                self.status_repo.update_status(
+                status_repo.update_status(
 
                     "forecast_job",
                     "success"
 
                 )
 
-                self.execution_service.finish_success(
+                execution_service.finish_success(
 
                     job_name="forecast_job",
                     started_at=started_at,
@@ -92,14 +78,14 @@ class ForecastJob:
 
             except Exception as e:
 
-                self.status_repo.update_status(
+                status_repo.update_status(
 
                     "forecast_job",
                     "failed"
 
                 )
 
-                self.execution_service.finish_failed(
+                execution_service.finish_failed(
 
                     job_name="forecast_job",
                     started_at=started_at,

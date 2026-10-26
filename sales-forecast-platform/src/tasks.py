@@ -1,31 +1,31 @@
 from src.celery_app import celery_app
 
-from src.services.recursive_forecast_service import (
-    RecursiveForecastService
-)
+import logging
+from src.runtime.bootstrap import Runtime, require_runtime
 
-from src.core.logger import (
-    get_logger
-)
-
-logger = get_logger("celery")
-
-forecast_service = (
-    RecursiveForecastService()
-)
+logger = logging.getLogger(__name__)
+_runtime = Runtime()
 
 
-@celery_app.task
+def configure_runtime(runtime):
+    """Protected worker startup configuration; never accept factories in task data."""
+    global _runtime
+    _runtime = require_runtime(runtime)
+
+
+@celery_app.task(name="src.tasks.test_task")
 def test_task(x, y):
 
     return x + y
 
 
-@celery_app.task
+@celery_app.task(name="src.tasks.forecast_next_week_task")
 def forecast_next_week_task(
     store,
     dept
 ):
+
+    forecast_service = _runtime.get("recursive_forecast")
 
     logger.info(
         f"Async forecast started | Store={store} | Dept={dept}"

@@ -1,38 +1,21 @@
-from report_service.report_generator import (
-    ReportGenerator
-)
-
-from src.pdf_report import (
-    save_report_as_pdf
-)
-
-from src.services.job_tracker_service import (
-    JobTrackerService
-)
-
-from src.services.job_execution_service import (
-    JobExecutionService
-)
-
-from src.core.metrics import (
-    REPORT_GENERATED,
-    JOB_DURATION
-)
+"""Legacy job orchestration; operational collaborators require host composition."""
+from src.runtime.bootstrap import Runtime, require_runtime
 
 
 class ReportGenerationJob:
-
-    def __init__(self):
-
-        self.generator = ReportGenerator()
-
-        self.tracker = JobTrackerService()
-
-        self.execution_service = JobExecutionService()
+    def __init__(self, *, runtime=None):
+        self._runtime = require_runtime(runtime) if runtime is not None else Runtime()
 
     def run(self):
+        generator = self._runtime.get('report_generator')
+        save_report_as_pdf = self._runtime.get('pdf_writer')
+        tracker = self._runtime.get('job_tracker')
+        execution_service = self._runtime.get('job_execution')
+        metrics = self._runtime.get('job_metrics')
+        REPORT_GENERATED = metrics.REPORT_GENERATED
+        JOB_DURATION = metrics.JOB_DURATION
 
-        started_at = self.execution_service.start()
+        started_at = execution_service.start()
 
         with JOB_DURATION.labels(
             job_name="report_job"
@@ -41,7 +24,7 @@ class ReportGenerationJob:
             try:
 
                 report_text = (
-                    self.generator
+                    generator
                     .generate_text_report()
                 )
 
@@ -53,11 +36,11 @@ class ReportGenerationJob:
 
                 REPORT_GENERATED.inc()
 
-                self.tracker.mark_success(
+                tracker.mark_success(
                     "report_job"
                 )
 
-                self.execution_service.finish_success(
+                execution_service.finish_success(
 
                     job_name="report_job",
 
@@ -75,11 +58,11 @@ class ReportGenerationJob:
 
             except Exception as e:
 
-                self.tracker.mark_failed(
+                tracker.mark_failed(
                     "report_job"
                 )
 
-                self.execution_service.finish_failed(
+                execution_service.finish_failed(
 
                     job_name="report_job",
 
