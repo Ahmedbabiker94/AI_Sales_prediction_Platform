@@ -305,3 +305,82 @@ def test_sanitized_callback_failure_has_no_diagnostic_output(setup,monkeypatch,c
     captured=capsys.readouterr()
     assert 'R703_CALLBACK_SECRET_5183' not in captured.err+captured.out+caplog.text+repr(out)
     assert not recwarn
+
+
+def _traced_inspection(b):
+    """Observe supported callback edges; no private registry or service patching."""
+    from collections import Counter
+    counts=Counter();events=[];control={'target':None,'action':None}
+    holder={};request=b['use_request']
+    def edge(kind):
+        counts[kind]+=1;events.append((kind,counts[kind]))
+        if control['target']==(kind,counts[kind]):control['action']()
+    def clock():edge('clock');return b['time']['now']
+    def elapsed():edge('elapsed');return b['runtime_control']['elapsed']
+    def cancelled():edge('cancelled');return b['runtime_control']['cancel']
+    operator,service=bootstrap_runtime_model_use(b['use_provider'],host_context_id=request.host_context_id,
+        clock=clock,elapsed_clock=elapsed)
+    handle,receipt=operator.grant_inspection(request,valid_from=b['time']['now']-timedelta(seconds=1),
+        expires_at=b['time']['now']+timedelta(seconds=120))
+    holder.update(operator=operator,service=service,handle=handle,receipt=receipt)
+    def reset():counts.clear();events.clear()
+    holder.update(counts=counts,events=events,control=control,reset=reset,
+        decide=lambda:service.decide(request,capability=handle,cancelled=cancelled))
+    reset();return holder
+
+
+def _assert_no_admitted_evidence(result):
+    assert result.status=='DENIED'
+    assert all(getattr(result,key) is None for key in ('request_id','candidate_id','package_id','snapshot_id',
+        'family','inspection_grant_id','verified_evidence_id'))
+    assert not result.executable_permission and not result.production_permission
+
+
+@pytest.mark.parametrize('edge',['cancelled','clock','elapsed'])
+def test_revocation_on_actual_final_callback_edge(setup,monkeypatch,edge):
+    b=setup('transformer');forbidden=trap(b,monkeypatch);t=_traced_inspection(b)
+    original=t['decide']();assert original.status=='UNAVAILABLE'
+    # Discover the actual final occurrence from a successful public invocation.
+    # This continues to target the final edge if the checkpoint count changes.
+    trace=tuple(t['events']);target=next(e for e in reversed(trace) if e[0]==edge)
+    t['reset']();revoked=[]
+    def revoke():t['operator'].revoke(t['handle']);revoked.append(target)
+    t['control'].update(target=target,action=revoke)
+    result=t['decide']()
+    assert revoked==[target] and t['counts'][edge]==target[1]
+    # All callbacks through the chosen revoking edge retain their normal order.
+    assert tuple(t['events'][:trace.index(target)+1])==trace[:trace.index(target)+1]
+    _assert_no_admitted_evidence(result)
+    _assert_no_admitted_evidence(t['decide']())
+    forbidden.assert_not_called()
+
+
+@pytest.mark.parametrize('fault',['cancel','deadline'])
+def test_final_wallclock_callback_interruption_still_rejects(setup,monkeypatch,fault):
+    b=setup('transformer');forbidden=trap(b,monkeypatch);t=_traced_inspection(b)
+    assert t['decide']().status=='UNAVAILABLE'
+    target=next(e for e in reversed(t['events']) if e[0]=='clock')
+    t['reset']();fired=[]
+    def interrupt():
+        fired.append(target)
+        if fault=='cancel':b['runtime_control']['cancel']=True
+        else:b['runtime_control']['elapsed']=b['use_request'].limits.max_elapsed_seconds
+    t['control'].update(target=target,action=interrupt)
+    result=t['decide']()
+    assert fired==[target] and result.reason=='CANCELLED_OR_EXPIRED'
+    _assert_no_admitted_evidence(result)
+    forbidden.assert_not_called()
+
+
+def test_no_revocation_keeps_trace_evidence_and_non_executable_decision(setup,monkeypatch):
+    b=setup('transformer');forbidden=trap(b,monkeypatch);t=_traced_inspection(b)
+    first=t['decide']();trace=tuple(t['events'])
+    t['reset']();second=t['decide']()
+    assert first.status==second.status=='UNAVAILABLE'
+    assert tuple(t['events'])==trace and first.canonical_bytes==second.canonical_bytes
+    assert first.verified_evidence_id==second.verified_evidence_id
+    assert first.inspection_grant_id==t['receipt'].grant_id
+    assert first.snapshot_id==b['use_request'].snapshot_id
+    assert b['runtime_control']['captures']==4  # two fresh captures per inspection
+    assert not first.executable_permission and not first.production_permission
+    forbidden.assert_not_called()

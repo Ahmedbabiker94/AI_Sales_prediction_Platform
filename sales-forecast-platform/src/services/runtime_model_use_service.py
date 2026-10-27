@@ -63,9 +63,15 @@ class _Authority:
         self.last_time=now
         return now
 
-    def require(self,handle,request):
+    def require(self,handle,request,*,before_validate=None):
         with self.lock:
-            record=self.records.get(id(handle)); now=self.now()
+            now=self.now()
+        # Preserve interruption callbacks outside the registry critical section.
+        if before_validate is not None: before_validate()
+        with self.lock:
+            # Clock/interruption callbacks may synchronously revoke and replace
+            # the record. Fetch it only after every such callback has completed.
+            record=self.records.get(id(handle))
             if (type(handle) is not RuntimeInspectionCapability or record is None or record.handle is not handle
                     or record.revoked or request.host_context_id != self.context
                     or record.receipt.request_id != request.request_id
@@ -128,10 +134,11 @@ class RuntimeModelUseService:
             started=tick()
             def interruption():
                 return cancelled() is not False or tick()-started>=req.limits.max_elapsed_seconds
+            def check_interruption():
+                if interruption(): raise _Interrupted()
             def check():
-                if interruption(): raise _Interrupted()
-                root.require(capability,req)
-                if interruption(): raise _Interrupted()
+                check_interruption()
+                root.require(capability,req,before_validate=check_interruption)
             check()
             grant=root.require(capability,req)
             first=root.provider.verify(req,check,interruption);check()
