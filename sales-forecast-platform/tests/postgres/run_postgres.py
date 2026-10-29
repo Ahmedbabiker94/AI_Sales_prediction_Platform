@@ -145,7 +145,7 @@ def build_client(wheelhouse, work):
     return identity
 
 
-def run(*, allow, wheelhouse, evidence):
+def run(*, allow, wheelhouse, evidence, _host_stage=None):
     if allow is not True:
         raise ValueError('explicit disposable-database authorization required')
     if evidence.absolute() != evidence.resolve():
@@ -257,6 +257,9 @@ def run(*, allow, wheelhouse, evidence):
                 raise RuntimeError('bounded PostgreSQL '+stage+' tests failed')
             command(['docker', 'rm', name])
             containers.remove(name)
+        if _host_stage is not None:
+            _host_stage(server=server, socket=socket, client=client, envfile=envfile,
+                run_id=run_id, database=database, record=record)
         record['result'] = 'PASS'
     except BaseException as error:
         record['result'] = 'FAILED'

@@ -167,7 +167,7 @@ class _HostAdmission:
         return result
 
 
-def run(*, allow_native_handoff=False, use_recovered_image=False, approve=None, cancelled=lambda: False, timeout=240):
+def run(*, allow_native_handoff=False, use_recovered_image=False, approve=None, cancelled=lambda: False, timeout=240, _retention=None):
     """Trusted host Python API; explicit authorization plus full-content approval.
 
     No detached channel, command, source path, image or saved log argument exists.
@@ -176,6 +176,10 @@ def run(*, allow_native_handoff=False, use_recovered_image=False, approve=None, 
     if allow_native_handoff is not True or use_recovered_image is not True or not callable(approve):
         raise HandoffError('explicit protected native handoff authorization required')
     if type(timeout) not in (int,float) or not 0<timeout<=240: raise HandoffError('invalid timeout')
+    if _retention is not None:
+        from src.handoff.host_admission import ProtectedHostAdmissions
+        if type(_retention) is not tuple or len(_retention)!=2 or type(_retention[0]) is not ProtectedHostAdmissions:
+            raise HandoffError('protected original retention required')
     P0.validate_recovery(use_recovered_image=True)
     source=source_identity(PROJECT)
     owned=OwnedContainer(); process=None; admission=None; result=None; channel=None
@@ -218,6 +222,9 @@ def run(*, allow_native_handoff=False, use_recovered_image=False, approve=None, 
         release=channel.receive('FINAL_RELEASE',context)
         if source_identity(PROJECT)!=source: raise HandoffError('source changed before admission')
         result=admission.admit(release,channel)
+        if _retention is not None:
+            from src.handoff.host_admission import ProtectedHostAdmissions
+            ProtectedHostAdmissions._stage(_retention[0],_retention[1],admission,channel,release)
         channel.send(frame('ACK',context,{'release':release['release'],'state':'VALIDATED_NO_WRITE'}))
         # Continue bounded draining; unexpected trailing stdout is not a second release.
         process.stdin.close()
