@@ -14,3 +14,11 @@ class ForecastReadProvider:
 
     def lookup(self, idempotency_id):
         return self.repository.lookup(idempotency_id)
+
+    def lookup_claimed(self, idempotency_id, claim):
+        from src.providers._forecast_read_order import _consume_claim
+        original = _consume_claim(self, claim, idempotency_id)
+        try:
+            return self.lookup(idempotency_id)
+        finally:
+            original.finished = True
