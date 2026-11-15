@@ -1,5 +1,6 @@
 # Host-only unit evidence. Adversarial boundary audit is a NEGATIVE finding;
 # this workflow does NOT certify isolation or PostgreSQL integration.
+# The evidence redaction tests mock Docker; manifest status changes require CI verification.
 name: R7 B5-4-1 focused offline verification
 
 on:
