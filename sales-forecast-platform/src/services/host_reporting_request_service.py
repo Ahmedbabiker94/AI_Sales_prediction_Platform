@@ -71,42 +71,42 @@ class ReportingRequestDispatcher:
             record = self._records.get(id(request))
             if (record is None or record.handle is not request
                     or record.issuer is not self._issuer_identity):
-                return False
+                return None
             marker = object()
             if record.use.setdefault(0, marker) is not marker:
-                return False
+                return None
             self._records.pop(id(request), None)
-            return True
+            return record
         try:
-            consumed = _locked_call((self._registry_lock,), take_once)
+            approved = _locked_call((self._registry_lock,), take_once)
         except Exception:
             return ReportingOutcome(status='DENIED')
-        if not consumed:
+        if approved is None:
             return ReportingOutcome(status='DENIED')
         try:
             _HOST_HEALTH.require()
             if not _authentic_reporting_sources(self._reader, self._evaluator):
                 return ReportingOutcome(status='DENIED')
             state = self._reader._state
-            forecast = ExactForecastRead.model_validate_json(record.forecast_json)
+            forecast = ExactForecastRead.model_validate_json(approved.forecast_json)
             # The original grant is still live, scoped and unrevoked, independently
             # of approval. Source service checks it again at actual read/publication.
             now, elapsed = state.clocks(lambda: False)
-            if not (now < record.forecast_expiry[0] and elapsed < record.forecast_expiry[1]):
+            if not (now < approved.forecast_expiry[0] and elapsed < record.forecast_expiry[1]):
                 return ReportingOutcome(status='DENIED')
-            state.require(record.forecast_grant, forecast, lambda: False)
-            if record.action == 'FORECAST':
+            state.require(approved.forecast_grant, forecast, lambda: False)
+            if approved.action == 'FORECAST':
                 return build_canonical_reporting_reader(self._reader).read_forecast(
                     record.forecast_grant, forecast)
             if record.action != 'SYNTHETIC_ACCURACY' or self._evaluator is None:
                 return ReportingOutcome(status='DENIED')
-            labels = ExactLabelRead.model_validate_json(record.label_json)
+            labels = ExactLabelRead.model_validate_json(approved.label_json)
             peer = self._evaluator._labels
             lnow, lelapsed = peer.clocks(lambda: False)
-            if not (lnow < record.label_expiry[0] and lelapsed < record.label_expiry[1]):
+            if not (lnow < approved.label_expiry[0] and lelapsed < record.label_expiry[1]):
                 return ReportingOutcome(status='DENIED')
             def check_label():
-                return peer.require(record.label_grant, labels.canonical_json, lnow, lelapsed)
+                return peer.require(approved.label_grant, labels.canonical_json, lnow, lelapsed)
             _locked_call((peer.lock,), check_label)
             return build_canonical_reporting_reader(self._reader, self._evaluator).read_synthetic_accuracy(
                 record.forecast_grant, forecast, record.label_grant, labels)
