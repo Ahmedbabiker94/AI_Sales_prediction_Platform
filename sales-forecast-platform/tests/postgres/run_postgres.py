@@ -186,8 +186,13 @@ def verified_clean_source():
     top = command(['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel']).stdout.strip()
     # This repository keeps the Python project in sales-forecast-platform/.
     # Validate the entire containing Git worktree, not only the subdirectory.
-    if (not top or Path(top).resolve(strict=True) != ROOT.parent.resolve(strict=True)
-            or ROOT.name != 'sales-forecast-platform'):
+    try:
+        root_matches = (bool(top)
+                        and Path(top).resolve(strict=True) == ROOT.parent.resolve(strict=True)
+                        and ROOT.name == 'sales-forecast-platform')
+    except (OSError, RuntimeError):
+        root_matches = False
+    if not root_matches:
         raise ValueError('disposable test source must be expected Git worktree')
     commit = command(['git', '-C', str(ROOT), 'rev-parse', '--verify', 'HEAD']).stdout.strip()
     if len(commit) not in (40, 64) or any(ch not in '0123456789abcdef' for ch in commit):
