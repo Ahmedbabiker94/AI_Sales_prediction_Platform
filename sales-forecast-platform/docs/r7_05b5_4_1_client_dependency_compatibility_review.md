@@ -80,3 +80,12 @@ image is not yet downloaded, built or exercised.
 **Current decision: R7-05B5-4-1 OPEN / NO-GO.**
 No image substitution, Docker pull, client build, live database execution,
 merge, deployment or move to B5-4-2 is authorized by this document.
+
+
+## Candidate wheelhouse generator — staged, not executed
+
+Added `tests/postgres/prepare_client_wheelhouse_candidate.py` as a separate optional **proposal artifact**. It does not replace the accepted `tests/postgres/requirements.lock` or Dockerfile, build a container, start PostgreSQL, or write to existing evidence. A reviewer-controlled Python 3.11 Linux/amd64 staging host may invoke it only with `--allow-pypi-download` and a **new absent output directory**; it uses official PyPI for binary-only top-level versions already exercised by focused CI: pytest 8.4.2, pydantic 2.13.3, pandas 2.3.3, numpy 2.4.4, and the original externally verified psycopg2-binary 2.9.12 wheel.
+
+Outputs are explicitly named `candidate-requirements.lock` and `candidate-manifest.json`; every downloaded wheel is SHA-256 inventoried. This is an **unreviewed candidate**, not a proven complete dependency lock. Failure leaves `INCOMPLETE_DO_NOT_USE`. Later review must verify distribution metadata and **all transitive dependency closure offline**, and prove import compatibility with the exact proposed CPython image in an isolated test before updating any accepted harness.
+
+The Windows-created Git worktree is not usable by WSL Git without a separate clean Linux checkout; do not run original PostgreSQL harness from that worktree. No wheel downloads are performed by the GitHub-focused Python test workflow.
