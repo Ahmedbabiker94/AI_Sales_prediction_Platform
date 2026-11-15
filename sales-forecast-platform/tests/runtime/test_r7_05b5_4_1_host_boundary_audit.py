@@ -89,3 +89,26 @@ def test_exposed_dispatcher_reference_allows_bypass_of_request_one_use(monkeypat
         ExactForecastRead.model_validate_json(original.forecast_json))
     assert direct.status == 'VERIFIED_RECORD_SET'
     assert lookup.call_count == 2
+
+
+@pytest.mark.parametrize('kind', ['issuer', 'dispatcher'])
+def test_runtime_refuses_direct_host_capability_injection(monkeypatch, kind):
+    from src.runtime.bootstrap import Runtime, RuntimeUnavailable
+    batch = F['make_batch']()
+    s = F['setup_context'](batch, (F['snapshot'](batch),))
+    monkeypatch.setattr(ForecastReadProvider, 'lookup',
+                        Mock(return_value=F['stored'](batch)))
+    issuer, dispatcher = build_host_reporting_requests(
+        s.reader, s.fa, operator=s.op, evaluator=s.service, label_authority=s.la)
+    capability = issuer if kind == 'issuer' else dispatcher
+    runtime = Runtime({'report': lambda: capability})
+    with pytest.raises(RuntimeUnavailable):
+        runtime.get('report')
+    assert not runtime.is_resolved('report')
+
+
+def test_runtime_still_allows_unrelated_trusted_factory():
+    from src.runtime.bootstrap import Runtime
+    ordinary = object()
+    runtime = Runtime({'report': lambda: ordinary})
+    assert runtime.get('report') is ordinary
