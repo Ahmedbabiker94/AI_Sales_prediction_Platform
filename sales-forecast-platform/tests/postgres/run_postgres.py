@@ -29,13 +29,31 @@ WHEEL = 'psycopg2_binary-2.9.12-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_
 WHEEL_SHA256 = 'e4e184b1fb6072bf05388aa41c697e1b2d01b3473f107e7ec44f186a32cfd0b8'
 ROOT = Path(__file__).resolve().parents[2]
 _LIFECYCLE = ContextVar('postgres_test_lifecycle', default=None)
+_TEST_SECRETS = ContextVar('postgres_test_secret_values', default=())
 
 
 class CleanupUnconfirmed(RuntimeError):
     pass
 
 
+def redact_test_secrets(value):
+    """Remove exact disposable password values before publishing any text."""
+    if type(value) is not str:
+        raise TypeError('text expected')
+    matches = 0
+    for secret in _TEST_SECRETS.get():
+        if secret and secret in value:
+            matches += value.count(secret)
+            value = value.replace(secret, '<redacted-disposable-secret>')
+    if matches:
+        lifecycle = _LIFECYCLE.get()
+        if lifecycle is not None:
+            lifecycle['secret_redactions'] = lifecycle.get('secret_redactions', 0) + matches
+    return value
+
+
 def write_evidence(path, text):
+    text = redact_test_secrets(text)
     if path.absolute() != path.resolve():
         raise ValueError('symlink evidence output rejected')
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
@@ -103,7 +121,7 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
                 attempt['local_reaped'] = process.returncode is not None
         raise
     if check and result.returncode:
-        raise RuntimeError('disposable PostgreSQL command failed: '+result.stderr[-2000:])
+        raise RuntimeError('disposable PostgreSQL command failed: '+redact_test_secrets(result.stderr[-2000:]))
     return result
 
 
@@ -182,6 +200,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         raise KeyboardInterrupt('test runner interrupted')
     signal.signal(signal.SIGTERM, interrupted)
     passwords = {role: 'test-only-'+secrets.token_hex(20) for role in ('admin', 'migrator', 'writer', 'reader')}
+    secret_token = _TEST_SECRETS.set(tuple(passwords.values()))
     empty_proxies = [item for key in PROXIES for item in ('-e', key+'=')]
     isolation = ['--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--cpus=1', '--pids-limit=64']
 
@@ -264,8 +283,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             info = json.loads(command(['docker', 'inspect', name]).stdout)[0]
             info['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in info['Config']['Env']]
             record['operations'].append({'stage': stage, 'exit_code': result.returncode, 'inspect': info})
-            print(result.stdout, flush=True)
-            print(result.stderr, flush=True)
+            print(redact_test_secrets(result.stdout), flush=True)
+            print(redact_test_secrets(result.stderr), flush=True)
             if result.returncode:
                 raise RuntimeError('bounded PostgreSQL '+stage+' tests failed')
             command(['docker', 'rm', name])
@@ -330,7 +349,13 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         if record['credential_file_cleanup'] == 'UNCONFIRMED':
             record['cleanup_passed'] = False
             record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+        # An unexpected occurrence of a test password in logs/metadata is
+        # redacted before writing, and the run is still rejected.
+        if record.get('secret_redactions', 0):
+            record['cleanup_passed'] = False
+            record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
         write_evidence(evidence/'run-manifest.json', json.dumps(record, indent=2, sort_keys=True))
+        _TEST_SECRETS.reset(secret_token)
         if not record['cleanup_passed']:
             raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
 
