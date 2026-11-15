@@ -48,3 +48,11 @@ The GitHub-hosted focused workflow does **not** provision this PostgreSQL enviro
 - The second test statically checks current `api/main.py` and `src/runtime/bootstrap.py` have no direct B5-4-1 service imports. It does **not** prove a complete import/deployment graph, absence of dynamic indirect references, or future callers.
 - Both issuer and dispatcher must remain host-private; request consumers must not receive either object. A future untrusted transport boundary is **NOT IMPLEMENTED** and remains out of current operational integration. If separate-process authentication/transport is desired, review the scope as an explicit architecture decision first; do not bolt an unaudited API onto this milestone.
 - A CI update adds this module to the focused verification command. Do not claim it passed until job logs verify the new module actually ran.
+
+
+## 2026-11-15 host-only contract correction and CI
+- Focused GitHub Actions run `43707789179` executed the new host-boundary audit, the B5-4-1 unit tests and retained B5-3 regression suite. **44 passed on CPython 3.11 and 44 passed on CPython 3.12**, as confirmed from job logs.
+- Updated `host_reporting_request_service.py` documentation to require BOTH the issuer and dispatcher remain within the trusted host. Neither Python object nor its original grants/request handles should be exposed to external or untrusted Python consumers. This is a contract correction only, **not a newly enforced process boundary**.
+- The audit test deliberately proves the raw dispatcher exposes its original Reader and pending grant; therefore the threat-model finding is still **OPEN** whenever an untrusted Python component can hold a dispatcher reference.
+- Existing operational API entrypoints are not currently bound to B5-4-1 in the inspected files. No complete caller/import/deployment graph is proven and no external transport or independent reviewer has been added.
+- PostgreSQL 16.15 disposable integration remains **UNEXECUTED**. Acceptance remains **NO-GO**, and the isolated Draft PR must not be merged.
