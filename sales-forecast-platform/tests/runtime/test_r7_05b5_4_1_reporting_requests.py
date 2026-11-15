@@ -176,3 +176,36 @@ def test_pending_capacity_denies_without_eviction(context, monkeypatch):
     second = forecast(s)
     assert s.dispatcher.execute(second).status == 'AVAILABLE'
     assert s.lookup.call_count == 2
+
+
+def test_concurrent_capacity_never_exceeds_limit(context, monkeypatch):
+    from src.services import host_reporting_request_service as requests
+    s = context
+    monkeypatch.setattr(requests, '_MAX_OUTSTANDING_REQUESTS', 4)
+
+    def attempt(_):
+        try:
+            return forecast(s)
+        except ReportingRequestDenied:
+            return None
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        handles = list(pool.map(attempt, range(32)))
+    issued = [h for h in handles if h is not None]
+    assert len(issued) <= 4
+    assert len(s.dispatcher._records) == len(issued)
+    s.lookup.assert_not_called()
+
+
+def test_capacity_recovers_after_approved_request_consumption(context, monkeypatch):
+    from src.services import host_reporting_request_service as requests
+    s = context
+    monkeypatch.setattr(requests, '_MAX_OUTSTANDING_REQUESTS', 1)
+    first = forecast(s)
+    with pytest.raises(ReportingRequestDenied):
+        forecast(s)
+    assert s.dispatcher.execute(first).status == 'AVAILABLE'
+    assert len(s.dispatcher._records) == 0
+    second = forecast(s)
+    assert s.dispatcher.execute(second).status == 'AVAILABLE'
+    assert s.lookup.call_count == 2
