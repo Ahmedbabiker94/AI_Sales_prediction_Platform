@@ -1,8 +1,11 @@
 """B5-4-1 controlled-offline, host-issued, single-use reporting requests.
 
-Composition and issue stay in a trusted host. Only dispatcher + opaque issued
-requests reach consumers; never hand the issuer/operator to request handlers.
-Not production IAM, a Python sandbox, or an external-delivery fence.
+Composition, issuance AND dispatch stay inside one trusted host boundary.
+Never transfer issuer, dispatcher, opaque Python handle, original grants, or
+source references into an untrusted interpreter or request handler. If an
+external client is required, implement a separate authenticated transport
+boundary (not part of this controlled-offline service). This implementation
+is not production IAM, a Python sandbox, or an external-delivery fence.
 """
 from dataclasses import dataclass, field
 from sys import implementation, version_info
@@ -50,7 +53,12 @@ class _Approved:
 
 
 class ReportingRequestDispatcher:
-    """Consumer-facing capability. No issue, source selection or grant renewal."""
+    """TRUSTED-HOST-ONLY dispatcher; never expose this Python object externally.
+
+    Its internal attributes intentionally hold live original source authority.
+    Calling execute() from trusted host code prevents accidental replay, but
+    no protection against malicious Python with a reference to this object.
+    """
 
     __slots__ = ('_reader', '_evaluator', '_records', '_issuer_identity', '_registry_lock')
 
@@ -200,7 +208,10 @@ class ReportingRequestIssuer:
 
 def build_host_reporting_requests(reader, forecast_authority, *, operator,
                                   evaluator=None, label_authority=None):
-    """Host-only bootstrap. Retain issuer; expose dispatcher only to consumers."""
+    """Trusted host bootstrap: retain BOTH issuer and dispatcher in host code.
+
+    A caller outside this trust boundary must receive neither Python object.
+    """
     if (not _SUPPORTED or type(operator) is not object
             or type(forecast_authority) is not ReadAuthority
             or forecast_authority._state is not reader._state
