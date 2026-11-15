@@ -9,6 +9,7 @@ on:
       - 'sales-forecast-platform/src/providers/_forecast_read_order.py'
       - 'sales-forecast-platform/src/services/**'
       - 'sales-forecast-platform/tests/runtime/test_r7_05b5_4_1_*.py'
+      - 'sales-forecast-platform/tests/runtime/test_canonical_reporting_read_contract.py'
       - '.github/workflows/r7-b5-4-1-focused.yml'
 
 permissions:
@@ -50,8 +51,9 @@ jobs:
             src/services/canonical_reporting_read_service.py \
             src/services/host_reporting_request_service.py \
             tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
-            tests/runtime/test_r7_05b5_4_1_reporting_requests.py
-      - name: Run ONLY two B5-4-1 unit modules
+            tests/runtime/test_r7_05b5_4_1_reporting_requests.py \
+            tests/runtime/test_canonical_reporting_read_contract.py
+      - name: Run ONLY B5-4-1 and retained B5-3 reporting contract modules
         run: |
           python -m pytest -q \
             tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
