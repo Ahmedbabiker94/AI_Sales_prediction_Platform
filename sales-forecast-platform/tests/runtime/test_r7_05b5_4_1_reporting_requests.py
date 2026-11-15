@@ -128,3 +128,27 @@ def test_second_issue_same_grant_requires_new_host_approval(context):
     assert s.dispatcher.execute(first).status == 'DENIED'
     assert s.dispatcher.execute(second).status == 'AVAILABLE'
     assert s.lookup.call_count == 2
+
+
+def test_unreviewed_visibility_denied_before_lookup(context):
+    s = context
+    with pytest.raises(ReportingRequestDenied):
+        forecast(s, visibility='public-summary')
+    with pytest.raises(ReportingRequestDenied):
+        accuracy(s, visibility='full-evidence')
+    s.lookup.assert_not_called()
+
+
+def test_label_revoked_after_approval_denied_before_lookup(context):
+    s = context
+    h = accuracy(s)
+    s.la.revoke(s.op, s.lg)
+    assert s.dispatcher.execute(h).status == 'DENIED'
+    s.lookup.assert_not_called()
+
+
+def test_bad_request_action_denied_before_lookup(context):
+    s = context
+    with pytest.raises(ReportingRequestDenied):
+        forecast(s, action='EXPORT')
+    s.lookup.assert_not_called()
