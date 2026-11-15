@@ -53,3 +53,16 @@ Remaining: review manifest/log redaction independently, real disposable PG16.15 
 - A detected occurrence increments `secret_redactions`, forces `cleanup_status: CLEANUP_UNCONFIRMED`, `result: FAILED` and rejects acceptance even though the copy written to evidence is redacted. Transient `test-client.env` is separately deleted in the final cleanup path; any uncertain deletion similarly rejects acceptance.
 - GitHub Actions run `43728104695` on commit `75e3facf`: **58/58 passing tests** on both CPython 3.11 and 3.12, including mocked evidence/console redaction checks. Subsequent manifest status fix requires its own fresh CI validation.
 - **No actual Docker/PostgreSQL 16.15 test has run from this CI.** No evidence directory should be shared unless it passes manual credential inspection and the original scoped cleanup manifest is confirmed. Independent security review remains outstanding.
+
+
+## GitHub-hosted runner preflight evidence — 2026-11-15
+
+A read-only prerequisite workflow was committed at `.github/workflows/r7-b5-4-1-pg-preflight.yml` and executed as GitHub Actions run `43728556968` (commit `de4c1458`). Runner Ubuntu 24.04.5; Docker client/server 28.0.4. Exact locally cached image IDs were checked with `docker image inspect` only:
+
+- Required PostgreSQL image `sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f`: **MISSING**.
+- Required client-base image `sha256:417063b71e35c7a9889c10ac2516c328f16a483e065ec858df101eb9728c2df2`: **MISSING**.
+- Exact verified wheelhouse is not provisioned by the workflow.
+
+The preflight deliberately exited with code 2 and created no containers, volumes or databases. **No PostgreSQL test ran.** The separate focused Python unit workflow on the same commit completed successfully on CPython 3.11 and 3.12; it is not database evidence.
+
+**Disposition:** hosted-runner PostgreSQL acceptance is BLOCKED by missing pinned artifacts, not by a demonstrated product test failure. Next execution requires a trusted compatible Docker host with both exact image IDs already inspected and the verified local wheelhouse. Do not download replacements, relax digests, supply production credentials, or mark this gate passed. After host prerequisites are satisfied, independently inspect current code and run only the opt-in isolated harness. All B5-4-1 acceptance blockers remain open, including independent trust-boundary review.
