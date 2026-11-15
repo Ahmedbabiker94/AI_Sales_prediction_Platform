@@ -176,11 +176,33 @@ def remove_transient_credential_file(path):
         return 'UNCONFIRMED'
 
 
+def verified_clean_source():
+    """Fail closed on untrusted/dirty Git provenance before Docker mutations.
+
+    A Windows .git pointer that WSL Git cannot read is rejected. This check
+    establishes a clean source snapshot, not a trust boundary against a
+    malicious host or Docker daemon.
+    """
+    top = command(['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel']).stdout.strip()
+    if not top or Path(top).resolve(strict=True) != ROOT.resolve(strict=True):
+        raise ValueError('disposable test source must be repository root')
+    commit = command(['git', '-C', str(ROOT), 'rev-parse', '--verify', 'HEAD']).stdout.strip()
+    if len(commit) not in (40, 64) or any(ch not in '0123456789abcdef' for ch in commit):
+        raise ValueError('invalid source commit identity')
+    status = command(['git', '-C', str(ROOT), 'status', '--porcelain',
+                      '--untracked-files=all']).stdout
+    if status:
+        raise ValueError('disposable test source checkout must be clean')
+    return commit
+
+
 def run(*, allow, wheelhouse, evidence, _host_stage=None):
     if allow is not True:
         raise ValueError('explicit disposable-database authorization required')
     if evidence.absolute() != evidence.resolve():
         raise ValueError('symlink evidence directory rejected')
+    # Validate provenance BEFORE creating evidence or touching Docker.
+    source_commit = verified_clean_source()
     evidence.mkdir(mode=0o700, parents=False, exist_ok=False)
     run_id = uuid4()
     prefix = 'r7-05b3-'+run_id.hex
@@ -190,8 +212,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
     volumes = []
     envfile = evidence/'test-client.env'  # transient credentials, NEVER evidence
     record = {'version': '1.0', 'run_id': str(run_id), 'database': database,
-              'source_commit': command(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).stdout.strip(),
-              'source_status': command(['git', '-C', str(ROOT), 'status', '--porcelain']).stdout,
+              'source_commit': source_commit,
+              'source_status': '',
               'operations': [], 'native_execution': False, 'production_connections': False}
     record.update(run_hex=run_id.hex, creation_attempts=[])
     token = _LIFECYCLE.set(record)
