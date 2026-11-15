@@ -35,6 +35,7 @@ class _Approved:
     action: str
     visibility: str
     actor: str
+    label_actor: str | None
     forecast_grant: object
     forecast_json: str
     label_grant: object
@@ -108,7 +109,7 @@ class ReportingRequestIssuer:
         self._operator, self._identity, self._records = operator, identity, records
 
     def issue(self, operator, *, actor, action, visibility, forecast_grant, forecast,
-              label_grant=None, labels=None, lifetime_seconds=15):
+              label_grant=None, labels=None, label_actor=None, lifetime_seconds=15):
         """Host-authenticated decision, fixed action/scope, original grants only.
 
         actor/visibility must come from host policy rather than request metadata.
@@ -137,11 +138,12 @@ class ReportingRequestIssuer:
                        min(f.end, p.end, elapsed + lifetime_seconds))
             label_json, lexpiry = None, None
             if action == 'FORECAST':
-                if label_grant is not None or labels is not None:
+                if label_grant is not None or labels is not None or label_actor is not None:
                     raise ReportingRequestDenied('report request denied')
             else:
                 if (self._evaluator is None or type(labels) is not ExactLabelRead
-                        or label_grant is None):
+                        or label_grant is None or type(label_actor) is not str
+                        or not label_actor or len(label_actor) > 256):
                     raise ReportingRequestDenied('report request denied')
                 checked_labels = ExactLabelRead.model_validate_json(labels.canonical_json)
                 peer = self._evaluator._labels
@@ -152,19 +154,19 @@ class ReportingRequestIssuer:
                     return peer.require(label_grant, checked_labels.canonical_json, ln, le)
                 l = _locked_call((peer.lock,), check_label)
                 lp = peer.principals.get(id(l.principal))
-                if lp is None or lp.handle is not l.principal or lp.subject != actor:
+                if lp is None or lp.handle is not l.principal or lp.subject != label_actor:
                     raise ReportingRequestDenied('report request denied')
                 label_json = checked_labels.canonical_json
                 lexpiry = (min(l.expires, lp.expires, ln + lifetime_seconds),
                            min(l.end, lp.end, le + lifetime_seconds))
             h = OriginalReportRequest()
-            record = _Approved(h, self._identity, action, visibility, actor, forecast_grant,
+            record = _Approved(h, self._identity, action, visibility, actor, label_actor, forecast_grant,
                                checked.canonical_json, label_grant, label_json, fexpiry, lexpiry)
             if id(h) in self._records:
                 raise ReportingRequestDenied('report request denied')
             self._records[id(h)] = record
             return h
-        except Exception as exc:
+        except Exception:
             raise ReportingRequestDenied('report request denied') from None
 
 
