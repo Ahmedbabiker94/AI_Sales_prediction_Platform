@@ -85,3 +85,22 @@ Expected SHA-256:
 Verify the downloaded bytes against the original lock; no package update is authorized.
 
 The original B3 documentation does **not** specify a trusted repository name/digest source for the separate client-base config image `sha256:417063b71e35c7a9889c10ac2516c328f16a483e065ec858df101eb9728c2df2`; it only describes this as previously validated. Its provenance/acquisition remains unresolved. Never guess a `python:3.11` tag or change the pinned Dockerfile. PostgreSQL integration remains NO-GO until that artifact is located and verified.
+
+
+## OCI image-ID compatibility — staged read-only verifier (2026-11-15)
+
+The trusted Windows Docker Desktop 29.7.2 + WSL2 Linux/amd64 host reported the pinned PostgreSQL OCI **index** as the local image ID (`e8a07d2c...`), instead of the historical **config** digest (`6a35283e...`). A user-run digest-pinned `buildx imagetools inspect --raw` confirmed the linux/amd64 manifest `cf5d353f...` references exactly the original config digest. This is consistent with containerd image-store behavior but does **not** make the old config-digest lookup succeed.
+
+`tests/postgres/verify_postgres_oci.py` is a **standalone read-only** checker. It requires (a) local image presence at the fixed official index digest on linux/amd64; (b) immutable registry index metadata referencing exactly the fixed linux/amd64 manifest digest; and (c) that manifest referencing exactly the fixed config digest with expected OCI media types. It performs **metadata-only registry reads** via buildx (requires network), but never pulls, runs or mutates images. Any missing/unavailable/mismatched metadata must fail closed.
+
+Run separately in Ubuntu WSL2 from the code directory:
+```bash
+python3 tests/postgres/verify_postgres_oci.py
+```
+A PASS validates only this read-only OCI identity check; it **does not** certify local config-digest invocation compatibility of the original `run_postgres.py` and `Dockerfile`. The original disposable runner and its strict pins are deliberately **unchanged**. Do not execute the runner based solely on this PASS.
+
+### Client-base image — Controlled Rebaseline proposal only
+
+The existing test-client base config image `sha256:417063b71e35c7a9889c10ac2516c328f16a483e065ec858df101eb9728c2df2` remains missing, and no trustworthy registry provenance was found in retained docs/local Docker images. A new pin is **NOT approved**. A separate decision must name a specific official Python 3.11 linux/amd64 repository digest, attest its platform-specific manifest/config digest, verify required Python/pytest tooling and offline wheel compatibility, independently review supply-chain/trust risks, and obtain explicit approval before any Dockerfile or harness update. Never silently substitute `python:3.11`, use Docker pull in the test harness, or assert B5-4-1 acceptance from offline unit tests.
+
+Still OPEN / NO-GO: real disposable PostgreSQL 16.15 execution, owned-resource cleanup evidence, and independent security review remain outstanding.
