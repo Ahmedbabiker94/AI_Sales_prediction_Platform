@@ -44,3 +44,11 @@ On isolated branch, a provenance registry now tracks the original B5-1 reader in
 **Test state:** Added provenance, replay, concurrent same-handle, actor, action/visibility, expiry and revocation test cases, but none have been executed by this GitHub connector. Real disposable PostgreSQL 16.15 verification, focused CPython 3.11/3.12 tests, static/diff review, and independent security review are **PENDING**.
 
 **Acceptance state:** OPEN / NO-GO. No merge, no production use, no B5-4-2. Prior accepted milestones are not automatically reaccepted following these changes.
+
+
+## Verification review checkpoint — 2026-11-15 (unverified)
+- Fixed one-time dispatch to carry its _Approved record across removal from the pending registry. Earlier intermediate commits in this branch contained an invalid reference after cleanup; use latest branch head only.
+- Outstanding request storage now has a fixed 4096-entry cap. Issuance and consumption run under a dedicated native RLock through the original host _locked_call cleanup path. Consumed handles are removed; concurrent same-handle requests cannot both dispatch. Added capacity and concurrency regression test declarations.
+- Limitation: unused expired outstanding approvals remain until consumed or process restart. The cap fails closed rather than evicting other pending approvals. A separate audited cancellation/pruning mechanism is required if the host needs long-lived operation; no auto-cleanup/eviction is claimed.
+- Host-only restriction remains a **deployment assumption**, not technically enforced isolation from Python code with access to host private objects or operator. No operational caller is integrated.
+- All new tests are **unexecuted**. No GitHub Actions run or disposable PG16.15 verification has been observed. Independent security review, signal interruption/reentrancy tests, import and CPython version tests remain acceptance blockers.
