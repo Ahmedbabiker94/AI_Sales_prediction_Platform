@@ -6,6 +6,7 @@ Not production IAM, a Python sandbox, or an external-delivery fence.
 """
 from dataclasses import dataclass, field
 from sys import implementation, version_info
+from threading import RLock
 from src.data.contracts.canonical_forecast_read import ExactForecastRead
 from src.data.contracts.stored_forecast_accuracy import ExactLabelRead
 from src.data.contracts.canonical_reporting import ReportingOutcome
@@ -51,28 +52,37 @@ class _Approved:
 class ReportingRequestDispatcher:
     """Consumer-facing capability. No issue, source selection or grant renewal."""
 
-    __slots__ = ('_reader', '_evaluator', '_records', '_issuer_identity')
+    __slots__ = ('_reader', '_evaluator', '_records', '_issuer_identity', '_registry_lock')
 
-    def __init__(self, reader, evaluator, records, issuer_identity):
+    def __init__(self, reader, evaluator, records, issuer_identity, registry_lock):
         self._reader, self._evaluator = reader, evaluator
         self._records, self._issuer_identity = records, issuer_identity
+        self._registry_lock = registry_lock
 
     def execute(self, request):
         # Exact builtin dict lookup with original identity, then one irreversible
         # builtin setdefault. CPython GIL provides the one-use linearization.
         if not _SUPPORTED or type(request) is not OriginalReportRequest:
             return ReportingOutcome(status='DENIED')
-        record = self._records.get(id(request))
-        if record is None or record.handle is not request or record.issuer is not self._issuer_identity:
-            return ReportingOutcome(status='DENIED')
-        marker = object()
-        if record.use.setdefault(0, marker) is not marker:
-            return ReportingOutcome(status='DENIED')
-        # Remove consumed request before invoking any protected operation. A
-        # concurrent executor holding the same record still loses setdefault.
-        # If interrupted before pop, the consumed marker remains terminal.
-        if self._records.get(id(request)) is record:
+        # Lock the exact registry operation; never call arbitrary code under it.
+        # The marker is committed before removing the record. An interrupted
+        # removal retains a consumed record or a missing record: both deny replay.
+        def take_once():
+            record = self._records.get(id(request))
+            if (record is None or record.handle is not request
+                    or record.issuer is not self._issuer_identity):
+                return False
+            marker = object()
+            if record.use.setdefault(0, marker) is not marker:
+                return False
             self._records.pop(id(request), None)
+            return True
+        try:
+            consumed = _locked_call((self._registry_lock,), take_once)
+        except Exception:
+            return ReportingOutcome(status='DENIED')
+        if not consumed:
+            return ReportingOutcome(status='DENIED')
         try:
             _HOST_HEALTH.require()
             if not _authentic_reporting_sources(self._reader, self._evaluator):
@@ -108,13 +118,14 @@ class ReportingRequestIssuer:
     """Retained ONLY by authenticated host code; never sent to a consumer."""
 
     __slots__ = ('_reader', '_evaluator', '_forecast_authority', '_label_authority',
-                 '_operator', '_identity', '_records')
+                 '_operator', '_identity', '_records', '_registry_lock')
 
     def __init__(self, reader, evaluator, forecast_authority, label_authority, operator,
-                 identity, records):
+                 identity, records, registry_lock):
         self._reader, self._evaluator = reader, evaluator
         self._forecast_authority, self._label_authority = forecast_authority, label_authority
         self._operator, self._identity, self._records = operator, identity, records
+        self._registry_lock = registry_lock
 
     def issue(self, operator, *, actor, action, visibility, forecast_grant, forecast,
               label_grant=None, labels=None, label_actor=None, lifetime_seconds=15):
@@ -176,9 +187,12 @@ class ReportingRequestIssuer:
                                checked.canonical_json, label_grant, label_json, fexpiry, lexpiry)
             # Exact dict operations only; no unbounded outstanding authorities.
             # Denial does not evict a legitimate pending approval or renew it.
-            if id(h) in self._records or len(self._records) >= _MAX_OUTSTANDING_REQUESTS:
-                raise ReportingRequestDenied('report request denied')
-            self._records[id(h)] = record
+            def register():
+                if (id(h) in self._records
+                        or len(self._records) >= _MAX_OUTSTANDING_REQUESTS):
+                    raise ReportingRequestDenied('report request denied')
+                self._records[id(h)] = record
+            _locked_call((self._registry_lock,), register)
             return h
         except Exception:
             raise ReportingRequestDenied('report request denied') from None
@@ -200,8 +214,8 @@ def build_host_reporting_requests(reader, forecast_authority, *, operator,
             or evaluator._labels.operator is not operator):
         raise ReportingRequestDenied('protected reporting bootstrap required')
     _HOST_HEALTH.require()
-    identity, records = object(), {}
+    identity, records, registry_lock = object(), {}, RLock()
     issuer = ReportingRequestIssuer(reader, evaluator, forecast_authority, label_authority,
-                                    operator, identity, records)
-    dispatcher = ReportingRequestDispatcher(reader, evaluator, records, identity)
+                                    operator, identity, records, registry_lock)
+    dispatcher = ReportingRequestDispatcher(reader, evaluator, records, identity, registry_lock)
     return issuer, dispatcher
