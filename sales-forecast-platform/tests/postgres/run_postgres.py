@@ -157,6 +157,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
     data, socket, server = prefix+'-data', prefix+'-socket', prefix+'-server'
     containers = []
     volumes = []
+    envfile = evidence/'test-client.env'  # transient credentials, NEVER evidence
     record = {'version': '1.0', 'run_id': str(run_id), 'database': database,
               'source_commit': command(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).stdout.strip(),
               'source_status': command(['git', '-C', str(ROOT), 'status', '--porcelain']).stdout,
@@ -222,7 +223,6 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         record['server_inspect'] = json.loads(command(['docker', 'inspect', server]).stdout)[0]
         # Only redact test passwords; no production credentials are read.
         record['server_inspect']['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in record['server_inspect']['Config']['Env']]
-        envfile = evidence/'test-client.env'
         with open(envfile, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as handle:
             handle.write('R7_PG_INSTANCE='+str(run_id)+'\nR7_PG_DATABASE='+database+'\n')
             handle.write(''.join('R7_PG_'+role.upper()+'_PASSWORD='+password+'\n' for role, password in passwords.items()))
@@ -309,9 +309,24 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         # finish later. Absence is insufficient while any creation is unresolved.
         record['cleanup_passed'] = bool(cleanup) and all(cleanup) and not ambiguous and not record['remaining_containers'] and not record['remaining_volumes']
         record['cleanup_status'] = 'CLEANUP_SUCCESS' if record['cleanup_passed'] else 'CLEANUP_UNCONFIRMED'
+        # Do not retain plaintext disposable credentials in the evidence archive.
+        # This is only best-effort filesystem cleanup, not secure erase of bytes
+        # from an underlying disk, Docker daemon metadata or host privileges.
+        # If the credentials file cannot be removed, mark the run unaccepted.
+        record['credential_file_cleanup'] = 'NOT_PRESENT'
+        try:
+            if envfile.is_symlink():
+                raise ValueError('credential file replaced with symlink')
+            if envfile.exists():
+                envfile.unlink()
+                record['credential_file_cleanup'] = 'REMOVED'
+        except Exception:
+            record['credential_file_cleanup'] = 'UNCONFIRMED'
+            record['cleanup_passed'] = False
+            record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
         write_evidence(evidence/'run-manifest.json', json.dumps(record, indent=2, sort_keys=True))
         if not record['cleanup_passed']:
-            raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: inspect recorded exact owned identities') from None
+            raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
 
 
 
