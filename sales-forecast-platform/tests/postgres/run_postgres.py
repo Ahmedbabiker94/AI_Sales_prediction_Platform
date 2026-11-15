@@ -355,7 +355,9 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         if record.get('secret_redactions', 0):
             record['cleanup_passed'] = False
             record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
-            manifest_text = redact_test_secrets(json.dumps(record, indent=2, sort_keys=True))
+        if not record['cleanup_passed']:
+            record['result'] = 'FAILED'
+        manifest_text = redact_test_secrets(json.dumps(record, indent=2, sort_keys=True))
         try:
             write_evidence(evidence/'run-manifest.json', manifest_text)
         finally:
