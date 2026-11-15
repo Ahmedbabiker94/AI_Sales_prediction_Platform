@@ -57,4 +57,5 @@ jobs:
         run: |
           python -m pytest -q \
             tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
-            tests/runtime/test_r7_05b5_4_1_reporting_requests.py
+            tests/runtime/test_r7_05b5_4_1_reporting_requests.py \
+            tests/runtime/test_canonical_reporting_read_contract.py
