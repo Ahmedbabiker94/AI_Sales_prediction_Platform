@@ -148,3 +148,53 @@ def test_credential_unlink_failure_is_unconfirmed(stage, monkeypatch):
 
     monkeypatch.setattr(Path, 'unlink', denied_unlink)
     assert s.original.remove_transient_credential_file(file) == 'UNCONFIRMED'
+
+
+def test_disposable_secret_scrubbed_before_evidence_write(stage):
+    s = stage
+    password = 'test-only-fixture-password-unique'
+    token = s.original._TEST_SECRETS.set((password,))
+    try:
+        s.original.write_evidence(s.directory/'secret.log',
+                                  'connection failed password=' + password)
+        stored = (s.directory/'secret.log').read_text(encoding='utf-8')
+        assert password not in stored
+        assert '<redacted-disposable-secret>' in stored
+        assert s.record['secret_redactions'] == 1
+    finally:
+        s.original._TEST_SECRETS.reset(token)
+
+
+def test_disposable_secret_scrubbed_from_nested_manifest_values(stage):
+    import json
+    s = stage
+    password = 'test-only-fixture-manifest-unique'
+    token = s.original._TEST_SECRETS.set((password,))
+    try:
+        manifest = {'operations': [{'inspect': {'Config': {
+            'Env': ['LEAK=' + password]}}}]}
+        cleaned = s.original.redact_test_secrets(json.dumps(manifest))
+        assert password not in cleaned
+        assert '<redacted-disposable-secret>' in cleaned
+        assert s.record['secret_redactions'] == 1
+    finally:
+        s.original._TEST_SECRETS.reset(token)
+
+
+def test_reporting_stage_stdout_and_stderr_never_print_secret(stage, monkeypatch, capsys):
+    s = stage
+    password = 'test-only-fixture-stage-unique'
+    token = s.original._TEST_SECRETS.set((password,))
+    try:
+        monkeypatch.setattr(s.runner, 'command', lambda argv, **kw:
+                            SimpleNamespace(returncode=0,
+                                            stdout='output ' + password,
+                                            stderr='error ' + password))
+        invoke(s)
+        combined = capsys.readouterr()
+        assert password not in (combined.out + combined.err)
+        assert password not in (s.directory/'b5-4-1.stdout').read_text()
+        assert password not in (s.directory/'b5-4-1.stderr').read_text()
+        assert s.record['secret_redactions'] >= 2
+    finally:
+        s.original._TEST_SECRETS.reset(token)
