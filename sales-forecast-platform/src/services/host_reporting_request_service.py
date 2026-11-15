@@ -112,12 +112,16 @@ class ReportingRequestIssuer:
               label_grant=None, labels=None, label_actor=None, lifetime_seconds=15):
         """Host-authenticated decision, fixed action/scope, original grants only.
 
-        actor/visibility must come from host policy rather than request metadata.
+        actor must come from host authentication, not request metadata. Visibility
+        is fixed per reviewed offline action and cannot be widened by a request.
         """
         if (not _SUPPORTED or operator is not self._operator
                 or type(actor) is not str or not actor or len(actor) > 256
                 or type(visibility) is not str or not visibility or len(visibility) > 256
+                or type(action) is not str
                 or action not in ('FORECAST', 'SYNTHETIC_ACCURACY')
+                or visibility != {'FORECAST': 'full-evidence',
+                                  'SYNTHETIC_ACCURACY': 'synthetic-full-evidence'}[action]
                 or type(lifetime_seconds) is not int or not 1 <= lifetime_seconds <= 30
                 or type(forecast) is not ExactForecastRead):
             raise ReportingRequestDenied('report request denied')
