@@ -54,6 +54,16 @@ class Runtime:
                 value = self._factories[name]()
                 if value is None:
                     raise ValueError()
+                # Do not publish host-only B5-4-1 capabilities directly into
+                # operational dependency injection. This check deliberately
+                # does not import protected source modules at startup.
+                if (
+                    type(value).__module__ == 'src.services.host_reporting_request_service'
+                    and type(value).__name__ in (
+                        'ReportingRequestIssuer', 'ReportingRequestDispatcher'
+                    )
+                ):
+                    raise ValueError('host-only reporting capability unavailable')
             except Exception:
                 pass
             else:
