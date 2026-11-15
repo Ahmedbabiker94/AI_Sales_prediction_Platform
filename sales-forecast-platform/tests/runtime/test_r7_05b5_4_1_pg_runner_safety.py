@@ -48,7 +48,8 @@ def test_extra_container_registered_before_any_execution(stage, monkeypatch):
         assert s.record['extra_containers'] == [expected]
         assert argv[:4] == ['docker', 'run', '--name', expected]
         assert '--network=none' in argv and '--read-only' in argv
-        assert '--cap-drop=ALL' in argv and 'no-new-privileges' in argv
+        assert '--cap-drop=ALL' in argv
+        assert '--security-opt=no-new-privileges' in argv
         assert '-p' not in argv and '--publish' not in argv
         assert argv[-2:] == list(s.runner.TESTS)
         return SimpleNamespace(returncode=0, stdout='4 passed', stderr='')
