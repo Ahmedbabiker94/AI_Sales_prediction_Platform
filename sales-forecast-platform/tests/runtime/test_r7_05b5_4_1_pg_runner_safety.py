@@ -107,3 +107,44 @@ def test_runner_cannot_start_without_original_lifecycle(stage, monkeypatch):
         assert not s.record.get('extra_containers')
     finally:
         s.original._LIFECYCLE.reset(token)
+
+
+def test_ephemeral_credentials_removed_without_copying_into_evidence(stage):
+    s = stage
+    file = s.directory/'test-client.env'
+    file.write_text('R7_PG_READER_PASSWORD=synthetic-secret', encoding='utf-8')
+    file.chmod(0o600)
+    assert s.original.remove_transient_credential_file(file) == 'REMOVED'
+    assert not file.exists()
+    assert not list(s.directory.glob('*.env'))
+
+
+def test_absent_credentials_are_not_treated_as_cleanup_failure(stage):
+    s = stage
+    assert s.original.remove_transient_credential_file(
+        s.directory/'test-client.env') == 'NOT_PRESENT'
+
+
+def test_symlink_credentials_fail_closed_and_do_not_remove_target(stage):
+    s = stage
+    target = s.directory/'outside-target'
+    target.write_text('other data', encoding='utf-8')
+    link = s.directory/'test-client.env'
+    link.symlink_to(target)
+    assert s.original.remove_transient_credential_file(link) == 'UNCONFIRMED'
+    assert target.read_text(encoding='utf-8') == 'other data'
+
+
+def test_credential_unlink_failure_is_unconfirmed(stage, monkeypatch):
+    s = stage
+    file = s.directory/'test-client.env'
+    file.write_text('synthetic-secret', encoding='utf-8')
+    original_unlink = Path.unlink
+
+    def denied_unlink(path, *args, **kwargs):
+        if path == file:
+            raise PermissionError('simulated filesystem denial')
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'unlink', denied_unlink)
+    assert s.original.remove_transient_credential_file(file) == 'UNCONFIRMED'
