@@ -17,6 +17,9 @@ from src.providers._forecast_read_order import _authentic_reporting_sources
 _SUPPORTED = implementation.name == 'cpython' and version_info[:2] in ((3, 11), (3, 12))
 
 
+_MAX_OUTSTANDING_REQUESTS = 4096
+
+
 class ReportingRequestDenied(ValueError):
     pass
 
@@ -65,6 +68,11 @@ class ReportingRequestDispatcher:
         marker = object()
         if record.use.setdefault(0, marker) is not marker:
             return ReportingOutcome(status='DENIED')
+        # Remove consumed request before invoking any protected operation. A
+        # concurrent executor holding the same record still loses setdefault.
+        # If interrupted before pop, the consumed marker remains terminal.
+        if self._records.get(id(request)) is record:
+            self._records.pop(id(request), None)
         try:
             _HOST_HEALTH.require()
             if not _authentic_reporting_sources(self._reader, self._evaluator):
@@ -166,7 +174,9 @@ class ReportingRequestIssuer:
             h = OriginalReportRequest()
             record = _Approved(h, self._identity, action, visibility, actor, label_actor, forecast_grant,
                                checked.canonical_json, label_grant, label_json, fexpiry, lexpiry)
-            if id(h) in self._records:
+            # Exact dict operations only; no unbounded outstanding authorities.
+            # Denial does not evict a legitimate pending approval or renew it.
+            if id(h) in self._records or len(self._records) >= _MAX_OUTSTANDING_REQUESTS:
                 raise ReportingRequestDenied('report request denied')
             self._records[id(h)] = record
             return h
