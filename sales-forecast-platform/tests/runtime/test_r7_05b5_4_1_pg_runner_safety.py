@@ -51,7 +51,7 @@ def test_extra_container_registered_before_any_execution(stage, monkeypatch):
         assert '--cap-drop=ALL' in argv
         assert '--security-opt=no-new-privileges' in argv
         assert '-p' not in argv and '--publish' not in argv
-        assert argv[-2:] == list(s.runner.TESTS)
+        assert argv[-len(s.runner.TESTS):] == list(s.runner.TESTS)
         return SimpleNamespace(returncode=0, stdout='4 passed', stderr='')
 
     monkeypatch.setattr(s.runner, 'command', fake_command)
