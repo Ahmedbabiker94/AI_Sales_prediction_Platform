@@ -184,8 +184,11 @@ def verified_clean_source():
     malicious host or Docker daemon.
     """
     top = command(['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel']).stdout.strip()
-    if not top or Path(top).resolve(strict=True) != ROOT.resolve(strict=True):
-        raise ValueError('disposable test source must be repository root')
+    # This repository keeps the Python project in sales-forecast-platform/.
+    # Validate the entire containing Git worktree, not only the subdirectory.
+    if (not top or Path(top).resolve(strict=True) != ROOT.parent.resolve(strict=True)
+            or ROOT.name != 'sales-forecast-platform'):
+        raise ValueError('disposable test source must be expected Git worktree')
     commit = command(['git', '-C', str(ROOT), 'rev-parse', '--verify', 'HEAD']).stdout.strip()
     if len(commit) not in (40, 64) or any(ch not in '0123456789abcdef' for ch in commit):
         raise ValueError('invalid source commit identity')
