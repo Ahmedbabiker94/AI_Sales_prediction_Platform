@@ -1,0 +1,57 @@
+name: R7 B5-4-1 focused offline verification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - work/r7-05b5-4-1-bootstrap-foundation
+    paths:
+      - 'sales-forecast-platform/src/providers/_forecast_read_order.py'
+      - 'sales-forecast-platform/src/services/**'
+      - 'sales-forecast-platform/tests/runtime/test_r7_05b5_4_1_*.py'
+      - '.github/workflows/r7-b5-4-1-focused.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  focused-offline:
+    if: github.event.pull_request.head.ref == 'fix/r7-05b5-4-1-bootstrap'
+    name: Focused CPython ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    defaults:
+      run:
+        working-directory: sales-forecast-platform
+    steps:
+      - name: Checkout PR merge tree (read-only)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install focused test dependencies only
+        run: |
+          python -m pip install --disable-pip-version-check \
+            'pytest==8.4.2' 'pydantic==2.13.3' 'psycopg2-binary==2.9.12'
+      - name: Compile touched modules without importing ML runtimes
+        run: |
+          python -m py_compile \
+            src/providers/_forecast_read_order.py \
+            src/services/canonical_forecast_read_service.py \
+            src/services/stored_forecast_accuracy_service.py \
+            src/services/canonical_reporting_read_service.py \
+            src/services/host_reporting_request_service.py \
+            tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
+            tests/runtime/test_r7_05b5_4_1_reporting_requests.py
+      - name: Run ONLY two B5-4-1 unit modules
+        run: |
+          python -m pytest -q \
+            tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
+            tests/runtime/test_r7_05b5_4_1_reporting_requests.py
