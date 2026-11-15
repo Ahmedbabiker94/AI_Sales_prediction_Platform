@@ -17,6 +17,7 @@ on:
       - 'sales-forecast-platform/tests/postgres/run_postgres.py'
       - 'sales-forecast-platform/tests/postgres/preflight_b5_4_1_host.py'
       - 'sales-forecast-platform/tests/postgres/verify_postgres_oci.py'
+      - 'sales-forecast-platform/tests/postgres/prepare_client_wheelhouse_candidate.py'
       - '.github/workflows/r7-b5-4-1-focused.yml'
 
 permissions:
@@ -61,12 +62,14 @@ jobs:
             tests/postgres/run_postgres.py \
             tests/postgres/preflight_b5_4_1_host.py \
             tests/postgres/verify_postgres_oci.py \
+            tests/postgres/prepare_client_wheelhouse_candidate.py \
             tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
             tests/runtime/test_r7_05b5_4_1_reporting_requests.py \
             tests/runtime/test_r7_05b5_4_1_host_boundary_audit.py \
             tests/runtime/test_r7_05b5_4_1_pg_runner_safety.py \
             tests/runtime/test_r7_05b5_4_1_oci_identity.py \
             tests/runtime/test_r7_05b5_4_1_client_dependency_gate.py \
+            tests/runtime/test_r7_05b5_4_1_candidate_wheelhouse.py \
             tests/runtime/test_canonical_reporting_read_contract.py
       - name: Run ONLY B5-4-1 and retained B5-3 reporting contract modules
         run: |
@@ -77,4 +80,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_pg_runner_safety.py \
             tests/runtime/test_r7_05b5_4_1_oci_identity.py \
             tests/runtime/test_r7_05b5_4_1_client_dependency_gate.py \
+            tests/runtime/test_r7_05b5_4_1_candidate_wheelhouse.py \
             tests/runtime/test_canonical_reporting_read_contract.py
