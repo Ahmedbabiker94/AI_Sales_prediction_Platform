@@ -32,3 +32,15 @@ No API/dashboard/PDF/export/jobs/scheduler/Celery/MLflow binding, operational ac
 
 ## Acceptance
 Only after implementation, bounded verification, independent security/diff review and end-of-milestone local PostgreSQL verification. The document itself is not proof of running tests or of secure deployment.
+
+
+## Implementation checkpoint — 2026-11-15 (unverified)
+On isolated branch, a provenance registry now tracks the original B5-1 reader instance and original B5-2 evaluator instance; B5-3 constructor checks this host registry in addition to original identity bindings. The new `host_reporting_request_service.py` defines a host-retained `ReportingRequestIssuer` and consumer-facing `ReportingRequestDispatcher`, with an original non-serializable request object and one-use `dict.setdefault(0, marker)` before source dispatch. Fixed action/visibility modes: `FORECAST/full-evidence`, `SYNTHETIC_ACCURACY/synthetic-full-evidence`. Original grant/subject/selection and independent synthetic label subject are checked at issuance; underlying authority is rechecked before dispatch and again inside original services. This does not alter original source publication events.
+
+**Separation requirement:** A request handler must NEVER receive `ReportingRequestIssuer`, original `ReadAuthority`/`ActualLabelAuthority`, operator object, protected original B5-3 reporting service, or raw original grants except through the protected host runtime. This is a trusted-host composition contract, not a Python security sandbox. The module's public constructors and mutable private attributes are not themselves a production authentication boundary.
+
+**Remaining review risk:** Host-origin/provenance maps are process-private Python dictionaries. They do not resist malicious code executing inside the trusted process. The once-use setdefault linearization is CPython 3.11/3.12 and GIL dependent; CPython free-threaded or alternative interpreters must fail closed. No event-fence or distributed authorization guarantee is claimed. Validate that all multi-step issuance interruption paths, principal/clock callbacks, lock ordering and source identity checks fail closed. A request-handle expiry is based on original authority clocks; the exact semantics of host action and actor authentication must be established by a real integration caller before any operational use.
+
+**Test state:** Added provenance, replay, concurrent same-handle, actor, action/visibility, expiry and revocation test cases, but none have been executed by this GitHub connector. Real disposable PostgreSQL 16.15 verification, focused CPython 3.11/3.12 tests, static/diff review, and independent security review are **PENDING**.
+
+**Acceptance state:** OPEN / NO-GO. No merge, no production use, no B5-4-2. Prior accepted milestones are not automatically reaccepted following these changes.
