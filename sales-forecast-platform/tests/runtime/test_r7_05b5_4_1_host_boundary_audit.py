@@ -60,3 +60,32 @@ def test_current_operational_entrypoints_do_not_import_b5_4_1(path):
     # String-level guard on dynamic imports; this only covers these files and
     # cannot establish a full deployment/import graph.
     assert not any(name in source for name in sensitive)
+
+
+def test_exposed_dispatcher_reference_allows_bypass_of_request_one_use(monkeypatch):
+    """Deliberate adversarial counterexample in the SAME trusted Python process.
+
+    This test passing demonstrates the untrusted-in-process threat is NOT solved.
+    The actual authorized host-only request path remains one-use.
+    """
+    batch = F['make_batch']()
+    s = F['setup_context'](batch, (F['snapshot'](batch),))
+    lookup = Mock(return_value=F['stored'](batch))
+    monkeypatch.setattr(ForecastReadProvider, 'lookup', lookup)
+    issuer, dispatcher = build_host_reporting_requests(
+        s.reader, s.fa, operator=s.op, evaluator=s.service, label_authority=s.la)
+    handle = issuer.issue(
+        s.op, actor='synthetic:forecast-reader', action='FORECAST',
+        visibility='full-evidence', forecast_grant=s.fg, forecast=s.fs)
+    original = dispatcher._records[id(handle)]
+    assert dispatcher.execute(handle).status == 'AVAILABLE'
+    assert dispatcher.execute(handle).status == 'DENIED'
+    assert lookup.call_count == 1
+
+    # Forbidden caller behavior, possible if the dispatcher object escapes host:
+    from src.data.contracts.canonical_forecast_read import ExactForecastRead
+    direct = dispatcher._reader.read(
+        original.forecast_grant,
+        ExactForecastRead.model_validate_json(original.forecast_json))
+    assert direct.status == 'VERIFIED_RECORD_SET'
+    assert lookup.call_count == 2
