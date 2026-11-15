@@ -85,7 +85,7 @@ def validate_inventory(entries):
 
 
 def candidate_lock(entries):
-    return "".join(f'{x["name"]}=={x["version"]} --hash=sha256:{x["sha256"]}\\n'
+    return "".join(f'{x["name"]}=={x["version"]} --hash=sha256:{x["sha256"]}\n'
                    for x in sorted(entries, key=lambda row: row["name"]))
 
 
@@ -103,6 +103,8 @@ def main():
     destination = args.new_directory.absolute()
     if destination.exists() or destination.is_symlink():
         parser.error("new-directory must not already exist")
+    if args.verified_psycopg_wheel.is_symlink():
+        parser.error("symlink wheel source not accepted")
     source = args.verified_psycopg_wheel.resolve(strict=True)
     if source.is_symlink() or source.name != ORIGINAL_WHEEL or sha256(source) != ORIGINAL_HASH:
         parser.error("verified original psycopg wheel required")
@@ -127,7 +129,7 @@ def main():
     except BaseException:
         # Preserve incomplete evidence; DO NOT claim lock validity.
         (destination / "INCOMPLETE_DO_NOT_USE").write_text(
-            "Wheel acquisition/inspection failed. Do not use this directory.\\n", encoding="utf-8")
+            "Wheel acquisition/inspection failed. Do not use this directory.\n", encoding="utf-8")
         raise
     print("CANDIDATE_ONLY: wheel hashes recorded; requires offline closure and independent review")
 
