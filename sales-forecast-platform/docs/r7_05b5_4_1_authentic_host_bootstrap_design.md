@@ -52,3 +52,12 @@ On isolated branch, a provenance registry now tracks the original B5-1 reader in
 - Limitation: unused expired outstanding approvals remain until consumed or process restart. The cap fails closed rather than evicting other pending approvals. A separate audited cancellation/pruning mechanism is required if the host needs long-lived operation; no auto-cleanup/eviction is claimed.
 - Host-only restriction remains a **deployment assumption**, not technically enforced isolation from Python code with access to host private objects or operator. No operational caller is integrated.
 - All new tests are **unexecuted**. No GitHub Actions run or disposable PG16.15 verification has been observed. Independent security review, signal interruption/reentrancy tests, import and CPython version tests remain acceptance blockers.
+
+
+## CI evidence checkpoint — 2026-11-15
+- Draft PR #1: https://github.com/Ahmedbabiker94/AI_Sales_prediction_Platform/pull/1 ; base `work/r7-05b5-4-1-bootstrap-foundation`, NOT `main`; draft/no merge.
+- Focused CI run `43706510051`, commit `3d383b9b`: CPython 3.11 **41 passed**, CPython 3.12 **41 passed**. Includes B5-4-1 provenance + single-use/interrupt tests AND retained B5-3 reporting contract tests. These are distinct executions, not 82 unique cases.
+- Added `tests/postgres/test_r7_05b5_4_1_host_reporting_requests.py` using the existing PG fixtures for original, read-only forecast/accuracy and preconnection denial. **File is unexecuted**. It needs disposable PG 16.15 and approved bootstrap/migration; do not assume public CI supplies it. The tested unit mocks are not database proof.
+- No static test demonstrates isolation if consumer code can access Python-private dispatcher attributes, issuance registry, host authority, operator or issuer. This remains a **BLOCKER for operational exposure**. The factory currently returns both host-only issuer and consumer-facing dispatcher to the trusted caller, so real host placement and no-leak proof are necessary.
+- The original Python-specific `_HOST_HEALTH` fail-stop/interruption semantics remain unchanged. Added injected KeyboardInterrupt/SystemExit at post-consume handoff and original lookup, but injection tests do not prove every native signal timing or an external delivery fence. No autonomous production IAM, crash durability, or distributed lease is claimed.
+- **Acceptance remains OPEN / NO-GO** pending independent security review, integration with disposable PG16.15, and actual deployment boundary audit. No merge, B5-4-2, or production activation.
