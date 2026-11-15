@@ -209,3 +209,54 @@ def test_capacity_recovers_after_approved_request_consumption(context, monkeypat
     second = forecast(s)
     assert s.dispatcher.execute(second).status == 'AVAILABLE'
     assert s.lookup.call_count == 2
+
+
+@pytest.mark.parametrize('interruption', [KeyboardInterrupt, SystemExit])
+def test_interrupted_original_lookup_never_reuses_approval(context, interruption):
+    s = context
+    approved = forecast(s)
+    def interrupted_lookup(*args, **kwargs):
+        raise interruption('injected after one-time request consumption')
+    s.lookup.side_effect = interrupted_lookup
+    with pytest.raises(interruption):
+        s.dispatcher.execute(approved)
+    assert s.lookup.call_count == 1
+    assert s.dispatcher.execute(approved).status == 'DENIED'
+    assert s.lookup.call_count == 1
+    assert id(approved) not in s.dispatcher._records
+
+
+@pytest.mark.parametrize('interruption', [KeyboardInterrupt, SystemExit])
+def test_interruption_at_post_consume_handoff_denies_replay(context, monkeypatch, interruption):
+    from src.services import host_reporting_request_service as requests
+    s = context
+    approved = forecast(s)
+    original = requests._locked_call
+
+    def interrupt_after_consumption(locks, body):
+        outcome = original(locks, body)
+        raise interruption('injected after registry consumption')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(requests, '_locked_call', interrupt_after_consumption)
+        with pytest.raises(interruption):
+            s.dispatcher.execute(approved)
+    assert s.dispatcher.execute(approved).status == 'DENIED'
+    assert s.lookup.call_count == 0
+    assert id(approved) not in s.dispatcher._records
+
+
+def test_principal_revoked_after_issue_denies_before_lookup(context):
+    s = context
+    approved = forecast(s)
+    s.fa.revoke(s.op, s.fp)
+    assert s.dispatcher.execute(approved).status == 'DENIED'
+    s.lookup.assert_not_called()
+
+
+def test_label_principal_revoked_after_issue_denies_before_lookup(context):
+    s = context
+    approved = accuracy(s)
+    s.la.revoke(s.op, s.lp)
+    assert s.dispatcher.execute(approved).status == 'DENIED'
+    s.lookup.assert_not_called()
