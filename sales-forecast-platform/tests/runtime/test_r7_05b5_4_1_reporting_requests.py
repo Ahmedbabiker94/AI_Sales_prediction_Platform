@@ -152,3 +152,27 @@ def test_bad_request_action_denied_before_lookup(context):
     with pytest.raises(ReportingRequestDenied):
         forecast(s, action='EXPORT')
     s.lookup.assert_not_called()
+
+
+def test_consumed_approval_removed_from_registry(context):
+    s = context
+    h = forecast(s)
+    assert id(h) in s.dispatcher._records
+    assert s.dispatcher.execute(h).status == 'AVAILABLE'
+    assert id(h) not in s.dispatcher._records
+    assert s.dispatcher.execute(h).status == 'DENIED'
+    assert s.lookup.call_count == 1
+
+
+def test_pending_capacity_denies_without_eviction(context, monkeypatch):
+    from src.services import host_reporting_request_service as requests
+    s = context
+    monkeypatch.setattr(requests, '_MAX_OUTSTANDING_REQUESTS', 1)
+    first = forecast(s)
+    with pytest.raises(ReportingRequestDenied):
+        forecast(s)
+    assert id(first) in s.dispatcher._records
+    assert s.dispatcher.execute(first).status == 'AVAILABLE'
+    second = forecast(s)
+    assert s.dispatcher.execute(second).status == 'AVAILABLE'
+    assert s.lookup.call_count == 2
