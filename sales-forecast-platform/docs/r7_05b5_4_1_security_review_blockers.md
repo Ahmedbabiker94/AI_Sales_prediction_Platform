@@ -56,3 +56,14 @@ The GitHub-hosted focused workflow does **not** provision this PostgreSQL enviro
 - The audit test deliberately proves the raw dispatcher exposes its original Reader and pending grant; therefore the threat-model finding is still **OPEN** whenever an untrusted Python component can hold a dispatcher reference.
 - Existing operational API entrypoints are not currently bound to B5-4-1 in the inspected files. No complete caller/import/deployment graph is proven and no external transport or independent reviewer has been added.
 - PostgreSQL 16.15 disposable integration remains **UNEXECUTED**. Acceptance remains **NO-GO**, and the isolated Draft PR must not be merged.
+
+
+## Adversarial in-process bypass reproduction — 2026-11-15
+
+Added `test_exposed_dispatcher_reference_allows_bypass_of_request_one_use` to the isolated host-boundary audit. Under the existing synthetic original forecast grant, it consumes an approval through `dispatcher.execute` once (second call DENIED), then accesses `dispatcher._reader` and the captured `_Approved.forecast_grant` to invoke the original read source a second time. This deliberately demonstrates why *exposing the dispatcher to untrusted Python is unsafe*. It does **not** show a bypass of the correctly deployed host-only boundary: original grants are designed to allow original source reads while valid, and the hostile caller only gets them if the host leaks a Python reference.
+
+Expected test behavior: succeed as a *negative security finding* while two original source lookups occur; do not interpret a green test as isolation. The code and test avoid creating new SQL, schema, migration, transport, or API. No fix to the process-isolation blocker is claimed.
+
+A compliant controlled-offline composition must retain issuer, dispatcher, original source references and request handle within trusted code. Untrusted clients may receive only reviewed result DTOs through a distinct transport owned by host; implementation and actual adversarial boundary verification are not present. If no untrusted clients are in scope for B5-4-1, narrow the formal acceptance statement to trusted-host accidental misuse/replay prevention and obtain an independent review explicitly accepting that threat model.
+
+PostgreSQL integration is still unexecuted. The execution environment inspected here had no `postgres`, `psql` or `docker` executable, and its Python is 3.13.5. It is not an admissible substitute for the preapproved PG16.15 disposable harness.
