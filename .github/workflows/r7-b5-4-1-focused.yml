@@ -1,3 +1,5 @@
+# Host-only unit evidence. Adversarial boundary audit is a NEGATIVE finding;
+# this workflow does NOT certify isolation or PostgreSQL integration.
 name: R7 B5-4-1 focused offline verification
 
 on:
