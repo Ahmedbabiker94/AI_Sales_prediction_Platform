@@ -66,3 +66,22 @@ A read-only prerequisite workflow was committed at `.github/workflows/r7-b5-4-1-
 The preflight deliberately exited with code 2 and created no containers, volumes or databases. **No PostgreSQL test ran.** The separate focused Python unit workflow on the same commit completed successfully on CPython 3.11 and 3.12; it is not database evidence.
 
 **Disposition:** hosted-runner PostgreSQL acceptance is BLOCKED by missing pinned artifacts, not by a demonstrated product test failure. Next execution requires a trusted compatible Docker host with both exact image IDs already inspected and the verified local wheelhouse. Do not download replacements, relax digests, supply production credentials, or mark this gate passed. After host prerequisites are satisfied, independently inspect current code and run only the opt-in isolated harness. All B5-4-1 acceptance blockers remain open, including independent trust-boundary review.
+
+
+## Artifact provenance lookup — 2026-11-15
+
+The original accepted `docs/r7_05b3_postgres_forecast_evidence.md` (Disposable PostgreSQL reproduction) supplies the PostgreSQL *repository digest* omitted from later B5-4-1 notes:
+
+`postgres@sha256:e8a07d2c7579b038938cdba6c539e580e5001caf9ea203d397b5cc83e76bd938`.
+
+The expected **local image config ID** remains
+`sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f`.
+These are different forms of digest and MUST NOT be confused. If pulling the approved repository digest onto a trusted local machine, independently verify `docker image inspect` reports the exact configured image ID on linux/amd64; otherwise fail closed. Pulling this referenced official image alone does not authorize running any containers or tests.
+
+The exact pinned CPython 3.11 linux/amd64 driver wheel is available from official Python package hosting at
+`https://files.pythonhosted.org/packages/0b/b9/656cb03fad9f4f49f2145c334b1126ee75189929ca4e6187d485a2d59951/psycopg2_binary-2.9.12-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl`.
+Expected SHA-256:
+`e4e184b1fb6072bf05388aa41c697e1b2d01b3473f107e7ec44f186a32cfd0b8`.
+Verify the downloaded bytes against the original lock; no package update is authorized.
+
+The original B3 documentation does **not** specify a trusted repository name/digest source for the separate client-base config image `sha256:417063b71e35c7a9889c10ac2516c328f16a483e065ec858df101eb9728c2df2`; it only describes this as previously validated. Its provenance/acquisition remains unresolved. Never guess a `python:3.11` tag or change the pinned Dockerfile. PostgreSQL integration remains NO-GO until that artifact is located and verified.
