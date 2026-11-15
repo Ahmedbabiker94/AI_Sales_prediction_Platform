@@ -45,3 +45,11 @@ The harness now calls `remove_transient_credential_file` in its `finally` path b
 Focused CI run `43727698288`, commit `6a6f3928`, has **55/55 passing on CPython 3.11 and 55/55 on CPython 3.12**. Four additional tests simulate credentials cleanup and failure; they do not run PostgreSQL.
 
 Remaining: review manifest/log redaction independently, real disposable PG16.15 execution and cleanup evidence, and separate host-only security boundary review. Status remains **OPEN / NO-GO**.
+
+
+## Evidence secret-redaction checkpoint (2026-11-15)
+
+- Exact disposable password values are now retained in a process-context redaction registry during test execution and removed from reported stdout/stderr, command failure messages, written evidence logs, and serialized manifest content. This is content filtering, **not isolation of host process arguments or Docker daemon metadata**.
+- A detected occurrence increments `secret_redactions`, forces `cleanup_status: CLEANUP_UNCONFIRMED`, `result: FAILED` and rejects acceptance even though the copy written to evidence is redacted. Transient `test-client.env` is separately deleted in the final cleanup path; any uncertain deletion similarly rejects acceptance.
+- GitHub Actions run `43728104695` on commit `75e3facf`: **58/58 passing tests** on both CPython 3.11 and 3.12, including mocked evidence/console redaction checks. Subsequent manifest status fix requires its own fresh CI validation.
+- **No actual Docker/PostgreSQL 16.15 test has run from this CI.** No evidence directory should be shared unless it passes manual credential inspection and the original scoped cleanup manifest is confirmed. Independent security review remains outstanding.
