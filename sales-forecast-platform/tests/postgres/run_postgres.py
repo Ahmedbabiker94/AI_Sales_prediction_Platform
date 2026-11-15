@@ -349,13 +349,17 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         if record['credential_file_cleanup'] == 'UNCONFIRMED':
             record['cleanup_passed'] = False
             record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
-        # An unexpected occurrence of a test password in logs/metadata is
-        # redacted before writing, and the run is still rejected.
+        # Detect and redact secrets even in unexpected metadata keys before
+        # publishing the manifest. Any leak is a rejected run, not a PASS.
+        manifest_text = redact_test_secrets(json.dumps(record, indent=2, sort_keys=True))
         if record.get('secret_redactions', 0):
             record['cleanup_passed'] = False
             record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
-        write_evidence(evidence/'run-manifest.json', json.dumps(record, indent=2, sort_keys=True))
-        _TEST_SECRETS.reset(secret_token)
+            manifest_text = redact_test_secrets(json.dumps(record, indent=2, sort_keys=True))
+        try:
+            write_evidence(evidence/'run-manifest.json', manifest_text)
+        finally:
+            _TEST_SECRETS.reset(secret_token)
         if not record['cleanup_passed']:
             raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
 
