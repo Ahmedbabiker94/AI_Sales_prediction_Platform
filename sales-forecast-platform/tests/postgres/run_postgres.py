@@ -269,7 +269,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         # Keep named volumes until the bounded container reconciliation finishes.
         # A timed-out create can still attach them after the local CLI is gone.
         attempts = record['creation_attempts']
-        owned_containers = list(dict.fromkeys(containers+[x['name'] for x in attempts if x['kind']=='container']))
+        owned_containers = list(dict.fromkeys(containers + record.get('extra_containers', [])
+            + [x['name'] for x in attempts if x['kind']=='container']))
         owned_volumes = list(dict.fromkeys(volumes+[x['name'] for x in attempts if x['kind']=='volume']))
         ambiguous = any(x['state'] != 'RETURNED' for x in attempts)
         record['cleanup_deadline'] = time.monotonic()+10
