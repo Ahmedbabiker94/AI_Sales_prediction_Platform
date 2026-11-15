@@ -82,3 +82,13 @@ The temporary B5-4-1 module-name/typename rejection in `src/runtime/bootstrap.py
 **Security decision:** Treat B5-4-1 as controlled-offline **trusted-host-only** code. Only already-trusted host composition may hold the issuer, dispatcher, original request handle, and source grants. Any claim against untrusted Python in the same interpreter, or a public API/client, requires a separately implemented and reviewed process/transport boundary. No such boundary has been implemented. Current absence of operational caller wiring is not a substitute for proof of deployed isolation.
 
 **Acceptance still blocked:** independent security review of the scoped threat model and interruption behavior; complete approved disposable PostgreSQL 16.15 integration logs; explicit review of any host composition caller before future activation. Do not merge or advance to B5-4-2.
+
+
+## 2026-11-15 PostgreSQL optional host-stage runner safety checkpoint
+
+- Added `tests/postgres/run_b5_4_1_postgres.py` as an **opt-in** extension of the original `tests/postgres/run_postgres.py` lifecycle. Pinned B5-2, B5-3 and B5-4-1 PostgreSQL test modules execute only after original foundation migration and server restart stages. No arbitrary test selector, DSN, network port or production connection was added.
+- `run_postgres.py` cleanup ledger was minimally expanded to include `record['extra_containers']`; the extra container is registered before invocation and is run-scoped and label-checked by existing cleanup. This must still receive independent review because it touches accepted harness code.
+- Added six no-Docker lifecycle tests for success path, nonzero pytest exit, simulated KeyboardInterrupt/SystemExit/TimeoutError and rejection when original lifecycle is absent.
+- Focused GitHub Actions **run 43727145923**, commit `eb5c94f2`: **51 passed on CPython 3.11** and **51 passed on CPython 3.12**. The new tests use a mocked Docker command and do NOT prove a database actually ran, cleanup of daemon-side ambiguous mutations, or PostgreSQL 16.15 behavior.
+- The disposable PostgreSQL stage remains **UNEXECUTED**. It requires the exact pinned images and verified wheelhouse on a trusted compatible Docker host. Do not claim completion based on py_compile or mocked lifecycle tests.
+- Trust-boundary finding remains OPEN; independent code/security review and actual isolated PostgreSQL evidence remain mandatory. Acceptance **NO-GO**, no merge.
