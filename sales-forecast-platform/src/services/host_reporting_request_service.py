@@ -155,7 +155,7 @@ class ReportingRequestIssuer:
             now, elapsed = state.clocks(lambda: False)
             f = state.require(forecast_grant, checked, lambda: False)
             p = state.principals.get(id(f.principal))
-            if p is None or p.handle is not f.principal or p.subject != actor:
+            if p is None or p.handle is not f.principal or p.subject_reference != actor:
                 raise ReportingRequestDenied('report request denied')
             fexpiry = (min(f.expires, p.expires, now + lifetime_seconds),
                        min(f.end, p.end, elapsed + lifetime_seconds))
