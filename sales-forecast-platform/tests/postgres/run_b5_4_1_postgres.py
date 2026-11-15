@@ -11,6 +11,7 @@ import json
 
 from run_postgres import (
     ROOT, PROXIES, POSTGRES, BASE, command, run, write_evidence,
+    redact_test_secrets,
 )
 
 TESTS = (
@@ -68,8 +69,8 @@ def reporting_stage(*, server, socket, client, envfile, run_id, database, record
         'stage': 'b5-4-1', 'exit_code': result.returncode,
         'tests': list(TESTS),
     })
-    print(result.stdout, flush=True)
-    print(result.stderr, flush=True)
+    print(redact_test_secrets(result.stdout), flush=True)
+    print(redact_test_secrets(result.stderr), flush=True)
     if result.returncode:
         raise RuntimeError('isolated B5-4-1 PostgreSQL tests failed')
 
