@@ -34,3 +34,14 @@ The script reuses `run_postgres.run` with its original initialization, bootstrap
 The present assistant container has Python 3.13.5 and does **not** have `docker`, `postgres` or `psql`, as checked on 2026-11-15. GitHub Actions focused unit workflow only compiles the runner and simulates Docker commands. It does not run the disposable DB harness. This document is an execution gate, NOT an execution report.
 
 **Milestone:** R7-05B5-4-1 remains OPEN / NO-GO; no merge, no deployment, no B5-4-2.
+
+
+## Transient test-credential evidence hardening — 2026-11-15
+
+The original harness' `test-client.env` contains synthetic but plaintext role passwords. It is written with `0600` permissions within a `0700` evidence directory for client `--env-file` use. Previously the file could survive the run.
+
+The harness now calls `remove_transient_credential_file` in its `finally` path before publishing the run manifest. Results are `REMOVED` or `NOT_PRESENT`, or `UNCONFIRMED` on symlink replacement, permission failure or unexpected unlink errors. An unconfirmed result forces `cleanup_status: CLEANUP_UNCONFIRMED` and prevents acceptance. This does not guarantee secure erase or eliminate Docker daemon/host privilege exposure. Do not upload an evidence directory until checking the transient file is absent and no other credential data appears in logs.
+
+Focused CI run `43727698288`, commit `6a6f3928`, has **55/55 passing on CPython 3.11 and 55/55 on CPython 3.12**. Four additional tests simulate credentials cleanup and failure; they do not run PostgreSQL.
+
+Remaining: review manifest/log redaction independently, real disposable PG16.15 execution and cleanup evidence, and separate host-only security boundary review. Status remains **OPEN / NO-GO**.
