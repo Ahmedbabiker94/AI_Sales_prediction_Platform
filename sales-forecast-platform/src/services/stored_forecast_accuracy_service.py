@@ -299,4 +299,7 @@ def build_stored_forecast_accuracy(reader, scope, snapshots, *, operator, wall_c
     if wall_clock is time: wall_clock = clock_domain.wall
     if elapsed_clock is monotonic: elapsed_clock = clock_domain.elapsed
     state = _SyntheticLabels(snapshots, scope, operator, wall_clock, elapsed_clock, clock_domain)
-    return ActualLabelAuthority(state), StoredForecastAccuracyService(reader, state)
+    service = StoredForecastAccuracyService(reader, state)
+    from src.providers._forecast_read_order import _register_authentic_evaluator
+    _register_authentic_evaluator(_BOOTSTRAP_CREDENTIAL, service, reader, state)
+    return ActualLabelAuthority(state), service
