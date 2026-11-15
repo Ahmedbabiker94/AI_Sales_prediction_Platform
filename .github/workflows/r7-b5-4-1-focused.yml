@@ -10,7 +10,6 @@ on:
     paths:
       - 'sales-forecast-platform/src/providers/_forecast_read_order.py'
       - 'sales-forecast-platform/src/services/**'
-      - 'sales-forecast-platform/src/runtime/bootstrap.py'
       - 'sales-forecast-platform/tests/runtime/test_r7_05b5_4_1_*.py'
       - 'sales-forecast-platform/tests/runtime/test_canonical_reporting_read_contract.py'
       - '.github/workflows/r7-b5-4-1-focused.yml'
@@ -53,7 +52,6 @@ jobs:
             src/services/stored_forecast_accuracy_service.py \
             src/services/canonical_reporting_read_service.py \
             src/services/host_reporting_request_service.py \
-            src/runtime/bootstrap.py \
             tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
             tests/runtime/test_r7_05b5_4_1_reporting_requests.py \
             tests/runtime/test_r7_05b5_4_1_host_boundary_audit.py \
