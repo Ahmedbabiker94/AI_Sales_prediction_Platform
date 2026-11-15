@@ -39,7 +39,8 @@ jobs:
       - name: Install focused test dependencies only
         run: |
           python -m pip install --disable-pip-version-check \
-            'pytest==8.4.2' 'pydantic==2.13.3' 'psycopg2-binary==2.9.12'
+            'pytest==8.4.2' 'pydantic==2.13.3' 'psycopg2-binary==2.9.12' \
+            'numpy==2.4.4' 'pandas==2.3.3'
       - name: Compile touched modules without importing ML runtimes
         run: |
           python -m py_compile \
