@@ -41,3 +41,10 @@ The GitHub-hosted focused workflow does **not** provision this PostgreSQL enviro
 2. Obtain an actual, separately performed security review and address all BLOCKER/IMPORTANT issues.
 3. Execute all retained read-only PG16.15 integration tests using the approved disposable harness, collect concrete logs.
 4. Only then consider milestone acceptance. **No merge without explicit authorization.**
+
+
+## 2026-11-15 boundary proof checkpoint
+- Added `tests/runtime/test_r7_05b5_4_1_host_boundary_audit.py`. The first test intentionally demonstrates that a same-interpreter caller holding the dispatcher can inspect `dispatcher._reader` and obtain an original pending `forecast_grant` from `dispatcher._records`. This is evidence of the BLOCKER, not a successful boundary defense.
+- The second test statically checks current `api/main.py` and `src/runtime/bootstrap.py` have no direct B5-4-1 service imports. It does **not** prove a complete import/deployment graph, absence of dynamic indirect references, or future callers.
+- Both issuer and dispatcher must remain host-private; request consumers must not receive either object. A future untrusted transport boundary is **NOT IMPLEMENTED** and remains out of current operational integration. If separate-process authentication/transport is desired, review the scope as an explicit architecture decision first; do not bolt an unaudited API onto this milestone.
+- A CI update adds this module to the focused verification command. Do not claim it passed until job logs verify the new module actually ran.
