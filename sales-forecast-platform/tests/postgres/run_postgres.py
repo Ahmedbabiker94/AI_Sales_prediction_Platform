@@ -145,6 +145,19 @@ def build_client(wheelhouse, work):
     return identity
 
 
+def remove_transient_credential_file(path):
+    """Fail closed for uncertain removal; never include plaintext in evidence."""
+    try:
+        if path.is_symlink():
+            return 'UNCONFIRMED'
+        if path.exists():
+            path.unlink()
+            return 'REMOVED'
+        return 'NOT_PRESENT'
+    except Exception:
+        return 'UNCONFIRMED'
+
+
 def run(*, allow, wheelhouse, evidence, _host_stage=None):
     if allow is not True:
         raise ValueError('explicit disposable-database authorization required')
@@ -313,15 +326,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         # This is only best-effort filesystem cleanup, not secure erase of bytes
         # from an underlying disk, Docker daemon metadata or host privileges.
         # If the credentials file cannot be removed, mark the run unaccepted.
-        record['credential_file_cleanup'] = 'NOT_PRESENT'
-        try:
-            if envfile.is_symlink():
-                raise ValueError('credential file replaced with symlink')
-            if envfile.exists():
-                envfile.unlink()
-                record['credential_file_cleanup'] = 'REMOVED'
-        except Exception:
-            record['credential_file_cleanup'] = 'UNCONFIRMED'
+        record['credential_file_cleanup'] = remove_transient_credential_file(envfile)
+        if record['credential_file_cleanup'] == 'UNCONFIRMED':
             record['cleanup_passed'] = False
             record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
         write_evidence(evidence/'run-manifest.json', json.dumps(record, indent=2, sort_keys=True))
