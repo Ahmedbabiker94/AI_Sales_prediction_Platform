@@ -230,6 +230,21 @@ def _issued_original(handle):
 # This registry is process-private integrity state under the existing trusted
 # CPython host assumptions, not isolation from malicious code in this process.
 _AUTHENTIC_READERS = {}
+_AUTHENTIC_EVALUATORS = {}
+
+def _register_authentic_evaluator(credential, evaluator, reader, labels):
+    if credential is not _BOOTSTRAP_CREDENTIAL or not _authentic_reporting_sources(reader, None):
+        raise OrderDenied('protected evaluator bootstrap required')
+    origin = getattr(evaluator, '_publication_origin', None)
+    record = _ORIGINS.get(id(origin))
+    if (record is None or record.handle is not origin or record.kind != 'EVAL'
+            or record.source is not evaluator or record.peer is not labels
+            or record.provider is not reader._state.provider):
+        raise OrderDenied('original evaluator origin required')
+    key = id(evaluator)
+    if key in _AUTHENTIC_EVALUATORS:
+        raise OrderDenied('evaluator already registered')
+    _AUTHENTIC_EVALUATORS[key] = (evaluator, reader, labels, origin)
 
 def _register_authentic_reader(credential, reader, state):
     if credential is not _BOOTSTRAP_CREDENTIAL or reader._state is not state:
@@ -266,7 +281,11 @@ def _authentic_reporting_sources(reader, evaluator):
         return False
     eorigin = getattr(evaluator, '_publication_origin', None)
     erecord = _ORIGINS.get(id(eorigin))
-    return (erecord is not None and erecord.handle is eorigin
+    registered = _AUTHENTIC_EVALUATORS.get(id(evaluator))
+    return (registered is not None and registered[0] is evaluator
+            and registered[1] is reader and registered[2] is evaluator._labels
+            and registered[3] is eorigin
+            and erecord is not None and erecord.handle is eorigin
             and erecord.kind == 'EVAL' and erecord.source is evaluator
             and erecord.provider is state.provider and erecord.peer is evaluator._labels
             and erecord.owner_code is StoredForecastAccuracyService.evaluate.__code__
