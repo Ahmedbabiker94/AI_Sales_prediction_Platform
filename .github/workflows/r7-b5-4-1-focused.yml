@@ -57,6 +57,7 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
             tests/runtime/test_r7_05b5_4_1_reporting_requests.py \
             tests/runtime/test_r7_05b5_4_1_host_boundary_audit.py \
+            tests/runtime/test_r7_05b5_4_1_pg_runner_safety.py \
             tests/runtime/test_canonical_reporting_read_contract.py
       - name: Run ONLY B5-4-1 and retained B5-3 reporting contract modules
         run: |
@@ -64,4 +65,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
             tests/runtime/test_r7_05b5_4_1_reporting_requests.py \
             tests/runtime/test_r7_05b5_4_1_host_boundary_audit.py \
+            tests/runtime/test_r7_05b5_4_1_pg_runner_safety.py \
             tests/runtime/test_canonical_reporting_read_contract.py
