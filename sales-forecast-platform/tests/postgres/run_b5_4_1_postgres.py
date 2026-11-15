@@ -14,6 +14,7 @@ from run_postgres import (
 )
 
 TESTS = (
+    'tests/postgres/test_stored_forecast_accuracy_postgres.py',
     'tests/postgres/test_canonical_reporting_read.py',
     'tests/postgres/test_r7_05b5_4_1_host_reporting_requests.py',
 )
