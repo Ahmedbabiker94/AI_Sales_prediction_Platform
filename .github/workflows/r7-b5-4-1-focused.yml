@@ -10,6 +10,7 @@ on:
     paths:
       - 'sales-forecast-platform/src/providers/_forecast_read_order.py'
       - 'sales-forecast-platform/src/services/**'
+      - 'sales-forecast-platform/src/runtime/bootstrap.py'
       - 'sales-forecast-platform/tests/runtime/test_r7_05b5_4_1_*.py'
       - 'sales-forecast-platform/tests/runtime/test_canonical_reporting_read_contract.py'
       - '.github/workflows/r7-b5-4-1-focused.yml'
