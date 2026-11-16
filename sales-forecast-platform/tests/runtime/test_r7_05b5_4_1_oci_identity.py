@@ -103,3 +103,75 @@ def test_no_fallback_for_wrong_manifest_media_type(check):
     manifest["mediaType"] = "unsupported"
     check.setup(manifest_override=manifest)
     assert check.verifier.verified_postgres_oci() is False
+
+@pytest.mark.parametrize("local_id", ["index", "manifest", "config"])
+def test_client_candidate_bound_identity(check, monkeypatch, local_id):
+    v = check.verifier
+    ids = {"index": v.CLIENT_INDEX, "manifest": v.CLIENT_MANIFEST,
+           "config": v.CLIENT_CONFIG}
+    calls = []
+    def fake(argv, **kwargs):
+        calls.append(argv)
+        assert kwargs["timeout"] <= 25 and kwargs["check"] is False
+        if len(calls) == 1:
+            assert v.CLIENT_REGISTRY_IMAGE + "@" + v.CLIENT_INDEX in argv
+            result = ids[local_id] + " linux amd64" + chr(10)
+        elif len(calls) == 2:
+            assert v.CLIENT_REGISTRY_IMAGE + "@" + v.CLIENT_INDEX in argv
+            result = json.dumps({"mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [{"digest": v.CLIENT_MANIFEST,
+                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "platform": {"os": "linux", "architecture": "amd64"}}]})
+        else:
+            assert len(calls) == 3
+            assert v.CLIENT_REGISTRY_IMAGE + "@" + v.CLIENT_MANIFEST in argv
+            result = json.dumps({"mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": {"digest": v.CLIENT_CONFIG,
+                    "mediaType": "application/vnd.oci.image.config.v1+json"}})
+        return SimpleNamespace(returncode=0, stdout=result)
+    monkeypatch.setattr(v.subprocess, "run", fake)
+    assert v.verified_client_candidate_oci() is True
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("tamper", [
+    "local_id", "architecture", "manifest", "config", "duplicate_amd64",
+    "index_type", "manifest_type", "config_type", "offline",
+])
+def test_client_candidate_negative_cases(check, monkeypatch, tamper):
+    v = check.verifier
+    calls = []
+    index = {"mediaType": "application/vnd.oci.image.index.v1+json",
+             "manifests": [{"digest": v.CLIENT_MANIFEST,
+                            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                            "platform": {"os": "linux", "architecture": "amd64"}}]}
+    manifest = {"mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": {"digest": v.CLIENT_CONFIG,
+                           "mediaType": "application/vnd.oci.image.config.v1+json"}}
+    if tamper == "manifest":
+        index["manifests"][0]["digest"] = "sha256:" + "1" * 64
+    elif tamper == "config":
+        manifest["config"]["digest"] = "sha256:" + "2" * 64
+    elif tamper == "duplicate_amd64":
+        index["manifests"].append(dict(index["manifests"][0]))
+    elif tamper == "index_type":
+        index["mediaType"] = "unsupported"
+    elif tamper == "manifest_type":
+        manifest["mediaType"] = "unsupported"
+    elif tamper == "config_type":
+        manifest["config"]["mediaType"] = "unsupported"
+    def fake(argv, **kwargs):
+        calls.append(argv)
+        if tamper == "offline":
+            return SimpleNamespace(returncode=1, stdout="", stderr="offline")
+        if len(calls) == 1:
+            local = ("sha256:" + "0" * 64) if tamper == "local_id" else v.CLIENT_INDEX
+            arch = "arm64" if tamper == "architecture" else "amd64"
+            result = local + " linux " + arch + chr(10)
+        elif len(calls) == 2:
+            result = json.dumps(index)
+        else:
+            result = json.dumps(manifest)
+        return SimpleNamespace(returncode=0, stdout=result)
+    monkeypatch.setattr(v.subprocess, "run", fake)
+    assert v.verified_client_candidate_oci() is False
