@@ -22,7 +22,7 @@ else:
 LOCK_LINE = re.compile(r"([a-z0-9][a-z0-9.-]*)==([A-Za-z0-9_.+!-]+) --hash=sha256:([0-9a-f]{64})\Z")
 
 
-def verify_candidate_wheelhouse(folder):
+def verify_candidate_wheelhouse(folder, *, top_level=TOP_LEVEL):
     """Reject any missing, unexpected or altered wheel, manifest or lock."""
     folder = Path(folder)
     if folder.is_symlink() or not folder.is_dir():
@@ -82,7 +82,7 @@ def verify_candidate_wheelhouse(folder):
     actual_wheels = inspect_wheels_only(folder, expected_names - {"candidate-manifest.json", "candidate-requirements.lock"})
     if {e["name"]: (e["version"], e["filename"], e["sha256"]) for e in actual_wheels} != manifest_rows:
         raise ValueError("wheel metadata and candidate manifest disagree")
-    required = dict(item.split("==", 1) for item in TOP_LEVEL)
+    required = dict(item.split("==", 1) for item in top_level)
     if any(name not in manifest_rows or manifest_rows[name][0] != version
            for name, version in required.items()):
         raise ValueError("top-level version mismatch")
