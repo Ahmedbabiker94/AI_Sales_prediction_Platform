@@ -9,9 +9,15 @@ import json
 from pathlib import Path
 import re
 
-from prepare_client_wheelhouse_candidate import (
-    ORIGINAL_HASH, ORIGINAL_WHEEL, TOP_LEVEL, inspect_wheels,
-)
+# Support both package imports and direct script execution from tests/postgres.
+if __package__:
+    from .prepare_client_wheelhouse_candidate import (
+        ORIGINAL_HASH, ORIGINAL_WHEEL, TOP_LEVEL,
+    )
+else:
+    from prepare_client_wheelhouse_candidate import (
+        ORIGINAL_HASH, ORIGINAL_WHEEL, TOP_LEVEL,
+    )
 
 LOCK_LINE = re.compile(r"([a-z0-9][a-z0-9.-]*)==([A-Za-z0-9_.+!-]+) --hash=sha256:([0-9a-f]{64})\Z")
 
