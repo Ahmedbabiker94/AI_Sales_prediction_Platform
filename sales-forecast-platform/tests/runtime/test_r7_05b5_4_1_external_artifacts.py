@@ -74,3 +74,16 @@ def test_no_external_query_when_local_hashes_fail(setup_case, monkeypatch):
     with pytest.raises(ValueError, match="tampered"):
         m.check_external_candidate(folder, lambda *_: (_ for _ in ()).throw(
             AssertionError("must not make network request")))
+
+
+def test_explicit_v2_top_level_reaches_integrity_gate(setup_case, monkeypatch):
+    m, folder, requester = setup_case
+    observed = []
+    def gate(location, *, top_level):
+        observed.append((location, top_level))
+        return True
+    monkeypatch.setattr(m, "verify_candidate_wheelhouse", gate)
+    pins = ("pytest==9.0.3",)
+    report = m.check_external_candidate(folder, requester, top_level=pins)
+    assert report["pypi_exact_file_hashes_match"]
+    assert observed == [(folder, pins)]
