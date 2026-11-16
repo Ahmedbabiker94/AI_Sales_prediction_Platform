@@ -38,9 +38,12 @@ def request_json(url, payload=None):
     return result
 
 
-def check_external_candidate(folder, request=request_json):
+def check_external_candidate(folder, request=request_json, *, top_level=None):
     folder = Path(folder)
-    verify_candidate_wheelhouse(folder)
+    if top_level is None:
+        verify_candidate_wheelhouse(folder)
+    else:
+        verify_candidate_wheelhouse(folder, top_level=top_level)
     rows = json.loads((folder / "candidate-manifest.json").read_text(encoding="utf-8"))["wheels"]
     results = []
     all_pypi_match = True
@@ -92,11 +95,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheelhouse", type=Path, required=True)
     parser.add_argument("--allow-network", action="store_true")
+    parser.add_argument("--candidate-version", choices=("v1", "v2"), default="v1")
     args = parser.parse_args()
     if not args.allow_network:
         parser.error("explicit external PyPI/OSV metadata access required")
     try:
-        report = check_external_candidate(args.wheelhouse)
+        if args.candidate_version == "v2":
+            if __package__:
+                from .prepare_client_wheelhouse_v2_candidate import V2_TOP_LEVEL
+            else:
+                from prepare_client_wheelhouse_v2_candidate import V2_TOP_LEVEL
+            report = check_external_candidate(args.wheelhouse, top_level=V2_TOP_LEVEL)
+        else:
+            report = check_external_candidate(args.wheelhouse)
     except Exception as error:
         print("BLOCKED: external candidate check unavailable or invalid: " + type(error).__name__,
               file=sys.stderr)
