@@ -58,3 +58,16 @@ def test_incompatible_python_rejected(sample):
     save_manifest(folder, [write("demo", requires_python=">=3.12")])
     with pytest.raises(ValueError, match="Requires-Python"):
         v.verify_candidate_dependency_closure(folder)
+
+
+def test_explicit_v2_pins_reach_integrity_gate(sample, monkeypatch):
+    v, folder, write = sample
+    save_manifest(folder, [write("pytest")])
+    observed = []
+    def gate(location, *, top_level):
+        observed.append((location, top_level))
+        return True
+    monkeypatch.setattr(v, "verify_candidate_wheelhouse", gate)
+    pins = ("pytest==9.0.3",)
+    assert v.verify_candidate_dependency_closure(folder, top_level=pins)["wheels"] == 1
+    assert observed == [(folder, pins)]
