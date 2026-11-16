@@ -175,3 +175,33 @@ def test_client_candidate_negative_cases(check, monkeypatch, tamper):
         return SimpleNamespace(returncode=0, stdout=result)
     monkeypatch.setattr(v.subprocess, "run", fake)
     assert v.verified_client_candidate_oci() is False
+
+
+@pytest.mark.parametrize("which", ["postgres", "client"])
+def test_verified_runtime_reference_is_exact_repo_index(check, monkeypatch, which):
+    v = check.verifier
+    expected = (v.REGISTRY_IMAGE + "@" + v.INDEX if which == "postgres"
+                else v.CLIENT_REGISTRY_IMAGE + "@" + v.CLIENT_INDEX)
+    def verified(*args):
+        assert args == ((v.REGISTRY_IMAGE, v.INDEX, v.MANIFEST, v.CONFIG)
+                        if which == "postgres" else
+                        (v.CLIENT_REGISTRY_IMAGE, v.CLIENT_INDEX,
+                         v.CLIENT_MANIFEST, v.CLIENT_CONFIG))
+        return True
+    monkeypatch.setattr(v, "verified_pinned_oci", verified)
+    selected = (v.verified_postgres_runtime_reference() if which == "postgres"
+                else v.verified_client_base_runtime_reference())
+    assert selected == expected
+    assert "@sha256:" in selected
+    assert ":" not in selected.split("@")[0]
+
+
+@pytest.mark.parametrize("which", ["postgres", "client"])
+def test_unverified_runtime_reference_fails_closed(check, monkeypatch, which):
+    v = check.verifier
+    monkeypatch.setattr(v, "verified_pinned_oci", lambda *args: False)
+    with pytest.raises(ValueError, match="runtime reference not verified"):
+        if which == "postgres":
+            v.verified_postgres_runtime_reference()
+        else:
+            v.verified_client_base_runtime_reference()
