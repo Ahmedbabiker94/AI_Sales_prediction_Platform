@@ -93,6 +93,29 @@ def verified_client_candidate_oci():
                                CLIENT_MANIFEST, CLIENT_CONFIG)
 
 
+def verified_runtime_reference(registry_image, index_digest, manifest_digest, config_digest):
+    """Return a pinned runtime ref ONLY after complete read-only OCI verification.
+
+    This does not launch a container or authorize rebaseline. Callers must
+    also prohibit implicit pulls and separately assess daemon trust.
+    """
+    if not verified_pinned_oci(registry_image, index_digest,
+                               manifest_digest, config_digest):
+        raise ValueError('pinned OCI runtime reference not verified')
+    return registry_image + '@' + index_digest
+
+
+def verified_postgres_runtime_reference():
+    """Candidate for future runner wiring; original runner is unchanged."""
+    return verified_runtime_reference(REGISTRY_IMAGE, INDEX, MANIFEST, CONFIG)
+
+
+def verified_client_base_runtime_reference():
+    """Candidate client base only; NOT an approved rebaseline."""
+    return verified_runtime_reference(CLIENT_REGISTRY_IMAGE, CLIENT_INDEX,
+                                      CLIENT_MANIFEST, CLIENT_CONFIG)
+
+
 if __name__ == "__main__":
     passed = verified_postgres_oci()
     print(("PASS" if passed else "BLOCKED")
