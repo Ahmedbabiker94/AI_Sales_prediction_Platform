@@ -20,10 +20,13 @@ else:
     from verify_client_wheelhouse_candidate import verify_candidate_wheelhouse
 
 
-def verify_candidate_dependency_closure(folder):
+def verify_candidate_dependency_closure(folder, *, top_level=None):
     """Reject unresolved or incompatible required wheel metadata dependencies."""
     folder = Path(folder)
-    verify_candidate_wheelhouse(folder)
+    if top_level is None:
+        verify_candidate_wheelhouse(folder)
+    else:
+        verify_candidate_wheelhouse(folder, top_level=top_level)
     entries = json.loads((folder / "candidate-manifest.json").read_text(encoding="utf-8"))["wheels"]
     installed = {canonicalize_name(x["name"]): x["version"] for x in entries}
     env = default_environment()
