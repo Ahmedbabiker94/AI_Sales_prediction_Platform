@@ -6,6 +6,7 @@ Tests restore original ContextVars in finally to avoid poisoning other cases.
 """
 import importlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -22,11 +23,13 @@ def test_original_runner_early_setup_error_retains_lifecycle_context(
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
     monkeypatch.setattr(runner, "verified_clean_source", lambda: "a" * 40)
-    if failure_site == "sigterm_install":
-        def reject_signal(*args):
-            raise RuntimeError("synthetic signal registration failure")
-        monkeypatch.setattr(runner.signal, "signal", reject_signal)
-    else:
+    # Use a private mock signal object: never change the real CI SIGTERM handler.
+    def reject_signal(*args):
+        raise RuntimeError("synthetic signal registration failure")
+    monkeypatch.setattr(runner, "signal", SimpleNamespace(
+        SIGTERM=15, getsignal=lambda _: None,
+        signal=(reject_signal if failure_site == "sigterm_install" else lambda *args: None)))
+    if failure_site == "password_generation":
         def reject_password(*args):
             raise RuntimeError("synthetic password-generation failure")
         monkeypatch.setattr(runner.secrets, "token_hex", reject_password)
