@@ -77,4 +77,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_redaction_finalization_candidate.py \
             tests/runtime/test_r7_05b5_4_1_f04_redaction_exception_review.py \
             tests/runtime/test_r7_05b5_4_1_f04_runner_exception_counterexample.py \
+            tests/runtime/test_r7_05b5_4_1_f04_early_setup_counterexamples.py \
             -q --tb=short -p no:cacheprovider
