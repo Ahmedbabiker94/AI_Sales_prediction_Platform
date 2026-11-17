@@ -1,8 +1,6 @@
-"""Candidate-only, no-Docker proof of interrupted cleanup bypassing credential unlink.
+"""Candidate-only negative regression for interrupted reconciliation.
 
-A PASS in this diagnostic test indicates a remaining FAIL-CLOSED GAP:
-the inner reconciliation raises BaseException and skips the existing
-remove_transient_credential_file() call. Never claim safety signoff.
+An interruption must attempt owned transient credential cleanup before exit.
 No real Docker, PostgreSQL, command execution, or sensitive values.
 """
 import importlib
@@ -20,9 +18,9 @@ def fork(monkeypatch):
     return runner
 
 
-def test_keyboard_interrupt_during_ambiguous_reconciliation_skips_credential_cleanup(
+def test_keyboard_interrupt_during_ambiguous_reconciliation_attempts_credential_cleanup(
         fork, monkeypatch, tmp_path):
-    # Explicitly diagnostic: confirms a gap in the current review fork.
+    # Repair criterion: no exceptional path silently skips unlink attempt.
     signal_calls = []
     monkeypatch.setattr(fork, "signal", SimpleNamespace(
         SIGTERM=15, getsignal=lambda _: "prior",
@@ -66,7 +64,7 @@ def test_keyboard_interrupt_during_ambiguous_reconciliation_skips_credential_cle
         with pytest.raises(KeyboardInterrupt, match="synthetic reconciliation"):
             fork.run(allow=True, wheelhouse=tmp_path, evidence=path)
         assert removed
-        assert credential_removals == []  # this PASS is a demonstrated bug
+        assert credential_removals == [path / "test-client.env"]
         assert not (path / "run-manifest.json").exists()
         assert fork._LIFECYCLE.get() is None
         assert fork._TEST_SECRETS.get() == ()
