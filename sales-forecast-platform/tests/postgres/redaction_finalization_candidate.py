@@ -40,7 +40,7 @@ def finalize_manifest_candidate(record, secrets):
     if type(record.get("secret_redactions", 0)) is not int or record.get("secret_redactions", 0) < 0:
         raise ValueError("invalid previous redaction count")
     snapshot = dict(record)
-    raw = json.dumps(snapshot, indent=2, sort_keys=True)
+    raw = json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False)
     _, hits = _redact(raw, secrets)
     snapshot["secret_redactions"] = snapshot.get("secret_redactions", 0) + hits
     if snapshot["secret_redactions"]:
@@ -48,7 +48,7 @@ def finalize_manifest_candidate(record, secrets):
         snapshot["cleanup_status"] = "CLEANUP_UNCONFIRMED"
     if not snapshot["cleanup_passed"]:
         snapshot["result"] = "FAILED"
-    final, final_hits = _redact(json.dumps(snapshot, indent=2, sort_keys=True), secrets)
+    final, final_hits = _redact(json.dumps(snapshot, indent=2, sort_keys=True, allow_nan=False), secrets)
     if final_hits != hits:
         # No silently introduced or removed secret occurrences after decision.
         raise ValueError("unstable redaction after finalization")
