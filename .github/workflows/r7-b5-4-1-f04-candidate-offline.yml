@@ -90,4 +90,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_fork_ownership_scope.py \
             tests/runtime/test_r7_05b5_4_1_f04_cleanup_interrupt_counterexample.py \
             tests/runtime/test_r7_05b5_4_1_f04_credential_cleanup_fallback.py \
+            tests/runtime/test_r7_05b5_4_1_f04_credential_cleanup_status_contract.py \
             -q --tb=short -p no:cacheprovider
