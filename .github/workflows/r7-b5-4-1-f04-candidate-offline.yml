@@ -12,6 +12,7 @@ on:
       - 'sales-forecast-platform/tests/postgres/real_run_argv_candidate.py'
       - 'sales-forecast-platform/tests/postgres/runtime_run_plan_candidate.py'
       - 'sales-forecast-platform/tests/postgres/review_client_supply_chain_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/redaction_finalization_candidate.py'
       - '.github/workflows/r7-b5-4-1-f04-candidate-offline.yml'
 
 permissions:
@@ -52,6 +53,7 @@ jobs:
               pathlib.Path('tests/postgres/runtime_run_plan_candidate.py'),
               pathlib.Path('tests/postgres/real_run_argv_candidate.py'),
               pathlib.Path('tests/postgres/review_client_supply_chain_candidate.py'),
+              pathlib.Path('tests/postgres/redaction_finalization_candidate.py'),
           ]
           for path in paths:
               py_compile.compile(str(path), doraise=True)
@@ -72,4 +74,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_real_argv_candidate.py \
             tests/runtime/test_r7_05b5_4_1_f04_cr1_independent_source_parity.py \
             tests/runtime/test_r7_05b5_4_1_f04_cr0_v2_supply_chain_gate.py \
+            tests/runtime/test_r7_05b5_4_1_f04_redaction_finalization_candidate.py \
             -q --tb=short -p no:cacheprovider
