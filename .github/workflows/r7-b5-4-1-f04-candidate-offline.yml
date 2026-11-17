@@ -14,6 +14,7 @@ on:
       - 'sales-forecast-platform/tests/postgres/review_client_supply_chain_candidate.py'
       - 'sales-forecast-platform/tests/postgres/redaction_finalization_candidate.py'
       - 'sales-forecast-platform/tests/postgres/run_context_scope_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_postgres_security_patch_candidate.py'
       - '.github/workflows/r7-b5-4-1-f04-candidate-offline.yml'
 
 permissions:
@@ -56,6 +57,7 @@ jobs:
               pathlib.Path('tests/postgres/review_client_supply_chain_candidate.py'),
               pathlib.Path('tests/postgres/redaction_finalization_candidate.py'),
               pathlib.Path('tests/postgres/run_context_scope_candidate.py'),
+              pathlib.Path('tests/postgres/run_postgres_security_patch_candidate.py'),
           ]
           for path in paths:
               py_compile.compile(str(path), doraise=True)
@@ -81,4 +83,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_runner_exception_counterexample.py \
             tests/runtime/test_r7_05b5_4_1_f04_early_setup_counterexamples.py \
             tests/runtime/test_r7_05b5_4_1_f04_scope_candidate.py \
+            tests/runtime/test_r7_05b5_4_1_f04_security_patch_fork.py \
             -q --tb=short -p no:cacheprovider
