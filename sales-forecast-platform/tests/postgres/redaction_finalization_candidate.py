@@ -9,7 +9,7 @@ REPLACEMENT = "<redacted-disposable-secret>"
 
 
 def _redact(text, secrets):
-    if type(text) is not str or type(secrets) not tuple:
+    if type(text) is not str or type(secrets) is not tuple:
         raise ValueError("invalid redaction inputs")
     if any(type(secret) is not str or not secret for secret in secrets):
         raise ValueError("invalid disposable secret")
