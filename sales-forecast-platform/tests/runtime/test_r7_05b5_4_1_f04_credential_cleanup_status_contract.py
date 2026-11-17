@@ -43,7 +43,7 @@ def test_normal_unlink_error_or_unexpected_status_rejected_once(
             with pytest.raises(KeyboardInterrupt, match="synthetic unlink interrupted"):
                 fork.run(allow=True, wheelhouse=tmp_path, evidence=evidence)
         else:
-            with pytest.raises(RuntimeError, match="synthetic preflight"):
+            with pytest.raises(fork.CleanupUnconfirmed, match="CLEANUP_UNCONFIRMED"):
                 fork.run(allow=True, wheelhouse=tmp_path, evidence=evidence)
         assert attempts == [evidence / "test-client.env"]
         assert seen["record"]["result"] == "FAILED"
