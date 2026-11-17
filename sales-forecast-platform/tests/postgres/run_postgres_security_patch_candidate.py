@@ -230,6 +230,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
               'operations': [], 'native_execution': False, 'production_connections': False}
     record.update(run_hex=run_id.hex, creation_attempts=[])
     token = _LIFECYCLE.set(record)
+    inspection_token = None  # suspend resource-ownership context during read-only listings
     secret_token = None
     handler_attempted = False
     previous_term = None
@@ -368,7 +369,10 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                         cleanup.append(False)
             finally:
                 record.pop('cleanup_deadline', None)
-                pass  # outer guard restores handler and lifecycle exactly once
+            # Match accepted runner: no active lifecycle context while issuing
+            # final read-only inventory queries and publishing evidence.
+            # Keep the original binding token for outer finally restoration.
+            inspection_token = _LIFECYCLE.set(None)
             for key, query in (('remaining_containers', ['ps','-aq','--filter','label=r7_05b3_run='+str(run_id)]),
                                ('remaining_volumes', ['volume','ls','-q','--filter','label=r7_05b3_run='+str(run_id)])):
                 try:
@@ -404,7 +408,11 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                 if secret_token is not None:
                     _TEST_SECRETS.reset(secret_token)
             finally:
-                _LIFECYCLE.reset(token)
+                try:
+                    if inspection_token is not None:
+                        _LIFECYCLE.reset(inspection_token)
+                finally:
+                    _LIFECYCLE.reset(token)
 
 
 
