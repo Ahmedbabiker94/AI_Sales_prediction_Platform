@@ -391,8 +391,19 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             # from an underlying disk, Docker daemon metadata or host privileges.
             # If the credentials file cannot be removed, mark the run unaccepted.
             credential_cleanup_attempted = True  # mark before call; no unsafe duplicate unlink
-            record['credential_file_cleanup'] = remove_transient_credential_file(envfile)
+            try:
+                removal_status = remove_transient_credential_file(envfile)
+            except BaseException:
+                record['credential_file_cleanup'] = 'UNCONFIRMED'
+                record['result'] = 'FAILED'
+                record['cleanup_passed'] = False
+                record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+                raise
+            record['credential_file_cleanup'] = (
+                removal_status if removal_status in ('REMOVED', 'NOT_PRESENT')
+                else 'UNCONFIRMED')
             if record['credential_file_cleanup'] == 'UNCONFIRMED':
+                record['result'] = 'FAILED'
                 record['cleanup_passed'] = False
                 record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
             # Detect and redact secrets even in unexpected metadata keys before
@@ -409,9 +420,12 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             if not credential_cleanup_attempted:
                 credential_cleanup_attempted = True
                 try:
-                    record['credential_file_cleanup'] = remove_transient_credential_file(envfile)
+                    removal_status = remove_transient_credential_file(envfile)
                 except BaseException:
-                    record['credential_file_cleanup'] = 'UNCONFIRMED'
+                    removal_status = 'UNCONFIRMED'
+                record['credential_file_cleanup'] = (
+                    removal_status if removal_status in ('REMOVED', 'NOT_PRESENT')
+                    else 'UNCONFIRMED')
                 if record['credential_file_cleanup'] == 'UNCONFIRMED':
                     record['result'] = 'FAILED'
                     record['cleanup_passed'] = False
