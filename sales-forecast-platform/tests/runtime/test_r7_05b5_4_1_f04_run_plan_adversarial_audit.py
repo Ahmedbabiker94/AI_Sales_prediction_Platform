@@ -61,7 +61,8 @@ def test_candidate_rejects_nonmatching_ownership_markers(candidate, site):
     argv = plan["clients"][0] if site == "client" else plan[site]
     argv[argv.index("--name") + 1] = "r7-05b3-" + "f" * 32 + "-foreign"
     argv[argv.index("--label") + 1] = "r7_05b3_run=unrelated"
-    assert checker.validate_candidate_run_plan(plan, pg_ref, client_id) is True
+    with pytest.raises(ValueError):
+        checker.validate_candidate_run_plan(plan, pg_ref, client_id)
 
 
 def test_candidate_rejects_image_as_nonterminal_argument(candidate):
@@ -69,4 +70,5 @@ def test_candidate_rejects_image_as_nonterminal_argument(candidate):
     plan = copy.deepcopy(source)
     # It checks one occurrence, but not its position relative to Docker flags.
     plan["server"].append("--unexpected-after-image")
-    assert checker.validate_candidate_run_plan(plan, pg_ref, client_id) is True
+    with pytest.raises(ValueError):
+        checker.validate_candidate_run_plan(plan, pg_ref, client_id)
