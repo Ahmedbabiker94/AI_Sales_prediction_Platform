@@ -24,12 +24,12 @@ def protected_scope_candidate(record, *, install_handler, restore_handler,
         raise ValueError("invalid lifecycle record")
     lifecycle_token = REVIEW_LIFECYCLE.set(record)
     secrets_token = None
-    installed = False
+    install_attempted = False
     try:
         # The real version needs a trustworthy saved SIGTERM handler and
-        # must distinguish attempted vs successful handler replacement.
+        # must handle attempted but partially successful replacement.
+        install_attempted = True
         install_handler()
-        installed = True
         generated = make_secrets()
         if type(generated) is not tuple or not generated or any(
             type(secret) is not str or not secret for secret in generated
@@ -39,7 +39,7 @@ def protected_scope_candidate(record, *, install_handler, restore_handler,
         yield generated
     finally:
         try:
-            if installed:
+            if install_attempted:
                 restore_handler()
         finally:
             try:
