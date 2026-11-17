@@ -88,4 +88,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_fork_default_deny.py \
             tests/runtime/test_r7_05b5_4_1_f04_fork_ast_operational_parity.py \
             tests/runtime/test_r7_05b5_4_1_f04_fork_ownership_scope.py \
+            tests/runtime/test_r7_05b5_4_1_f04_cleanup_interrupt_counterexample.py \
             -q --tb=short -p no:cacheprovider
