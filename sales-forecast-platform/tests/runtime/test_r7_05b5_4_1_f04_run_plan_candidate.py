@@ -22,13 +22,14 @@ def plan(contract):
     client = "sha256:" + "a" * 64
 
     def cmd(name, image, user, extra=()):
-        return ["docker", "run", "--name", "r7-05b3-synthetic-" + name,
-                "--label", "r7_05b3_run=synthetic",
+        return ["docker", "run", "--name", "r7-05b3-" + "a" * 32 + "-" + name,
+                "--label", "r7_05b3_run=" + "a" * 32,
                 "--pull=never", "--network=none", "--read-only",
                 "--cap-drop=ALL", "--security-opt=no-new-privileges",
                 user, *extra, image]
 
     return PG_REF, client, {
+        "run_hex": "a" * 32,
         "provision": cmd("provision", PG_REF, "--user=0:0", ["--cap-add=CHOWN"]),
         "server": cmd("server", PG_REF, "--user=999:999"),
         "clients": [cmd("foundation", client, "--user=1000:1000"),
