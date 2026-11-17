@@ -16,10 +16,19 @@ else:
     from verify_client_wheelhouse_candidate import verify_candidate_wheelhouse
 
 
-def inventory_candidate_supply_chain(folder):
+def inventory_candidate_supply_chain(folder, *, candidate_version="v1"):
     folder = Path(folder)
     # Reject any missing, extra or hash-mismatched inputs first.
-    verify_candidate_wheelhouse(folder)
+    if candidate_version == "v1":
+        verify_candidate_wheelhouse(folder)
+    elif candidate_version == "v2":
+        if __package__:
+            from .prepare_client_wheelhouse_v2_candidate import V2_TOP_LEVEL
+        else:
+            from prepare_client_wheelhouse_v2_candidate import V2_TOP_LEVEL
+        verify_candidate_wheelhouse(folder, top_level=V2_TOP_LEVEL)
+    else:
+        raise ValueError("unsupported candidate version")
     manifest = json.loads((folder / "candidate-manifest.json").read_text(encoding="utf-8"))
     rows = []
     for entry in sorted(manifest["wheels"], key=lambda x: x["name"]):
@@ -69,8 +78,9 @@ def inventory_candidate_supply_chain(folder):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheelhouse", required=True, type=Path)
+    parser.add_argument("--candidate-version", choices=("v1", "v2"), default="v1")
     args = parser.parse_args()
-    result = inventory_candidate_supply_chain(args.wheelhouse)
+    result = inventory_candidate_supply_chain(args.wheelhouse, candidate_version=args.candidate_version)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
