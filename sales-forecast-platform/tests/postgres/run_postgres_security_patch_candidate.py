@@ -231,6 +231,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
     record.update(run_hex=run_id.hex, creation_attempts=[])
     token = _LIFECYCLE.set(record)
     inspection_token = None  # suspend resource-ownership context during read-only listings
+    credential_cleanup_attempted = False
     secret_token = None
     handler_attempted = False
     previous_term = None
@@ -389,6 +390,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             # This is only best-effort filesystem cleanup, not secure erase of bytes
             # from an underlying disk, Docker daemon metadata or host privileges.
             # If the credentials file cannot be removed, mark the run unaccepted.
+            credential_cleanup_attempted = True  # mark before call; no unsafe duplicate unlink
             record['credential_file_cleanup'] = remove_transient_credential_file(envfile)
             if record['credential_file_cleanup'] == 'UNCONFIRMED':
                 record['cleanup_passed'] = False
@@ -401,18 +403,33 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                 raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
     finally:
         try:
-            if handler_attempted and previous_term is not None:
-                signal.signal(signal.SIGTERM, previous_term)
+            # A reconciliation interruption must never skip a bounded attempt
+            # to remove only the owned transient credential file. This path
+            # is reached after an exceptional exit before normal cleanup.
+            if not credential_cleanup_attempted:
+                credential_cleanup_attempted = True
+                try:
+                    record['credential_file_cleanup'] = remove_transient_credential_file(envfile)
+                except BaseException:
+                    record['credential_file_cleanup'] = 'UNCONFIRMED'
+                if record['credential_file_cleanup'] == 'UNCONFIRMED':
+                    record['result'] = 'FAILED'
+                    record['cleanup_passed'] = False
+                    record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
         finally:
             try:
-                if secret_token is not None:
-                    _TEST_SECRETS.reset(secret_token)
+                if handler_attempted and previous_term is not None:
+                signal.signal(signal.SIGTERM, previous_term)
             finally:
                 try:
-                    if inspection_token is not None:
-                        _LIFECYCLE.reset(inspection_token)
+                    if secret_token is not None:
+                        _TEST_SECRETS.reset(secret_token)
                 finally:
-                    _LIFECYCLE.reset(token)
+                    try:
+                        if inspection_token is not None:
+                            _LIFECYCLE.reset(inspection_token)
+                    finally:
+                        _LIFECYCLE.reset(token)
 
 
 
