@@ -419,7 +419,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         finally:
             try:
                 if handler_attempted and previous_term is not None:
-                signal.signal(signal.SIGTERM, previous_term)
+                    signal.signal(signal.SIGTERM, previous_term)
             finally:
                 try:
                     if secret_token is not None:
