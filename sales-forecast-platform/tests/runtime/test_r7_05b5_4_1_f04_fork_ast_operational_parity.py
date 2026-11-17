@@ -49,8 +49,24 @@ def test_trusted_resource_deletion_calls_exactly_preserved_in_run():
     a = _function(_tree(ACCEPTED), "run")
     b = _function(_tree(FORK), "run")
     assert _calls(a, "remove_owned") == _calls(b, "remove_owned")
-    assert _calls(a, "remove_transient_credential_file") == _calls(
-        b, "remove_transient_credential_file")
+    # Intentional, security-reviewed candidate difference: the fork has one
+    # original normal-path unlink attempt and one fallback in outer finally.
+    # They must target EXACTLY the same owned envfile, never an arbitrary path.
+    accepted_unlink = _calls(a, "remove_transient_credential_file")
+    fork_unlink = _calls(b, "remove_transient_credential_file")
+    assert sum(accepted_unlink.values()) == 1
+    assert fork_unlink == Counter({
+        next(iter(accepted_unlink)): 2,
+    })
+    fallback = [
+        n for n in ast.walk(b) if isinstance(n, ast.If)
+        and isinstance(n.test, ast.UnaryOp)
+        and isinstance(n.test.op, ast.Not)
+        and isinstance(n.test.operand, ast.Name)
+        and n.test.operand.id == "credential_cleanup_attempted"
+    ]
+    assert len(fallback) == 1
+    assert sum(_calls(fallback[0], "remove_transient_credential_file").values()) == 1
 
 
 def test_finalizer_is_candidate_only_and_no_acceptance_module_imports_it():
