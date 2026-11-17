@@ -66,6 +66,10 @@ PROXIES = ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', '
 
 
 def command(args, *, timeout=30, stdin=None, check=True, build=False):
+    # CANDIDATE HARD STOP: never launch a subprocess from the review fork.
+    # Mock tests replace this function with a bounded synthetic stub.
+    # Original CLI implementation below is retained solely for source diff review.
+    raise RuntimeError('OFFLINE_REVIEW_ONLY: candidate command execution forbidden')
     # CLI argv only; never shell=True. Environment is needed only by the host's
     # Docker CLI. Nothing is forwarded into workers except explicit test values.
     env = dict(os.environ)
