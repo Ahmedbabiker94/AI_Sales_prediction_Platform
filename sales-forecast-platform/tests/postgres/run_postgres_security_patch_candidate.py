@@ -682,11 +682,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     raise pending_error.with_traceback(
                         pending_error.__traceback__) from None
                 raise
-            # P1: a secondary rejected terminal classification must not mask
-            # a primary in-flight body/test exception. The redacted manifest
-            # still records FAILED / CLEANUP_UNCONFIRMED and remains unadmitted.
-            # Raise a fresh cleanup error only if no primary exception exists.
-            if rejected and pending_error is None:
+            if rejected and not (handler_restore_failed and pending_error is not None):
                 raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
     finally:
         try:
