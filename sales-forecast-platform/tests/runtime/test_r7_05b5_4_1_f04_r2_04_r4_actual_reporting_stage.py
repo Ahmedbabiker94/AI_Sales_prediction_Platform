@@ -633,3 +633,108 @@ def test_p1_a_01_real_b5_unicode_decode_no_secret_in_public_exception_chain(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("inventory", ["containers", "volumes"])
+def test_p1_inventory_failure_alone_prevents_acceptance(
+        system, monkeypatch, tmp_path, inventory):
+    """No uncertain mutation, no denied cleanup; only a listing failure."""
+    runner, admission, consumer, stage, signals, observed = system
+    evidence = tmp_path / ("p1-isolated-inventory-" + inventory)
+    real_command = runner.command
+    seen = []
+
+    def inventory_only_failure(args, **kwargs):
+        if (inventory == "containers" and args[1] == "ps"
+                and "-aq" in args):
+            seen.append("containers")
+            raise OSError("synthetic read-only container inventory unavailable")
+        if (inventory == "volumes" and args[1:3] == ["volume", "ls"]):
+            seen.append("volumes")
+            raise OSError("synthetic read-only volume inventory unavailable")
+        return real_command(args, **kwargs)
+
+    monkeypatch.setattr(runner, "command", inventory_only_failure)
+    with pytest.raises(runner.CleanupUnconfirmed,
+                       match="CLEANUP_UNCONFIRMED"):
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert seen == [inventory]
+    assert len(observed["stage_seen"]) == 1
+    name, record = observed["stage_seen"][0]
+    assert not record["creation_attempts"], (
+        "mocked stage has no unresolved creation ledger; inventory alone blocks")
+    assert name in record["possible_owned_containers"]
+    assert record["cleanup_passed"] is False
+    assert record["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert record["result"] == "FAILED"
+    assert record["remaining_" + inventory] == "UNAVAILABLE"
+    assert record["remaining_" + ("volumes" if inventory == "containers"
+                                  else "containers")] == ""
+    assert any(kind == "container" and obj == name
+               for kind, obj, _ in observed["removals"])
+    terminal = evidence / "run-manifest.json"
+    manifest = json.loads(terminal.read_text(encoding="utf-8"))
+    assert manifest["result"] == "FAILED"
+    assert manifest["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+def test_p1_absence_then_late_labeled_container_reappearance_is_rejected(
+        system, monkeypatch, tmp_path):
+    """Model returned 'absent' on cleanup then late observation in inventory.
+
+    This demonstrates controller/runner fail-closed ordering on mock events;
+    it is NOT proof of a real Docker daemon's event timing or quiescence.
+    """
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / "p1-absent-then-late"
+    original_remove = runner.remove_owned
+    original_command = runner.command
+    stages = []
+
+    def observed_absent(kind, name, owner):
+        if kind == "container" and name.endswith("-b5-4-1"):
+            stages.append(("cleanup-confirmed-absent", name))
+            observed["removals"].append((kind, name, str(owner)))
+            return True
+        return original_remove(kind, name, owner)
+
+    def late_inventory(args, **kwargs):
+        if args[1] == "ps" and "-aq" in args:
+            assert stages, "late resource must be observed AFTER prior absence"
+            stages.append(("late-owned-container-found", stages[0][1]))
+            return SimpleNamespace(returncode=0,
+                                   stdout=stages[0][1] + "\n", stderr="")
+        return original_command(args, **kwargs)
+
+    monkeypatch.setattr(runner, "remove_owned", observed_absent)
+    monkeypatch.setattr(runner, "command", late_inventory)
+    with pytest.raises(runner.CleanupUnconfirmed,
+                       match="CLEANUP_UNCONFIRMED"):
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert [key for key, _ in stages] == [
+        "cleanup-confirmed-absent", "late-owned-container-found"]
+    assert len(observed["stage_seen"]) == 1
+    name, record = observed["stage_seen"][0]
+    assert name == stages[0][1]
+    assert record["creation_attempts"] == [], (
+        "without unresolved creation, later observed resource alone blocks")
+    assert record["remaining_containers"] == name
+    assert record["remaining_volumes"] == ""
+    assert record["cleanup_passed"] is False
+    assert record["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert record["result"] == "FAILED"
+    terminal = evidence / "run-manifest.json"
+    manifest = json.loads(terminal.read_text(encoding="utf-8"))
+    assert manifest["remaining_containers"] == name
+    assert manifest["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert manifest["result"] == "FAILED"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
