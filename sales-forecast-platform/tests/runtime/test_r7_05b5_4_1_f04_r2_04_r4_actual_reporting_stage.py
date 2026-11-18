@@ -91,12 +91,34 @@ def test_real_reporting_stage_candidate_source_parity(system):
     candidate_def = next(x for x in candidate.body
                          if isinstance(x, ast.FunctionDef)
                          and x.name == "reporting_stage")
-    # The ONLY permitted AST delta is binding _LIFECYCLE to the candidate
-    # module rather than the protected frozen module.
-    assert len(original_def.body) == len(candidate_def.body)
+    # Only TWO exact deltas are permitted relative to the frozen wrapper:
+    # (1) _LIFECYCLE import points to the same candidate runtime;
+    # (2) both B5 stdout/stderr writes have one fail-closed catch that marks
+    # incomplete evidence FAILED/EVIDENCE_UNAVAILABLE and re-raises unchanged.
+    from copy import deepcopy
+    flattened = deepcopy(candidate_def)
+    wrapped = [(i, node) for i, node in enumerate(flattened.body)
+               if isinstance(node, ast.Try)]
+    assert len(wrapped) == 1, "unexpected candidate try/except changes"
+    i, guard = wrapped[0]
+    assert len(guard.body) == 2
+    assert len(guard.handlers) == 1
+    assert not guard.orelse and not guard.finalbody
+    handler = guard.handlers[0]
+    assert isinstance(handler.type, ast.Name)
+    assert handler.type.id == "BaseException"
+    assert handler.name is None
+    expected_handler = ast.parse(
+        "record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'\\n"
+        "record['result'] = 'FAILED'\\n"
+        "raise\\n").body
+    assert ast.dump(handler.body, include_attributes=False) == ast.dump(
+        expected_handler, include_attributes=False)
+    flattened.body[i:i+1] = guard.body
+    assert len(original_def.body) == len(flattened.body)
     assert ast.dump(original_def, include_attributes=False).replace(
         "module='run_postgres'", "module='run_postgres_security_patch_candidate'"
-    ) == ast.dump(candidate_def, include_attributes=False)
+    ) == ast.dump(flattened, include_attributes=False)
     source = Path(stage.__file__).read_text()
     assert "from run_postgres import" not in source
     assert "if __name__" not in source
