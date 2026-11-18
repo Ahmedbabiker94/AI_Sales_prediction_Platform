@@ -379,6 +379,18 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
 
     try:
         previous_term = signal.getsignal(signal.SIGTERM)
+        # R2-02: CPython may return None for a previous native/non-Python
+        # handler. signal.signal cannot restore that original state. Never
+        # install our own callback when restoration cannot be represented.
+        # A rejected early setup is not evidence of successful cleanup.
+        if previous_term is None:
+            record['handler_restoration'] = 'UNCONFIRMED'
+            record['result'] = 'FAILED'
+            record['cleanup_passed'] = False
+            record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+            record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'
+            raise CleanupUnconfirmed(
+                'CLEANUP_UNCONFIRMED: SIGTERM prior handler unrepresentable') from None
         handler_attempted = False
         def interrupted(signum, frame):
             if deferred_term['active']:
