@@ -486,3 +486,150 @@ def test_p1_partial_write_secondary_fault_respects_cleanup_precedence(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+def test_p1_a_02_three_way_write_cleanup_and_publication_failure(
+        system, monkeypatch, tmp_path):
+    """Source-derived counterexample: no manifest, cleanup cannot be proved.
+
+    Previous code re-raised the primary stage OSError after publication failure
+    even though the container removal was refused. Public classification must
+    be CleanupUnconfirmed instead. All fake operations remain in-process.
+    """
+    runner, admission, consumer, stage, signals, observed = system
+    evidence = tmp_path / "p1-three-way"
+    primary = OSError("synthetic primary B5 partial stderr write")
+    publisher_error = OSError("synthetic secondary manifest staging failure")
+    actual_write = stage.write_evidence
+    actual_remove = runner.remove_owned
+    seen = {"container_refused": [], "publication_failed": False}
+
+    def partial_write(path, contents):
+        if path.name == "b5-4-1.stderr":
+            path.write_text("synthetic partial", encoding="utf-8")
+            raise primary
+        return actual_write(path, contents)
+
+    def removal_refused(kind, name, owner):
+        if kind == "container" and name.endswith("-b5-4-1"):
+            seen["container_refused"].append(name)
+            observed["removals"].append((kind, name, str(owner)))
+            return False
+        return actual_remove(kind, name, owner)
+
+    def publication_failure(path, manifest_text):
+        seen["publication_failed"] = True
+        assert path == evidence / "run-manifest.json"
+        raise publisher_error
+
+    monkeypatch.setattr(stage, "write_evidence", partial_write)
+    monkeypatch.setattr(runner, "remove_owned", removal_refused)
+    monkeypatch.setattr(runner, "publish_terminal_manifest_candidate",
+                        publication_failure)
+
+    with pytest.raises(runner.CleanupUnconfirmed, match="CLEANUP_UNCONFIRMED") as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+
+    assert caught.value is not primary
+    assert seen["container_refused"] and seen["publication_failed"]
+    assert len(observed["stage_seen"]) == 1
+    name, record = observed["stage_seen"][0]
+    assert name in seen["container_refused"]
+    assert record["result"] == "FAILED"
+    assert record["cleanup_passed"] is False
+    assert record["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert record["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+    assert record["error_type"] == "OSError"
+    assert record["credential_file_cleanup"] == "REMOVED"
+    assert not (evidence / "run-manifest.json").exists()
+    assert admission.admit_archive_without_attestation_candidate(
+        evidence / "run-manifest.json") is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("fail_publication", [False, True])
+def test_p1_a_01_real_b5_unicode_decode_no_secret_in_public_exception_chain(
+        system, monkeypatch, tmp_path, fail_publication):
+    """Use real in-memory AST command behind on-disk OFFLINE_REVIEW_ONLY.
+
+    Inject a decoding error from a synthetic Popen communicate() with secret
+    bytes, through actual B5 reporting, uncertain Docker mutation/cleanup,
+    and optionally publication failure. Neither the final public error nor any
+    linked primary/secondary exception may reveal the credential.
+    """
+    import traceback
+    from test_r7_05b5_4_1_f04_h1_timeout_sanitization import (
+        offline_command, SECRET)
+    runner, admission, consumer, stage, signals, observed = system
+    command, seen = offline_command(runner, "decode")
+    fake_stage_command = stage.command
+    evidence = tmp_path / ("p1-decoding-" + str(fail_publication))
+    captured = {}
+    tick_value = {"t": 0.0}
+
+    def tick():
+        tick_value["t"] += 0.7
+        return tick_value["t"]
+
+    def inject_decode(args, **kwargs):
+        if (args[1] == "run" and "--name" in args
+                and args[args.index("--name") + 1].endswith("-b5-4-1")):
+            record = runner._LIFECYCLE.get()
+            assert record is not None
+            captured["record"] = record
+            captured["name"] = args[args.index("--name") + 1]
+            return command(args, timeout=3)
+        return fake_stage_command(args, **kwargs)
+
+    def reject_publish(path, manifest_text):
+        assert path == evidence / "run-manifest.json"
+        raise OSError("synthetic publication unavailable")
+
+    monkeypatch.setattr(stage, "command", inject_decode)
+    monkeypatch.setattr(runner.time, "monotonic", tick)
+    if fail_publication:
+        monkeypatch.setattr(runner, "publish_terminal_manifest_candidate",
+                            reject_publish)
+    with pytest.raises(runner.CleanupUnconfirmed,
+                       match="CLEANUP_UNCONFIRMED") as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    queue, visited = [caught.value], set()
+    while queue:
+        exc = queue.pop()
+        if exc is None or id(exc) in visited:
+            continue
+        visited.add(id(exc))
+        values = [
+            str(exc), repr(exc), repr(exc.args), repr(vars(exc)),
+            repr(getattr(exc, "object", None)),
+            repr(getattr(exc, "cmd", None)),
+            repr(getattr(exc, "output", None)),
+            repr(getattr(exc, "stderr", None)),
+            "".join(traceback.format_exception(exc)),
+        ]
+        assert all(SECRET not in value and "PGPASSWORD" not in value
+                   for value in values)
+        queue.extend((exc.__context__, exc.__cause__))
+    assert captured["name"] in captured["record"]["possible_owned_containers"]
+    assert captured["record"]["error_type"] == "RuntimeError"
+    assert captured["record"]["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert captured["record"]["result"] == "FAILED"
+    assert captured["record"]["credential_file_cleanup"] == "REMOVED"
+    assert seen["processes"]
+    assert captured["record"]["creation_attempts"][-1]["state"] == "DAEMON_UNRESOLVED"
+    terminal = evidence / "run-manifest.json"
+    if fail_publication:
+        assert not terminal.exists()
+    else:
+        assert terminal.is_file()
+        raw = terminal.read_text(encoding="utf-8")
+        assert SECRET not in raw
+        assert json.loads(raw)["result"] == "FAILED"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
