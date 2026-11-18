@@ -275,3 +275,45 @@ def test_existing_operational_wrapper_is_still_frozen_source_and_not_candidate()
     assert "run_manifest_admission_controller_candidate" not in operational
     # This test is a reminder that candidate integration is NOT operational
     # wrapper rebaseline or production consumer coverage.
+
+
+def test_run_a_completion_cannot_admit_run_b_failed_leftover_pass(
+        admission, runner, monkeypatch, tmp_path):
+    module, _signals, _calls = runner
+    b_path = tmp_path / "run-b" / "run-manifest.json"
+    real_link = module.os.link
+    real_unlink = Path.unlink
+
+    def link_after_commit_fault(src, dst, **kwargs):
+        real_link(src, dst, **kwargs)
+        raise OSError("synthetic B link commit followed by failure")
+
+    def rollback_refused(path, *args, **kwargs):
+        if Path(path) == b_path:
+            raise OSError("synthetic B rollback unavailable")
+        return real_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as faults:
+        faults.setattr(module.os, "link", link_after_commit_fault)
+        faults.setattr(Path, "unlink", rollback_refused)
+        with pytest.raises(OSError, match="synthetic B link"):
+            admission.invoke_candidate_and_admit(
+                allow=True, wheelhouse=tmp_path, evidence=tmp_path / "run-b")
+    assert b_path.exists()
+    b_bytes = b_path.read_bytes()
+    b_manifest = json.loads(b_bytes)
+    assert b_manifest["result"] == "PASS"
+
+    original_read = admission._read_manifest_bytes
+    def borrow_b_file_for_a(path):
+        if Path(path) == tmp_path / "run-a" / "run-manifest.json":
+            return b_bytes
+        return original_read(path)
+
+    monkeypatch.setattr(admission, "_read_manifest_bytes", borrow_b_file_for_a)
+    # A returns successfully, but the attempted evidence comes from a
+    # *different failed invocation* B. The matching ID and digest are missing.
+    assert admission.invoke_candidate_and_admit(
+        allow=True, wheelhouse=tmp_path, evidence=tmp_path / "run-a") is None
+    a_raw = (tmp_path / "run-a" / "run-manifest.json").read_bytes()
+    assert json.loads(a_raw)["run_id"] != b_manifest["run_id"]
