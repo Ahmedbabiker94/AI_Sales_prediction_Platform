@@ -44,6 +44,7 @@ def test_cleanup_context_only_active_for_owned_cleanup(
         record = fork._LIFECYCLE.get()
         assert record is not None and record is not sentinel
         run["id"] = record["run_id"]
+        run["record"] = record
         raise RuntimeError("synthetic preflight stop: NO Docker")
     monkeypatch.setattr(fork, "inspect_image", pre_docker_stop)
 
@@ -78,7 +79,8 @@ def test_cleanup_context_only_active_for_owned_cleanup(
     monkeypatch.setattr(fork, "write_evidence", fake_publish)
 
     try:
-        expected = OSError if fault == "manifest_write_error" else RuntimeError
+        # A secondary manifest-write failure must not mask primary preflight.
+        expected = RuntimeError
         with pytest.raises(expected):
             fork.run(allow=True, wheelhouse=tmp_path,
                      evidence=tmp_path / "evidence")
@@ -86,6 +88,9 @@ def test_cleanup_context_only_active_for_owned_cleanup(
         assert fork._TEST_SECRETS.get() == ()
         assert observed.count("inventory") == 2
         assert observed.count("publish") == 1
+        if fault == "manifest_write_error":
+            assert run["record"]["result"] == "FAILED"
+            assert run["record"]["evidence_status"] == "EVIDENCE_UNAVAILABLE"
         if fault == "listing_unavailable":
             # A failed listing is fail-closed, not a PASS.
             assert "owned_cleanup" not in observed  # no resource was created
