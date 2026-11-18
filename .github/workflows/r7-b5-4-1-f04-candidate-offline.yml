@@ -15,6 +15,8 @@ on:
       - 'sales-forecast-platform/tests/postgres/redaction_finalization_candidate.py'
       - 'sales-forecast-platform/tests/postgres/run_context_scope_candidate.py'
       - 'sales-forecast-platform/tests/postgres/run_postgres_security_patch_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_manifest_admission_controller_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_b5_4_1_postgres_admission_candidate.py'
       - '.github/workflows/r7-b5-4-1-f04-candidate-offline.yml'
 
 permissions:
@@ -58,6 +60,8 @@ jobs:
               pathlib.Path('tests/postgres/redaction_finalization_candidate.py'),
               pathlib.Path('tests/postgres/run_context_scope_candidate.py'),
               pathlib.Path('tests/postgres/run_postgres_security_patch_candidate.py'),
+              pathlib.Path('tests/postgres/run_manifest_admission_controller_candidate.py'),
+              pathlib.Path('tests/postgres/run_b5_4_1_postgres_admission_candidate.py'),
           ]
           for path in paths:
               py_compile.compile(str(path), doraise=True)
