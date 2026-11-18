@@ -97,4 +97,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_m1_signal_manifest_gate.py \
             tests/runtime/test_r7_05b5_4_1_f04_m2_reconciliation_interrupt.py \
             tests/runtime/test_r7_05b5_4_1_f04_t1_strict_unlink_result_type.py \
+            tests/runtime/test_r7_05b5_4_1_f04_t2_partial_evidence_write.py \
             -q --tb=short -p no:cacheprovider
