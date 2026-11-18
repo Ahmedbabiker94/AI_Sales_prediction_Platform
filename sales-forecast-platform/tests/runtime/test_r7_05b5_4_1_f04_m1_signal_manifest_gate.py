@@ -74,15 +74,22 @@ def test_successful_mocked_main_body_cannot_publish_pass_before_signal_restore(
     calls = install_successful_fake_docker(fork, monkeypatch)
     record = {}
     saved_writer = fork.write_evidence
+    saved_link = fork.os.link
     published_manifest = []
 
     def record_before_manifest_write(path, content):
-        if path.name == "run-manifest.json":
-            published_manifest.append(content)
-            assert signals["active"] == "prior", "manifest published before SIGTERM restoration"
+        if path.name.startswith(".run-manifest-"):
+            assert signals["active"] == "prior", "manifest staged before SIGTERM restoration"
         return saved_writer(path, content)
 
+    def record_actual_manifest_publication(source, destination, **kwargs):
+        if Path(destination).name == "run-manifest.json":
+            assert signals["active"] == "prior", "manifest published before SIGTERM restoration"
+            published_manifest.append(Path(destination))
+        return saved_link(source, destination, **kwargs)
+
     monkeypatch.setattr(fork, "write_evidence", record_before_manifest_write)
+    monkeypatch.setattr(fork.os, "link", record_actual_manifest_publication)
 
     def capture_stage(**kwargs):
         record["value"] = kwargs["record"]
