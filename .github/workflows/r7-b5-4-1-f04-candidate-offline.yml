@@ -100,4 +100,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_t2_partial_evidence_write.py \
             tests/runtime/test_r7_05b5_4_1_f04_r2_01_secondary_reap_sanitization.py \
             tests/runtime/test_r7_05b5_4_1_f04_r2_02_unrepresentable_sigterm.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_03_rejected_finalizer_retained_record.py \
             -q --tb=short -p no:cacheprovider
