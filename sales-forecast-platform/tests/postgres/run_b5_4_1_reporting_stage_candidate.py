@@ -1,9 +1,11 @@
 """REVIEW-ONLY candidate B5-4-1 reporting-stage source-parity adapter.
 
 The body of reporting_stage is copied from the PINNED operational wrapper
-(blob 040d0d30bb719d646eb350b229ccd9a4c5f2bf79), with ONLY its local
+(blob 040d0d30bb719d646eb350b229ccd9a4c5f2bf79), with its local
 _LIFECYCLE import redirected to the same review-only candidate runner module
-as command, write_evidence, and redact_test_secrets.
+as command, write_evidence, and redact_test_secrets. The ONLY additional
+intentional security delta is a fail-closed try/except around both output
+writes: incomplete evidence is EVIDENCE_UNAVAILABLE, preserving the error.
 
 Do not import the frozen runner. Do not add a CLI entrypoint. The candidate
 command function has an unconditional OFFLINE_REVIEW_ONLY hard stop; tests
@@ -64,8 +66,16 @@ def reporting_stage(*, server, socket, client, envfile, run_id, database, record
     created.append(name)
     result = command(args, timeout=240, check=False)
     evidence_dir = Path(record['b5_4_1_evidence_dir'])
-    write_evidence(evidence_dir/'b5-4-1.stdout', result.stdout)
-    write_evidence(evidence_dir/'b5-4-1.stderr', result.stderr)
+    try:
+        write_evidence(evidence_dir/'b5-4-1.stdout', result.stdout)
+        write_evidence(evidence_dir/'b5-4-1.stderr', result.stderr)
+    except BaseException:
+        # F04-R4-LOW: a partial B5 output is not complete evidence, even if
+        # owned resources later reconcile. Mirror foundation/restart status.
+        # Bare raise preserves the original I/O or interruption exception.
+        record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'
+        record['result'] = 'FAILED'
+        raise
     record['operations'].append({
         'stage': 'b5-4-1', 'exit_code': result.returncode,
         'tests': list(TESTS),
