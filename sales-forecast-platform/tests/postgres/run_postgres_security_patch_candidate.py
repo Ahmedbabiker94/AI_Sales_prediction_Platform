@@ -384,6 +384,15 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             record['error_type'] = type(error).__name__
             raise
         finally:
+            # F04-M2: a successful body is NOT terminal success. Keep the
+            # lifecycle fail-closed during all resource reconciliation, owned
+            # credential unlink, and prior SIGTERM handler restoration. In
+            # particular, BaseException/KeyboardInterrupt escaping cleanup
+            # cannot leave a retained in-memory PASS record.
+            body_passed = record.get('result') == 'PASS'
+            record['result'] = 'FAILED'
+            record['cleanup_passed'] = False
+            record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
             # Keep named volumes until the bounded container reconciliation finishes.
             # A timed-out create can still attach them after the local CLI is gone.
             attempts = record['creation_attempts']
@@ -474,6 +483,12 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             if handler_restore_failed and pending_error is None:
                 raise CleanupUnconfirmed(
                     'CLEANUP_UNCONFIRMED: SIGTERM handler restoration not confirmed') from None
+            # Promote to PASS only after every terminal success prerequisite.
+            # No exception raised during reconciliation reaches this point.
+            if (body_passed and record['cleanup_passed']
+                    and record.get('credential_file_cleanup') in ('REMOVED', 'NOT_PRESENT')
+                    and not handler_restore_failed):
+                record['result'] = 'PASS'
             # Detect and redact secrets even in unexpected metadata keys before
             # publishing the manifest. Any leak is a rejected run, not a PASS.
             manifest_text, rejected = finalize_manifest_candidate(record, tuple(passwords.values()))
