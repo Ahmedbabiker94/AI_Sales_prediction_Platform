@@ -214,3 +214,64 @@ def test_archived_or_restarted_file_only_consumer_is_fail_closed(
     # The trusted controller exposes a copied immutable validated snapshot,
     # not a promise that an arbitrarily reopened file remains unchanged.
     assert hashlib.sha256(receipt.manifest_bytes).hexdigest() == receipt.sha256
+
+
+def test_candidate_b5_4_1_reporting_consumer_only_admits_bound_success(
+        admission, runner, monkeypatch, tmp_path):
+    _module, signals, calls = runner
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "postgres"))
+    wrapper = importlib.import_module("run_b5_4_1_postgres_admission_candidate")
+    evidence = tmp_path / "run-reporting"
+    invoked = []
+    def reporting_stage(**kwargs):
+        invoked.append(kwargs["run_id"])
+        kwargs["record"]["b5_4_1_evidence_dir"] = str(evidence)
+    receipt = wrapper.run_reporting_stage_with_bound_admission_candidate(
+        allow=True, wheelhouse=tmp_path, evidence=evidence,
+        reporting_stage=reporting_stage)
+    assert receipt is not None
+    assert len(invoked) == 1
+    assert str(invoked[0]) == receipt.run_id
+    assert json.loads(receipt.manifest_bytes)["b5_4_1_evidence_dir"] == str(evidence)
+    assert hashlib.sha256(receipt.manifest_bytes).hexdigest() == receipt.sha256
+    assert signals["current"] == "old" and calls
+    assert wrapper.__file__.endswith("run_b5_4_1_postgres_admission_candidate.py")
+    code = Path(wrapper.__file__).read_text(encoding="utf-8")
+    assert "from run_postgres import" not in code
+    assert "if __name__" not in code
+
+
+def test_candidate_reporting_consumer_failure_does_not_admit_file(
+        admission, runner, monkeypatch, tmp_path):
+    _module, signals, calls = runner
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "postgres"))
+    wrapper = importlib.import_module("run_b5_4_1_postgres_admission_candidate")
+    evidence = tmp_path / "failed-reporting"
+    def fail_stage(**_kwargs):
+        raise RuntimeError("synthetic reporting stage failure")
+    with pytest.raises(RuntimeError, match="synthetic reporting stage failure"):
+        wrapper.run_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence,
+            reporting_stage=fail_stage)
+    terminal = evidence / "run-manifest.json"
+    assert not terminal.exists() or json.loads(terminal.read_text())["result"] == "FAILED"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert signals["current"] == "old" and calls
+
+
+def test_normal_return_without_observed_run_identity_must_reject(
+        admission, monkeypatch, tmp_path):
+    # A successful return alone is not sufficient; _host_stage must bind the
+    # same runner invocation's exact UUID and finalized lifecycle record.
+    monkeypatch.setattr(admission, "_candidate_run", lambda **_kwargs: None)
+    assert admission.invoke_candidate_and_admit(
+        allow=True, wheelhouse=tmp_path, evidence=tmp_path / "absent") is None
+
+
+def test_existing_operational_wrapper_is_still_frozen_source_and_not_candidate():
+    operational = (Path(__file__).resolve().parents[1] / "postgres"
+                   / "run_b5_4_1_postgres.py").read_text(encoding="utf-8")
+    assert "from run_postgres import (" in operational
+    assert "run_manifest_admission_controller_candidate" not in operational
+    # This test is a reminder that candidate integration is NOT operational
+    # wrapper rebaseline or production consumer coverage.
