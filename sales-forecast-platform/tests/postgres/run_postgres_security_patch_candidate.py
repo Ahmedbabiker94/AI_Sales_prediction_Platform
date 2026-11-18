@@ -685,9 +685,25 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             except BaseException:
                 record['result'] = 'FAILED'
                 record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'
+                # P1-A-02: publication failure plus a genuinely unconfirmed
+                # owned-resource reconciliation MUST remain a cleanup-risk
+                # incident, even if a different B5 failure is already pending.
+                # Do not mistake the default fail-closed setup status, before
+                # any resources exist, for proof of an unresolved mutation.
+                # This also preserves original primary-exception precedence
+                # when independently verified cleanup was successful.
+                owned_uncertain = (
+                    record.get('cleanup_passed') is not True
+                    and record.get('cleanup_status') == 'CLEANUP_UNCONFIRMED'
+                    and bool(record.get('possible_owned_containers')
+                        or record.get('possible_owned_volumes')
+                        or record.get('credential_file_cleanup') == 'UNCONFIRMED'))
+                if owned_uncertain:
+                    raise CleanupUnconfirmed(
+                        'CLEANUP_UNCONFIRMED: owned resource cleanup and manifest publication not confirmed') from None
                 if pending_error is not None:
-                    # Do not replace the primary preflight/test failure with
-                    # a secondary serialization, staging or publication fault.
+                    # Do not replace a primary error when no owned resource
+                    # uncertainty was observed and publication alone failed.
                     raise pending_error.with_traceback(
                         pending_error.__traceback__) from None
                 raise
