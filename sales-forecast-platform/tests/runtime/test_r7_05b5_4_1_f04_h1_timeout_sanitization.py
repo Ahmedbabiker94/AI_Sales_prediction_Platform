@@ -54,7 +54,7 @@ def offline_command(fork, scenario):
                     return "ready", ""
                 if scenario == "decode":
                     raise UnicodeDecodeError(
-                        "utf-8", ("partial " + SECRET).encode() + b"\\xff",
+                        "utf-8", ("partial " + SECRET).encode() + b"\xff",
                         len(("partial " + SECRET).encode()),
                         len(("partial " + SECRET).encode()) + 1,
                         "synthetic invalid output")
@@ -77,7 +77,7 @@ def offline_command(fork, scenario):
                 cmd=argv, timeout=2, stderr=SECRET)
         if scenario == "decode_spawn":
             raise UnicodeDecodeError(
-                "utf-8", ("spawn " + SECRET).encode() + b"\\xff",
+                "utf-8", ("spawn " + SECRET).encode() + b"\xff",
                 len(("spawn " + SECRET).encode()),
                 len(("spawn " + SECRET).encode()) + 1,
                 "synthetic invalid spawn input")
