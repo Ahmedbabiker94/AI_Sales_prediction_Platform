@@ -63,6 +63,43 @@ def write_evidence(path, text):
         stream.write(text)
 
 
+def publish_terminal_manifest_candidate(path, text):
+    """Stage all bytes before atomically creating the one accepted manifest.
+
+    Same-directory hard-link publication preserves the O_EXCL/no-overwrite
+    property. An incomplete write is never published at run-manifest.json.
+    This is candidate-only; host filesystem and crash durability remain outside
+    the proof of synthetic tests.
+    """
+    staging = path.with_name('.run-manifest-' + secrets.token_hex(12) + '.tmp')
+    try:
+        write_evidence(staging, text)
+        # Link is atomic on the local filesystem: if destination already
+        # exists, do not overwrite someone else's evidence, even a symlink.
+        os.link(staging, path, follow_symlinks=False)
+    except BaseException:
+        # Some injected fault models create the hard link then raise. In that
+        # ambiguous case remove ONLY a destination known to share the exact
+        # staging inode. Never unlink an unrelated/pre-existing destination.
+        try:
+            if (not staging.is_symlink() and staging.exists()
+                    and not path.is_symlink() and path.exists()
+                    and os.path.samefile(staging, path)):
+                path.unlink()
+        except BaseException:
+            pass  # Cannot prove cleanup after a hostile host/filesystem race.
+        raise
+    finally:
+        # An error AFTER successful publication must not make a valid PASS
+        # manifest appear failed. A leftover non-accepted staging name is
+        # safer than throwing here after the terminal commit point.
+        try:
+            if not staging.is_symlink():
+                staging.unlink(missing_ok=True)
+        except BaseException:
+            pass
+
+
 PROXIES = ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy')
 
 
@@ -379,8 +416,15 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     '--entrypoint', 'python', client,
                     '-m', 'pytest', '-q', '--tb=short', '--maxfail=1', '-p', 'no:cacheprovider', module]
                 result = command(args, timeout=240, check=False)
-                write_evidence(evidence/(stage+'.stdout'), result.stdout)
-                write_evidence(evidence/(stage+'.stderr'), result.stderr)
+                try:
+                    write_evidence(evidence/(stage+'.stdout'), result.stdout)
+                    write_evidence(evidence/(stage+'.stderr'), result.stderr)
+                except BaseException:
+                    # Even if resources later clean up, stage evidence is
+                    # incomplete. Preserve the original I/O exception.
+                    record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'
+                    record['result'] = 'FAILED'
+                    raise
                 info = json.loads(command(['docker', 'inspect', name]).stdout)[0]
                 info['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in info['Config']['Env']]
                 record['operations'].append({'stage': stage, 'exit_code': result.returncode, 'inspect': info})
@@ -503,10 +547,25 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     and record['credential_file_cleanup'] in ('REMOVED', 'NOT_PRESENT')
                     and not handler_restore_failed):
                 record['result'] = 'PASS'
-            # Detect and redact secrets even in unexpected metadata keys before
-            # publishing the manifest. Any leak is a rejected run, not a PASS.
-            manifest_text, rejected = finalize_manifest_candidate(record, tuple(passwords.values()))
-            write_evidence(evidence/'run-manifest.json', manifest_text)
+            # Detect and redact secrets even in unexpected metadata keys.
+            # EVIDENCE_UNAVAILABLE is distinct from owned-resource cleanup
+            # status: cleanup can succeed even when publication cannot.
+            if record.get('evidence_status') != 'EVIDENCE_UNAVAILABLE':
+                record['evidence_status'] = 'AVAILABLE'
+            try:
+                manifest_text, rejected = finalize_manifest_candidate(
+                    record, tuple(passwords.values()))
+                publish_terminal_manifest_candidate(
+                    evidence/'run-manifest.json', manifest_text)
+            except BaseException:
+                record['result'] = 'FAILED'
+                record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'
+                if pending_error is not None:
+                    # Do not replace the primary preflight/test failure with
+                    # a secondary serialization, staging or publication fault.
+                    raise pending_error.with_traceback(
+                        pending_error.__traceback__) from None
+                raise
             if rejected and not (handler_restore_failed and pending_error is not None):
                 raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
     finally:
