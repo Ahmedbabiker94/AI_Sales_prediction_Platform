@@ -86,7 +86,7 @@ def offline_command(fork, scenario):
             CompletedProcess=subprocess.CompletedProcess,
             TimeoutExpired=subprocess.TimeoutExpired),
         "os": SimpleNamespace(environ={}, killpg=fake_killpg),
-        "time": SimpleNamespace(monotonic=lambda: 1.0),
+        "time": SimpleNamespace(monotonic=lambda: 1.0, time_ns=lambda: 123456),
         "signal": SimpleNamespace(SIGKILL=9),
         "_LIFECYCLE": fork._LIFECYCLE,
         "redact_test_secrets": fork.redact_test_secrets,
