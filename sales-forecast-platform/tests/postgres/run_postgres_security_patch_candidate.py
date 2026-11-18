@@ -196,6 +196,18 @@ def remove_transient_credential_file(path):
         return 'UNCONFIRMED'
 
 
+def normalize_transient_credential_cleanup_status(status):
+    """Trust only literal built-in str statuses; never call custom __eq__.
+
+    Comparing an arbitrary return value to a string can execute attacker-defined
+    equality code or accept a forged REMOVED/NOT_PRESENT signal. Keep output
+    JSON-safe, deterministic, and fail-closed for every non-exact input.
+    """
+    if type(status) is str and status in ('REMOVED', 'NOT_PRESENT'):
+        return status
+    return 'UNCONFIRMED'
+
+
 def verified_clean_source():
     """Fail closed on untrusted/dirty Git provenance before Docker mutations.
 
@@ -459,8 +471,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
                     raise
                 record['credential_file_cleanup'] = (
-                    removal_status if removal_status in ('REMOVED', 'NOT_PRESENT')
-                    else 'UNCONFIRMED')
+                    normalize_transient_credential_cleanup_status(removal_status))
                 if record['credential_file_cleanup'] == 'UNCONFIRMED':
                     record['result'] = 'FAILED'
                     record['cleanup_passed'] = False
@@ -488,7 +499,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             # Promote to PASS only after every terminal success prerequisite.
             # No exception raised during reconciliation reaches this point.
             if (body_passed and record['cleanup_passed']
-                    and record.get('credential_file_cleanup') in ('REMOVED', 'NOT_PRESENT')
+                    and type(record.get('credential_file_cleanup')) is str
+                    and record['credential_file_cleanup'] in ('REMOVED', 'NOT_PRESENT')
                     and not handler_restore_failed):
                 record['result'] = 'PASS'
             # Detect and redact secrets even in unexpected metadata keys before
@@ -511,8 +523,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     except BaseException:
                         removal_status = 'UNCONFIRMED'
                     record['credential_file_cleanup'] = (
-                        removal_status if removal_status in ('REMOVED', 'NOT_PRESENT')
-                        else 'UNCONFIRMED')
+                        normalize_transient_credential_cleanup_status(removal_status))
                     if record['credential_file_cleanup'] == 'UNCONFIRMED':
                         record['result'] = 'FAILED'
                         record['cleanup_passed'] = False
