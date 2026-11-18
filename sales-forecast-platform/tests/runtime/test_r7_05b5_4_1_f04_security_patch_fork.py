@@ -52,6 +52,7 @@ def test_fork_restores_context_and_never_silently_passes(
     def stop_before_docker(_):
         record = fork._LIFECYCLE.get()
         captured["run_id"] = record["run_id"]
+        captured["record"] = record
         if case == "unexpected_secret":
             record["unexpected_metadata"] = {
                 "custom_field": fork._TEST_SECRETS.get()[0]}
@@ -80,9 +81,9 @@ def test_fork_restores_context_and_never_silently_passes(
     try:
         if case == "unexpected_secret":
             expected = fork.CleanupUnconfirmed
-        elif case == "json_failure":
-            expected = TypeError
         else:
+            # Preserve primary preflight failure over secondary serialization
+            # and manifest-write errors.
             expected = RuntimeError
         with pytest.raises(expected):
             fork.run(allow=True, wheelhouse=tmp_path, evidence=evidence)
@@ -103,6 +104,9 @@ def test_fork_restores_context_and_never_silently_passes(
                          "signal_install_failure"):
             assert not path.exists() if case in ("json_failure",
                                                  "evidence_write_failure") else True
+            if case in ("json_failure", "evidence_write_failure"):
+                assert captured["record"]["result"] == "FAILED"
+                assert captured["record"]["evidence_status"] == "EVIDENCE_UNAVAILABLE"
     finally:
         # Guard CI if fork regresses and leaves secrets bound.
         fork._LIFECYCLE.set(None)
