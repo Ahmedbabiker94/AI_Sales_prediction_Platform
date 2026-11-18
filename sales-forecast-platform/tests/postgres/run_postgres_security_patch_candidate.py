@@ -153,26 +153,76 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
     except BaseException as error:
         if attempt is not None:
             attempt.update(state='DAEMON_UNRESOLVED', interrupted_ns=time.time_ns())
+        # R2-01: a *secondary* failure during bounded local CLI cleanup must
+        # never escape from within the raw TimeoutExpired exception handler.
+        # Such an escape implicitly chains the original credential-bearing
+        # TimeoutExpired (including .cmd, .stdout and .stderr) into tracebacks.
+        # Record only fixed stage codes, not raw secondary error objects/text.
+        secondary_interrupt = None
+        local_reap_issues = []
+        local_reaped_confirmed = False
         if process is not None:
-            # Own session/process group only. Reaping the CLI does NOT cancel Docker.
+            # Own session/process group only. Reaping the CLI does NOT cancel
+            # an uncertain Docker daemon request; leave that state unresolved.
             try:
-                if process.poll() is None:
+                polled = process.poll()
+            except BaseException as reap_error:
+                local_reap_issues.append('POLL_EXCEPTION')
+                if isinstance(reap_error, KeyboardInterrupt):
+                    secondary_interrupt = secondary_interrupt or 'KEYBOARD_INTERRUPT'
+                elif isinstance(reap_error, SystemExit):
+                    secondary_interrupt = secondary_interrupt or 'SYSTEM_EXIT'
+                # If poll is unreliable, avoid killing a potentially reused
+                # process group. Still attempt the bounded local wait below.
+                should_kill = False
+            else:
+                should_kill = polled is None
+                if not should_kill:
+                    local_reaped_confirmed = True
+            if should_kill:
+                try:
                     os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+                except ProcessLookupError:
+                    pass
+                except BaseException as reap_error:
+                    local_reap_issues.append('KILLPG_EXCEPTION')
+                    if isinstance(reap_error, KeyboardInterrupt):
+                        secondary_interrupt = secondary_interrupt or 'KEYBOARD_INTERRUPT'
+                    elif isinstance(reap_error, SystemExit):
+                        secondary_interrupt = secondary_interrupt or 'SYSTEM_EXIT'
             try:
                 process.communicate(timeout=3)
             except subprocess.TimeoutExpired:
-                # A second timeout must not override the primary error or
-                # expose a raw command/argv through an exception traceback.
-                pass
+                # Never expose a second TimeoutExpired (which may retain argv).
+                local_reap_issues.append('WAIT_TIMEOUT')
+            except BaseException as reap_error:
+                local_reap_issues.append('WAIT_EXCEPTION')
+                if isinstance(reap_error, KeyboardInterrupt):
+                    secondary_interrupt = secondary_interrupt or 'KEYBOARD_INTERRUPT'
+                elif isinstance(reap_error, SystemExit):
+                    secondary_interrupt = secondary_interrupt or 'SYSTEM_EXIT'
+            else:
+                local_reaped_confirmed = True
             if attempt is not None:
-                attempt['local_reaped'] = process.returncode is not None
+                # A PID or returncode alone is not proof that a failed
+                # communicate() reaped the local child process.
+                attempt['local_reaped'] = local_reaped_confirmed
+                if local_reap_issues:
+                    attempt['local_reap_issues'] = local_reap_issues
         if isinstance(error, subprocess.TimeoutExpired):
-            # TimeoutExpired.cmd/output/stderr may contain disposable passwords.
-            # Raise OUTSIDE this except to avoid an unsafe __context__ chain.
-            # The public exception has only a constant, credential-free message.
-            sanitized_timeout = RuntimeError('disposable PostgreSQL command timed out; command details suppressed')
+            # Preserve the class of a secondary control-flow interrupt using a
+            # *new*, public credential-free exception. No secondary error text,
+            # raw TimeoutExpired, .cmd or output is retained in public chains.
+            # All new exceptions are raised OUTSIDE this exception handler.
+            if secondary_interrupt == 'KEYBOARD_INTERRUPT':
+                sanitized_timeout = KeyboardInterrupt(
+                    'disposable PostgreSQL timeout cleanup interrupted; details suppressed')
+            elif secondary_interrupt == 'SYSTEM_EXIT':
+                sanitized_timeout = SystemExit(
+                    'disposable PostgreSQL timeout cleanup interrupted; details suppressed')
+            else:
+                sanitized_timeout = RuntimeError(
+                    'disposable PostgreSQL command timed out; command details suppressed')
         else:
             raise
     if sanitized_timeout is not None:
