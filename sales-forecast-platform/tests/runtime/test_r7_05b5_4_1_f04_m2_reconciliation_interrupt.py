@@ -90,7 +90,7 @@ def test_successful_body_then_interrupted_reconciliation_cannot_keep_pass(
 
     def fake_remove(kind, name, owner):
         if interrupt_at == kind:
-            assert "record" in captured, "the successful main body must finish first"
+            assert captured["record"]["result"] == "FAILED", "no PASS during reconciliation"
             raise KeyboardInterrupt("synthetic " + kind + " reconciliation interrupt")
         return True
 
@@ -98,7 +98,7 @@ def test_successful_body_then_interrupted_reconciliation_cannot_keep_pass(
 
     if interrupt_at == "sleep":
         def interrupted_sleep(_):
-            assert "record" in captured, "the successful main body must finish first"
+            assert captured["record"]["result"] == "FAILED", "no PASS during reconciliation"
             raise KeyboardInterrupt("synthetic sleep reconciliation interrupt")
         monkeypatch.setattr(fork, "time", SimpleNamespace(
             monotonic=lambda: 10.0, sleep=interrupted_sleep))
