@@ -174,6 +174,7 @@ def test_partial_stage_stdout_is_classified_and_never_accepted(
 
     def partial_log(path, text):
         if path.name == "foundation.stdout":
+            observed["record"] = module._LIFECYCLE.get()
             path.write_text("synthetic partial test output", encoding="utf-8")
             raise OSError("synthetic stage stdout partial write")
         return original_write(path, text)
@@ -184,8 +185,16 @@ def test_partial_stage_stdout_is_classified_and_never_accepted(
         with pytest.raises(OSError, match="synthetic stage stdout partial"):
             module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
                        _host_stage=capture)
-        # The stage callback is not reached; check the record via patched
-        # evidence writer's active ContextVar rather than assuming body success.
+        assert calls, "main-body Docker calls must have been intercepted"
+        assert "record" in observed
+        assert observed["record"]["result"] == "FAILED"
+        assert observed["record"]["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+        assert (evidence / "foundation.stdout").read_text() == "synthetic partial test output"
+        manifest = evidence / "run-manifest.json"
+        assert not manifest.exists() or json.loads(manifest.read_text())["result"] == "FAILED"
+        assert len(restored) == 2 and restored[-1] == "old"
+        assert module._LIFECYCLE.get() is None
+        assert module._TEST_SECRETS.get() == ()
     finally:
         module._LIFECYCLE.set(None)
         module._TEST_SECRETS.set(())
