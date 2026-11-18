@@ -94,4 +94,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_local_envfile_interrupt.py \
             tests/runtime/test_r7_05b5_4_1_f04_h1_timeout_sanitization.py \
             tests/runtime/test_r7_05b5_4_1_f04_h2_sigterm_unlink_seam.py \
+            tests/runtime/test_r7_05b5_4_1_f04_m1_signal_manifest_gate.py \
             -q --tb=short -p no:cacheprovider
