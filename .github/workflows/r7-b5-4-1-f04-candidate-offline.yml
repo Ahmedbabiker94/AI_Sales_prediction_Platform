@@ -102,4 +102,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_r2_02_unrepresentable_sigterm.py \
             tests/runtime/test_r7_05b5_4_1_f04_r2_03_rejected_finalizer_retained_record.py \
             tests/runtime/test_r7_05b5_4_1_f04_r2_04_publication_acceptance.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_04_controller_binding.py \
             -q --tb=short -p no:cacheprovider
