@@ -238,3 +238,54 @@ def test_reporting_stage_rejects_foreign_lifecycle_before_any_docker(
         assert observed["commands"] == []
     finally:
         runner._LIFECYCLE.reset(token)
+
+
+def test_reporting_stdout_stderr_test_secrets_are_redacted_and_rejected(
+        system, monkeypatch, tmp_path, capsys):
+    """A real B5-style mocked stdout/stderr must not leak test passwords."""
+    runner, admission, consumer, stage, signals, observed = system
+    synthetic_secrets = []
+    original_command = stage.command
+    def stdout_stderr_with_disposable_secrets(args, **kwargs):
+        response = original_command(args, **kwargs)
+        if (args[1] == "run" and "--name" in args
+                and args[args.index("--name") + 1].endswith("-b5-4-1")):
+            current = runner._TEST_SECRETS.get()
+            assert len(current) >= 2
+            assert all(secret.startswith("test-only-") for secret in current)
+            synthetic_secrets.extend(current[:2])
+            return SimpleNamespace(
+                returncode=0,
+                stdout="synthetic stdout " + current[0],
+                stderr="synthetic stderr " + current[1])
+        return response
+    monkeypatch.setattr(stage, "command", stdout_stderr_with_disposable_secrets)
+    evidence = tmp_path / "synthetic-test-passwords"
+    with pytest.raises(runner.CleanupUnconfirmed, match="CLEANUP_UNCONFIRMED"):
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert len(synthetic_secrets) == 2
+    output = capsys.readouterr()
+    terminal = evidence / "run-manifest.json"
+    assert terminal.is_file()
+    manifest = json.loads(terminal.read_text(encoding="utf-8"))
+    assert manifest["result"] == "FAILED"
+    assert manifest["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert manifest["secret_redactions"] >= 2
+    for item in (evidence / "b5-4-1.stdout", evidence / "b5-4-1.stderr"):
+        assert item.is_file()
+        assert "<redacted-disposable-secret>" in item.read_text(encoding="utf-8")
+    for secret in synthetic_secrets:
+        assert secret not in output.out
+        assert secret not in output.err
+        assert secret not in terminal.read_text(encoding="utf-8")
+        assert secret not in (evidence / "b5-4-1.stdout").read_text(encoding="utf-8")
+        assert secret not in (evidence / "b5-4-1.stderr").read_text(encoding="utf-8")
+    assert len(observed["stage_seen"]) == 1
+    name, lifecycle = observed["stage_seen"][0]
+    assert lifecycle["result"] == "FAILED"
+    assert any(kind == "container" and x == name for kind, x, _ in observed["removals"])
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
