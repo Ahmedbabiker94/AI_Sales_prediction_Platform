@@ -211,7 +211,11 @@ def test_p1_a_01_unicode_exception_never_releases_raw_child_output(
             assert len(record["creation_attempts"]) == 1
             attempt = record["creation_attempts"][0]
             assert attempt["state"] == "DAEMON_UNRESOLVED"
-            assert type(attempt.get("local_reaped")) is bool
+            if scenario == "decode_spawn":
+                # No child process exists to reap if Popen itself raises.
+                assert "local_reaped" not in attempt
+            else:
+                assert type(attempt.get("local_reaped")) is bool
         else:
             assert not record["creation_attempts"]
     finally:
