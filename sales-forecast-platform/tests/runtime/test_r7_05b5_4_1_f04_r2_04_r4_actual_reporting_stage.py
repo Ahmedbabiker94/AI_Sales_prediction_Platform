@@ -58,7 +58,8 @@ def system(monkeypatch):
             return SimpleNamespace(returncode=0, stdout="synthetic-cluster", stderr="")
         if args[1] == "ps" or args[1:3] == ["volume", "ls"]:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
-        if args[1] == "run" and "-m" in args and "pytest" in args:
+        if (args[1] == "run" and "--name" in args
+                and args[args.index("--name") + 1].endswith("-b5-4-1")):
             # This is the REAL reporting-stage argv, not a stub callback.
             lifecycle = runner._LIFECYCLE.get()
             assert lifecycle is not None
@@ -121,7 +122,8 @@ def test_actual_reporting_stage_success_uses_one_owner_lifecycle(system, tmp_pat
     assert any(kind == "container" and x == name for kind, x, _ in observed["removals"])
     assert (evidence / "b5-4-1.stdout").read_text() == "synthetic reporting ok"
     assert (evidence / "b5-4-1.stderr").read_text() == "synthetic reporting stderr"
-    stage_cmd = next(x for x in observed["commands"] if "-m" in x and "pytest" in x)
+    stage_cmd = next(x for x in observed["commands"]
+                     if "--name" in x and x[x.index("--name") + 1].endswith("-b5-4-1"))
     assert stage_cmd[-len(TESTS):] == TESTS
     assert "--network=none" in stage_cmd
     assert "--read-only" in stage_cmd
