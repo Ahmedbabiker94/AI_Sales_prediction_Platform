@@ -109,9 +109,9 @@ def test_real_reporting_stage_candidate_source_parity(system):
     assert handler.type.id == "BaseException"
     assert handler.name is None
     expected_handler = ast.parse(
-        "record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'\\n"
-        "record['result'] = 'FAILED'\\n"
-        "raise\\n").body
+        "record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'\n"
+        "record['result'] = 'FAILED'\n"
+        "raise\n").body
     assert ast.dump(handler.body, include_attributes=False) == ast.dump(
         expected_handler, include_attributes=False)
     flattened.body[i:i+1] = guard.body
