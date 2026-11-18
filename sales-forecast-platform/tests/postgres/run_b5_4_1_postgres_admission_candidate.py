@@ -24,3 +24,23 @@ def run_reporting_stage_with_bound_admission_candidate(
     return invoke_candidate_and_admit(
         allow=allow, wheelhouse=wheelhouse, evidence=evidence,
         _host_stage=reporting_stage)
+
+
+def run_actual_reporting_stage_with_bound_admission_candidate(
+        *, allow, wheelhouse, evidence):
+    """Proposed fixed B5 reporting stage: no untrusted callback selection.
+
+    Use the source-parity candidate stage, whose command(), ContextVar,
+    evidence writer and redaction helper all originate from ONE candidate
+    runtime module. The controller owns runner completion, UUID and digest.
+    The operational wrapper and frozen runner are NOT changed.
+    """
+    from run_b5_4_1_reporting_stage_candidate import reporting_stage
+
+    def host_stage(**kwargs):
+        kwargs["record"]["b5_4_1_evidence_dir"] = str(evidence)
+        reporting_stage(**kwargs)
+
+    return invoke_candidate_and_admit(
+        allow=allow, wheelhouse=wheelhouse, evidence=evidence,
+        _host_stage=host_stage)
