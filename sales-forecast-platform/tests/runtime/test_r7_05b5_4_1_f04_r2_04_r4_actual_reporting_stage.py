@@ -1,0 +1,202 @@
+"""F-04 R2-04 R4: actual B5-4-1 stage through SAME candidate lifecycle.
+
+The test fixture intercepts *every* runner Docker command and all OS signals;
+no real Docker/PostgreSQL/subprocess is used. Candidate hard-stop remains.
+The actual operational wrapper is read only for a source-parity check.
+"""
+import ast
+import hashlib
+import importlib
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+PGDIR = Path(__file__).resolve().parents[1] / "postgres"
+TESTS = (
+    "tests/postgres/test_stored_forecast_accuracy_postgres.py",
+    "tests/postgres/test_canonical_reporting_read.py",
+    "tests/postgres/test_r7_05b5_4_1_host_reporting_requests.py",
+)
+
+
+@pytest.fixture
+def system(monkeypatch):
+    monkeypatch.syspath_prepend(str(PGDIR))
+    runner = importlib.import_module("run_postgres_security_patch_candidate")
+    admission = importlib.import_module("run_manifest_admission_controller_candidate")
+    consumer = importlib.import_module("run_b5_4_1_postgres_admission_candidate")
+    stage = importlib.import_module("run_b5_4_1_reporting_stage_candidate")
+    monkeypatch.setattr(runner, "verified_clean_source", lambda: "a" * 40)
+    monkeypatch.setattr(runner, "time", SimpleNamespace(
+        monotonic=lambda: 10.0, sleep=lambda _: None))
+    signal_calls = []
+    monkeypatch.setattr(runner, "signal", SimpleNamespace(
+        SIGTERM=15, getsignal=lambda _: "old",
+        signal=lambda signum, callback: signal_calls.append(callback)))
+    monkeypatch.setattr(runner, "inspect_image", lambda _: {"Id": "synthetic"})
+    monkeypatch.setattr(runner, "build_client", lambda *_: "sha256:synthetic")
+    observed = {"commands": [], "removals": [], "stage_seen": [], "fault": None}
+    def remove(kind, name, owner):
+        observed["removals"].append((kind, name, str(owner)))
+        return True
+    monkeypatch.setattr(runner, "remove_owned", remove)
+
+    def command(args, **kwargs):
+        assert args[0] == "docker", "unexpected real CLI"
+        observed["commands"].append(tuple(args))
+        if args[1:3] == ["volume", "inspect"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="no such volume")
+        if args[1] == "inspect":
+            return SimpleNamespace(returncode=0, stdout=json.dumps([{
+                "Config": {"Env": []}
+            }]), stderr="")
+        if args[1] == "exec" and "/proc/1/comm" in args:
+            return SimpleNamespace(returncode=0, stdout="postgres\n", stderr="")
+        if args[1] == "exec":
+            return SimpleNamespace(returncode=0, stdout="synthetic-cluster", stderr="")
+        if args[1] == "ps" or args[1:3] == ["volume", "ls"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if args[1] == "run" and "-m" in args and "pytest" in args:
+            # This is the REAL reporting-stage argv, not a stub callback.
+            lifecycle = runner._LIFECYCLE.get()
+            assert lifecycle is not None
+            stage_name = args[args.index("--name") + 1]
+            assert stage_name in lifecycle.get("extra_containers", [])
+            observed["stage_seen"].append((stage_name, lifecycle))
+            if observed["fault"] == "interrupt":
+                raise KeyboardInterrupt("synthetic reporting stage interruption")
+            if observed["fault"] == "failure":
+                return SimpleNamespace(returncode=9, stdout="synthetic failure",
+                                       stderr="synthetic stage error")
+            return SimpleNamespace(returncode=0, stdout="synthetic reporting ok",
+                                   stderr="synthetic reporting stderr")
+        return SimpleNamespace(returncode=0, stdout="synthetic pass", stderr="")
+    monkeypatch.setattr(runner, "command", command)
+    # Captured imported aliases on the candidate adapter are tied to the
+    # same runtime module; patch both aliases to the same mock reference.
+    monkeypatch.setattr(stage, "command", command)
+    return runner, admission, consumer, stage, signal_calls, observed
+
+
+def test_real_reporting_stage_candidate_source_parity(system):
+    _runner, _admission, _consumer, stage, _signals, _observed = system
+    operational = ast.parse((PGDIR / "run_b5_4_1_postgres.py").read_text())
+    candidate = ast.parse(Path(stage.__file__).read_text())
+    original_def = next(x for x in operational.body
+                        if isinstance(x, ast.FunctionDef)
+                        and x.name == "reporting_stage")
+    candidate_def = next(x for x in candidate.body
+                         if isinstance(x, ast.FunctionDef)
+                         and x.name == "reporting_stage")
+    # The ONLY permitted AST delta is binding _LIFECYCLE to the candidate
+    # module rather than the protected frozen module.
+    assert len(original_def.body) == len(candidate_def.body)
+    assert ast.dump(original_def, include_attributes=False).replace(
+        "module='run_postgres'", "module='run_postgres_security_patch_candidate'"
+    ) == ast.dump(candidate_def, include_attributes=False)
+    source = Path(stage.__file__).read_text()
+    assert "from run_postgres import" not in source
+    assert "if __name__" not in source
+    assert stage.TESTS == TESTS
+
+
+def test_actual_reporting_stage_success_uses_one_owner_lifecycle(system, tmp_path):
+    runner, admission, consumer, stage, signals, observed = system
+    evidence = tmp_path / "reporting"
+    receipt = consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+        allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert receipt is not None
+    manifest = json.loads(receipt.manifest_bytes)
+    assert receipt.run_id == manifest["run_id"]
+    assert hashlib.sha256(receipt.manifest_bytes).hexdigest() == receipt.sha256
+    operations = [x for x in manifest["operations"] if x["stage"] == "b5-4-1"]
+    assert len(operations) == 1
+    assert operations[0]["tests"] == list(TESTS)
+    assert operations[0]["exit_code"] == 0
+    name, lifecycle = observed["stage_seen"][0]
+    assert lifecycle["run_id"] == receipt.run_id
+    assert name.startswith("r7-05b3-" + receipt.run_id.replace("-", ""))
+    assert any(kind == "container" and x == name for kind, x, _ in observed["removals"])
+    assert (evidence / "b5-4-1.stdout").read_text() == "synthetic reporting ok"
+    assert (evidence / "b5-4-1.stderr").read_text() == "synthetic reporting stderr"
+    stage_cmd = next(x for x in observed["commands"] if "-m" in x and "pytest" in x)
+    assert stage_cmd[-len(TESTS):] == TESTS
+    assert "--network=none" in stage_cmd
+    assert "--read-only" in stage_cmd
+    assert "--cap-drop=ALL" in stage_cmd
+    assert "--security-opt=no-new-privileges" in stage_cmd
+    assert "--env-file" in stage_cmd
+    assert signals[-1] == "old" and len(signals) == 2
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+    assert admission.admit_archive_without_attestation_candidate(
+        evidence / "run-manifest.json") is None
+
+
+@pytest.mark.parametrize("fault,exception", [
+    ("failure", RuntimeError),
+    ("interrupt", KeyboardInterrupt),
+])
+def test_actual_reporting_failure_or_interrupt_reconciles_owned_container(
+        system, tmp_path, fault, exception):
+    runner, admission, consumer, _stage, signals, observed = system
+    observed["fault"] = fault
+    evidence = tmp_path / "report-fault"
+    with pytest.raises(exception, match="synthetic reporting|isolated B5"):
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert len(observed["stage_seen"]) == 1
+    name, lifecycle = observed["stage_seen"][0]
+    assert any(kind == "container" and x == name for kind, x, _ in observed["removals"])
+    assert lifecycle["result"] == "FAILED"
+    terminal = evidence / "run-manifest.json"
+    assert not terminal.exists() or json.loads(terminal.read_text())["result"] == "FAILED"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+def test_actual_reporting_partial_stage_evidence_fails_closed(
+        system, monkeypatch, tmp_path):
+    runner, admission, consumer, stage, _signals, observed = system
+    original_write = stage.write_evidence
+    evidence = tmp_path / "partial"
+    def fail_reporting_stdout(path, contents):
+        if path.name == "b5-4-1.stdout":
+            path.write_text("partial synthetic evidence", encoding="utf-8")
+            raise OSError("synthetic reporting stdout I/O failure")
+        return original_write(path, contents)
+    monkeypatch.setattr(stage, "write_evidence", fail_reporting_stdout)
+    with pytest.raises(OSError, match="synthetic reporting stdout"):
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert (evidence / "b5-4-1.stdout").read_text() == "partial synthetic evidence"
+    assert len(observed["stage_seen"]) == 1
+    name, lifecycle = observed["stage_seen"][0]
+    assert any(kind == "container" and x == name for kind, x, _ in observed["removals"])
+    assert lifecycle["result"] == "FAILED"
+    terminal = evidence / "run-manifest.json"
+    assert not terminal.exists() or json.loads(terminal.read_text())["result"] == "FAILED"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert runner._LIFECYCLE.get() is None
+
+
+def test_reporting_stage_rejects_foreign_lifecycle_before_any_docker(
+        system, tmp_path):
+    runner, _admission, _consumer, stage, _signals, observed = system
+    from uuid import uuid4
+    own_id = uuid4()
+    token = runner._LIFECYCLE.set({"run_hex": "wrong-run"})
+    try:
+        with pytest.raises(RuntimeError, match="original disposable run lifecycle required"):
+            stage.reporting_stage(
+                server="synthetic", socket="synthetic", client="sha256:synthetic",
+                envfile=tmp_path/"test-client.env", run_id=own_id,
+                database="testdb", record={"b5_4_1_evidence_dir": str(tmp_path),
+                                           "operations": []})
+        assert observed["commands"] == []
+    finally:
+        runner._LIFECYCLE.reset(token)
