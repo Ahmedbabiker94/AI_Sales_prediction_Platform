@@ -20,6 +20,7 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from uuid import uuid4
@@ -252,7 +253,28 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
     deferred_term = {'active': False, 'pending': False}
     secret_token = None
     handler_attempted = False
+    handler_restore_attempted = False
+    handler_restore_failed = False
     previous_term = None
+
+    def restore_handler_once():
+        """Attempt SIGTERM restoration once; never silently approve failure."""
+        nonlocal handler_restore_attempted, handler_restore_failed
+        if handler_attempted and previous_term is not None and not handler_restore_attempted:
+            # Mark BEFORE invoking signal.signal: a restoration fault must not
+            # produce an unbounded retry or an accepted success manifest.
+            handler_restore_attempted = True
+            try:
+                signal.signal(signal.SIGTERM, previous_term)
+            except BaseException:
+                handler_restore_failed = True
+                record['handler_restoration'] = 'UNCONFIRMED'
+                record['result'] = 'FAILED'
+                record['cleanup_passed'] = False
+                record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+            else:
+                record['handler_restoration'] = 'RESTORED'
+
     try:
         previous_term = signal.getsignal(signal.SIGTERM)
         handler_attempted = False
@@ -443,11 +465,20 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             if deferred_term['pending']:
                 deferred_term['pending'] = False
                 raise KeyboardInterrupt('deferred SIGTERM during credential cleanup')
+            # No success evidence can be published until the previous SIGTERM
+            # handler has been restored. A restoration fault fails closed.
+            # Preserve a pending original exception rather than masking it
+            # when *both* body and restoration fail.
+            pending_error = sys.exc_info()[1]
+            restore_handler_once()
+            if handler_restore_failed and pending_error is None:
+                raise CleanupUnconfirmed(
+                    'CLEANUP_UNCONFIRMED: SIGTERM handler restoration not confirmed') from None
             # Detect and redact secrets even in unexpected metadata keys before
             # publishing the manifest. Any leak is a rejected run, not a PASS.
             manifest_text, rejected = finalize_manifest_candidate(record, tuple(passwords.values()))
             write_evidence(evidence/'run-manifest.json', manifest_text)
-            if rejected:
+            if rejected and not (handler_restore_failed and pending_error is not None):
                 raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
     finally:
         try:
@@ -479,9 +510,12 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     deferred_term['pending'] = False
                     raise KeyboardInterrupt('deferred SIGTERM during credential cleanup')
         finally:
+            pending_exit_error = sys.exc_info()[1]
             try:
-                if handler_attempted and previous_term is not None:
-                    signal.signal(signal.SIGTERM, previous_term)
+                restore_handler_once()
+                if handler_restore_failed and pending_exit_error is None:
+                    raise CleanupUnconfirmed(
+                        'CLEANUP_UNCONFIRMED: SIGTERM handler restoration not confirmed') from None
             finally:
                 try:
                     if secret_token is not None:
