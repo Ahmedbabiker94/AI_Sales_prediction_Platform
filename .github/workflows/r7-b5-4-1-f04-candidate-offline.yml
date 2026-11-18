@@ -17,6 +17,7 @@ on:
       - 'sales-forecast-platform/tests/postgres/run_postgres_security_patch_candidate.py'
       - 'sales-forecast-platform/tests/postgres/run_manifest_admission_controller_candidate.py'
       - 'sales-forecast-platform/tests/postgres/run_b5_4_1_postgres_admission_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_b5_4_1_reporting_stage_candidate.py'
       - '.github/workflows/r7-b5-4-1-f04-candidate-offline.yml'
 
 permissions:
@@ -62,6 +63,7 @@ jobs:
               pathlib.Path('tests/postgres/run_postgres_security_patch_candidate.py'),
               pathlib.Path('tests/postgres/run_manifest_admission_controller_candidate.py'),
               pathlib.Path('tests/postgres/run_b5_4_1_postgres_admission_candidate.py'),
+              pathlib.Path('tests/postgres/run_b5_4_1_reporting_stage_candidate.py'),
           ]
           for path in paths:
               py_compile.compile(str(path), doraise=True)
@@ -107,4 +109,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_r2_03_rejected_finalizer_retained_record.py \
             tests/runtime/test_r7_05b5_4_1_f04_r2_04_publication_acceptance.py \
             tests/runtime/test_r7_05b5_4_1_f04_r2_04_controller_binding.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_04_r4_actual_reporting_stage.py \
             -q --tb=short -p no:cacheprovider
