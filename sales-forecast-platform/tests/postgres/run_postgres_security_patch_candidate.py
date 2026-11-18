@@ -246,6 +246,10 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
     token = _LIFECYCLE.set(record)
     inspection_token = None  # suspend resource-ownership context during read-only listings
     credential_cleanup_attempted = False
+    # Cooperative SIGTERM deferral ONLY during the short owned-envfile unlink.
+    # This protects the intent-flag -> helper-call seam; a hard kill, another
+    # process, or arbitrary KeyboardInterrupt cannot be made atomic by Python.
+    deferred_term = {'active': False, 'pending': False}
     secret_token = None
     handler_attempted = False
     previous_term = None
@@ -253,6 +257,9 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         previous_term = signal.getsignal(signal.SIGTERM)
         handler_attempted = False
         def interrupted(signum, frame):
+            if deferred_term['active']:
+                deferred_term['pending'] = True
+                return
             raise KeyboardInterrupt('test runner interrupted')
         handler_attempted = True
         signal.signal(signal.SIGTERM, interrupted)
@@ -404,22 +411,38 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             # This is only best-effort filesystem cleanup, not secure erase of bytes
             # from an underlying disk, Docker daemon metadata or host privileges.
             # If the credentials file cannot be removed, mark the run unaccepted.
-            credential_cleanup_attempted = True  # mark before call; no unsafe duplicate unlink
+            # Defer the installed SIGTERM handler *before* marking the unlink
+            # attempt. A signal after the flag but before the helper now queues
+            # the interrupt instead of skipping the owned file removal.
+            deferred_term['active'] = True
             try:
-                removal_status = remove_transient_credential_file(envfile)
-            except BaseException:
-                record['credential_file_cleanup'] = 'UNCONFIRMED'
-                record['result'] = 'FAILED'
-                record['cleanup_passed'] = False
-                record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
-                raise
-            record['credential_file_cleanup'] = (
-                removal_status if removal_status in ('REMOVED', 'NOT_PRESENT')
-                else 'UNCONFIRMED')
-            if record['credential_file_cleanup'] == 'UNCONFIRMED':
-                record['result'] = 'FAILED'
-                record['cleanup_passed'] = False
-                record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+                credential_cleanup_attempted = True  # no unsafe duplicate unlink
+                try:
+                    removal_status = remove_transient_credential_file(envfile)
+                except BaseException:
+                    record['credential_file_cleanup'] = 'UNCONFIRMED'
+                    record['result'] = 'FAILED'
+                    record['cleanup_passed'] = False
+                    record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+                    raise
+                record['credential_file_cleanup'] = (
+                    removal_status if removal_status in ('REMOVED', 'NOT_PRESENT')
+                    else 'UNCONFIRMED')
+                if record['credential_file_cleanup'] == 'UNCONFIRMED':
+                    record['result'] = 'FAILED'
+                    record['cleanup_passed'] = False
+                    record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+            finally:
+                if deferred_term['pending']:
+                    # Interrupted finalization cannot retain a PASS result,
+                    # regardless of whether the owned envfile was removed.
+                    record['result'] = 'FAILED'
+                    record['cleanup_passed'] = False
+                    record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+                deferred_term['active'] = False
+            if deferred_term['pending']:
+                deferred_term['pending'] = False
+                raise KeyboardInterrupt('deferred SIGTERM during credential cleanup')
             # Detect and redact secrets even in unexpected metadata keys before
             # publishing the manifest. Any leak is a rejected run, not a PASS.
             manifest_text, rejected = finalize_manifest_candidate(record, tuple(passwords.values()))
@@ -432,18 +455,29 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             # to remove only the owned transient credential file. This path
             # is reached after an exceptional exit before normal cleanup.
             if not credential_cleanup_attempted:
-                credential_cleanup_attempted = True
+                deferred_term['active'] = True
                 try:
-                    removal_status = remove_transient_credential_file(envfile)
-                except BaseException:
-                    removal_status = 'UNCONFIRMED'
-                record['credential_file_cleanup'] = (
-                    removal_status if removal_status in ('REMOVED', 'NOT_PRESENT')
-                    else 'UNCONFIRMED')
-                if record['credential_file_cleanup'] == 'UNCONFIRMED':
-                    record['result'] = 'FAILED'
-                    record['cleanup_passed'] = False
-                    record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+                    credential_cleanup_attempted = True
+                    try:
+                        removal_status = remove_transient_credential_file(envfile)
+                    except BaseException:
+                        removal_status = 'UNCONFIRMED'
+                    record['credential_file_cleanup'] = (
+                        removal_status if removal_status in ('REMOVED', 'NOT_PRESENT')
+                        else 'UNCONFIRMED')
+                    if record['credential_file_cleanup'] == 'UNCONFIRMED':
+                        record['result'] = 'FAILED'
+                        record['cleanup_passed'] = False
+                        record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+                finally:
+                    if deferred_term['pending']:
+                        record['result'] = 'FAILED'
+                        record['cleanup_passed'] = False
+                        record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+                    deferred_term['active'] = False
+                if deferred_term['pending']:
+                    deferred_term['pending'] = False
+                    raise KeyboardInterrupt('deferred SIGTERM during credential cleanup')
         finally:
             try:
                 if handler_attempted and previous_term is not None:
