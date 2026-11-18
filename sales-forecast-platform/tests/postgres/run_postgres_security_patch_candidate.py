@@ -102,6 +102,7 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
             attempt = dict(kind=kind, name=name, started_ns=time.time_ns(), state='PENDING')
             lifecycle['creation_attempts'].append(attempt)
     process = None
+    sanitized_timeout = None
     try:
         process = subprocess.Popen(args, stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
@@ -111,7 +112,7 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
         result = subprocess.CompletedProcess(args, process.returncode, stdout, stderr)
         if attempt is not None:
             attempt.update(state='RETURNED' if result.returncode == 0 else 'DAEMON_UNRESOLVED', returned_ns=time.time_ns(), local_reaped=True, cli_returncode=process.returncode)
-    except BaseException:
+    except BaseException as error:
         if attempt is not None:
             attempt.update(state='DAEMON_UNRESOLVED', interrupted_ns=time.time_ns())
         if process is not None:
@@ -121,10 +122,23 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
                     os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            process.communicate(timeout=3)
+            try:
+                process.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                # A second timeout must not override the primary error or
+                # expose a raw command/argv through an exception traceback.
+                pass
             if attempt is not None:
                 attempt['local_reaped'] = process.returncode is not None
-        raise
+        if isinstance(error, subprocess.TimeoutExpired):
+            # TimeoutExpired.cmd/output/stderr may contain disposable passwords.
+            # Raise OUTSIDE this except to avoid an unsafe __context__ chain.
+            # The public exception has only a constant, credential-free message.
+            sanitized_timeout = RuntimeError('disposable PostgreSQL command timed out; command details suppressed')
+        else:
+            raise
+    if sanitized_timeout is not None:
+        raise sanitized_timeout
     if check and result.returncode:
         raise RuntimeError('disposable PostgreSQL command failed: '+redact_test_secrets(result.stderr[-2000:]))
     return result
