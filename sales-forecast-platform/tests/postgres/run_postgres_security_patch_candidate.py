@@ -268,6 +268,15 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
             else:
                 sanitized_timeout = RuntimeError(
                     'disposable PostgreSQL command timed out; command details suppressed')
+        elif isinstance(error, UnicodeError):
+            # P1-A-01: subprocess text decoding/encoding errors can retain
+            # disposable credentials in .object and .args (raw output bytes).
+            # Never expose the original exception or its implicit chain.
+            # Raise a newly constructed credential-free error only AFTER the
+            # raw exception handler has exited, like the timeout boundary.
+            # The mutation ledger remains DAEMON_UNRESOLVED throughout.
+            sanitized_timeout = RuntimeError(
+                'disposable PostgreSQL subprocess decoding failed; details suppressed')
         else:
             raise
     if sanitized_timeout is not None:
