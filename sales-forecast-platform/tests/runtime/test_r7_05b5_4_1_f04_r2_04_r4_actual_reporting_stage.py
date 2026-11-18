@@ -350,14 +350,19 @@ def test_p1_reporting_timeout_uncertain_daemon_cannot_be_admitted(
     monkeypatch.setattr(runner, "command", with_uncertain_mutation)
     monkeypatch.setattr(runner, "remove_owned", late_or_missing)
     evidence = tmp_path / ("p1-" + scenario)
-    with pytest.raises(RuntimeError, match="command details suppressed") as caught:
+    # Explicit precedence: unknown daemon completion makes cleanup
+    # unconfirmed, and the public gate MUST report CleanupUnconfirmed rather
+    # than an ordinary test timeout. The retained error_type still records
+    # the original sanitized RuntimeError without raw command details.
+    with pytest.raises(runner.CleanupUnconfirmed,
+                       match="owned resource or credential cleanup not confirmed") as caught:
         consumer.run_actual_reporting_stage_with_bound_admission_candidate(
             allow=True, wheelhouse=tmp_path, evidence=evidence)
-    assert caught.value is expected_error
-    assert caught.value.__cause__ is None
+    assert caught.value is not expected_error
     assert captured["attempt"]["state"] == "DAEMON_UNRESOLVED"
     record = captured["record"]
     assert record["result"] == "FAILED"
+    assert record["error_type"] == "RuntimeError"
     assert record["cleanup_passed"] is False
     assert record["cleanup_status"] == "CLEANUP_UNCONFIRMED"
     assert captured["attempt"]["name"] in record["possible_owned_containers"]
@@ -418,7 +423,7 @@ def test_p1_reporting_output_control_flow_interrupt_preserves_identity(
 
 
 @pytest.mark.parametrize("secondary", ["cleanup_refusal", "publication_failure"])
-def test_p1_partial_write_with_secondary_failure_keeps_original_exception(
+def test_p1_partial_write_secondary_fault_respects_cleanup_precedence(
         system, monkeypatch, tmp_path, secondary):
     runner, admission, consumer, stage, signals, observed = system
     original_write = stage.write_evidence
@@ -446,14 +451,24 @@ def test_p1_partial_write_with_secondary_failure_keeps_original_exception(
     else:
         monkeypatch.setattr(runner, "publish_terminal_manifest_candidate",
                             publication_failure)
-    with pytest.raises(OSError) as caught:
+    # With uncertain owned cleanup, fail-closed CleanupUnconfirmed has
+    # precedence over the original OSError. With publication failure and
+    # otherwise confirmed cleanup, the runner preserves the original OSError
+    # object despite the secondary publication error.
+    public_type = (runner.CleanupUnconfirmed
+                   if secondary == "cleanup_refusal" else OSError)
+    with pytest.raises(public_type) as caught:
         consumer.run_actual_reporting_stage_with_bound_admission_candidate(
             allow=True, wheelhouse=tmp_path, evidence=evidence)
-    assert caught.value is primary, "secondary failure must not replace primary"
+    if secondary == "cleanup_refusal":
+        assert "CLEANUP_UNCONFIRMED" in str(caught.value)
+    else:
+        assert caught.value is primary, "publication fault must not mask primary"
     assert attempted["secondary"], "fault injection must actually execute"
     assert len(observed["stage_seen"]) == 1
     name, record = observed["stage_seen"][0]
     assert record["result"] == "FAILED"
+    assert record["error_type"] == "OSError"
     assert record["evidence_status"] == "EVIDENCE_UNAVAILABLE"
     assert any(kind == "container" and item == name
                for kind, item, _ in observed["removals"])
