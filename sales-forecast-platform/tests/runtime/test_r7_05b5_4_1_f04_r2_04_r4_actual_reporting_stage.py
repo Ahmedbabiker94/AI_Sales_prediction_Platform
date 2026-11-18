@@ -289,3 +289,185 @@ def test_reporting_stdout_stderr_test_secrets_are_redacted_and_rejected(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+# F04 / P1 (planning-only): reporting-stage uncertain daemon and multi-fault
+# source-transfer negatives. The current on-disk candidate's command() is
+# NEVER permitted to execute: every command and signal remains a fake.
+
+@pytest.mark.parametrize("scenario", ["late_resource", "inventory_unavailable"])
+def test_p1_reporting_timeout_uncertain_daemon_cannot_be_admitted(
+        system, monkeypatch, tmp_path, scenario):
+    """Model an already-sanitized command timeout plus DAEMON_UNRESOLVED.
+
+    The subprocess helper's own internal timeout behavior is independently
+    tested by the H1/R2-01 AST-only tests. This case exercises propagation
+    through the REAL B5 stage, controller and bounded reconciliation.
+    """
+    runner, admission, consumer, stage, signals, observed = system
+    original_command = stage.command
+    original_remove = runner.remove_owned
+    captured = {"attempt": None, "record": None, "rounds": 0}
+    moment = {"value": 0.0}
+    def tick():
+        moment["value"] += 0.8
+        return moment["value"]
+    monkeypatch.setattr(runner.time, "monotonic", tick)
+    expected_error = RuntimeError(
+        "disposable PostgreSQL command timed out; command details suppressed")
+
+    def with_uncertain_mutation(args, **kwargs):
+        if (args[1] == "run" and "--name" in args
+                and args[args.index("--name") + 1].endswith("-b5-4-1")):
+            record = runner._LIFECYCLE.get()
+            assert record is not None
+            name = args[args.index("--name") + 1]
+            assert name in record.get("extra_containers", [])
+            # Safe mock of command()'s pre-spawn creation ledger and uncertain
+            # daemon state; no actual timeout, Popen, Docker, PG or signals.
+            attempt = {"kind": "container", "name": name,
+                       "started_ns": 1, "state": "DAEMON_UNRESOLVED",
+                       "local_reaped": True}
+            record["creation_attempts"].append(attempt)
+            captured.update(attempt=attempt, record=record)
+            observed["stage_seen"].append((name, record))
+            raise expected_error
+        if (scenario == "inventory_unavailable" and
+                (args[1:3] == ["ps", "-aq"]
+                 or args[1:3] == ["volume", "ls"])):
+            raise OSError("synthetic read-only inventory unavailable")
+        return original_command(args, **kwargs)
+
+    def late_or_missing(kind, name, owner):
+        observed["removals"].append((kind, name, str(owner)))
+        if kind == "container" and name.endswith("-b5-4-1"):
+            captured["rounds"] += 1
+            # A late daemon-side appearance cannot turn ambiguous creation
+            # into authoritative cleanup even after a later removal succeeds.
+            return captured["rounds"] > 1 if scenario == "late_resource" else False
+        return original_remove(kind, name, owner)
+    monkeypatch.setattr(stage, "command", with_uncertain_mutation)
+    monkeypatch.setattr(runner, "command", with_uncertain_mutation)
+    monkeypatch.setattr(runner, "remove_owned", late_or_missing)
+    evidence = tmp_path / ("p1-" + scenario)
+    with pytest.raises(RuntimeError, match="command details suppressed") as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert caught.value is expected_error
+    assert caught.value.__cause__ is None
+    assert captured["attempt"]["state"] == "DAEMON_UNRESOLVED"
+    record = captured["record"]
+    assert record["result"] == "FAILED"
+    assert record["cleanup_passed"] is False
+    assert record["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert captured["attempt"]["name"] in record["possible_owned_containers"]
+    assert captured["rounds"] > 0
+    if scenario == "late_resource":
+        assert captured["rounds"] > 1, "test must simulate late appearance"
+    else:
+        assert record["remaining_containers"] == "UNAVAILABLE"
+        assert record["remaining_volumes"] == "UNAVAILABLE"
+    terminal = evidence / "run-manifest.json"
+    assert terminal.is_file()
+    manifest = json.loads(terminal.read_text(encoding="utf-8"))
+    assert manifest["result"] == "FAILED"
+    assert manifest["cleanup_passed"] is False
+    assert manifest["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+@pytest.mark.parametrize("error_type", [KeyboardInterrupt, SystemExit])
+def test_p1_reporting_output_control_flow_interrupt_preserves_identity(
+        system, monkeypatch, tmp_path, stream, error_type):
+    runner, admission, consumer, stage, signals, observed = system
+    original_write = stage.write_evidence
+    evidence = tmp_path / ("p1-" + stream + "-" + error_type.__name__)
+    initial = error_type("synthetic exact write interruption object")
+    def interrupted_write(path, contents):
+        if path.name == "b5-4-1." + stream:
+            path.write_text("partial test-only output", encoding="utf-8")
+            raise initial
+        return original_write(path, contents)
+    monkeypatch.setattr(stage, "write_evidence", interrupted_write)
+    with pytest.raises(error_type) as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert caught.value is initial, "must not reconstruct/mask original exception"
+    assert (evidence / ("b5-4-1." + stream)).read_text() == "partial test-only output"
+    assert len(observed["stage_seen"]) == 1
+    name, record = observed["stage_seen"][0]
+    assert name in record["possible_owned_containers"]
+    assert record["result"] == "FAILED"
+    assert record["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+    assert record["credential_file_cleanup"] == "REMOVED"
+    assert any(kind == "container" and item == name
+               for kind, item, _ in observed["removals"])
+    terminal = evidence / "run-manifest.json"
+    assert terminal.is_file()
+    manifest = json.loads(terminal.read_text(encoding="utf-8"))
+    assert manifest["result"] == "FAILED"
+    assert manifest["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("secondary", ["cleanup_refusal", "publication_failure"])
+def test_p1_partial_write_with_secondary_failure_keeps_original_exception(
+        system, monkeypatch, tmp_path, secondary):
+    runner, admission, consumer, stage, signals, observed = system
+    original_write = stage.write_evidence
+    original_remove = runner.remove_owned
+    evidence = tmp_path / ("p1-combined-" + secondary)
+    primary = OSError("synthetic ORIGINAL partial B5 output write")
+    attempted = {"secondary": False}
+    def partial_write(path, contents):
+        if path.name == "b5-4-1.stderr":
+            path.write_text("incomplete stdout-stderr pair", encoding="utf-8")
+            raise primary
+        return original_write(path, contents)
+    def refuse_reporting_cleanup(kind, name, owner):
+        if kind == "container" and name.endswith("-b5-4-1"):
+            attempted["secondary"] = True
+            observed["removals"].append((kind, name, str(owner)))
+            return False
+        return original_remove(kind, name, owner)
+    def publication_failure(path, data):
+        attempted["secondary"] = True
+        raise OSError("synthetic SECONDARY manifest publication fault")
+    monkeypatch.setattr(stage, "write_evidence", partial_write)
+    if secondary == "cleanup_refusal":
+        monkeypatch.setattr(runner, "remove_owned", refuse_reporting_cleanup)
+    else:
+        monkeypatch.setattr(runner, "publish_terminal_manifest_candidate",
+                            publication_failure)
+    with pytest.raises(OSError) as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert caught.value is primary, "secondary failure must not replace primary"
+    assert attempted["secondary"], "fault injection must actually execute"
+    assert len(observed["stage_seen"]) == 1
+    name, record = observed["stage_seen"][0]
+    assert record["result"] == "FAILED"
+    assert record["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+    assert any(kind == "container" and item == name
+               for kind, item, _ in observed["removals"])
+    terminal = evidence / "run-manifest.json"
+    if secondary == "publication_failure":
+        assert not terminal.exists()
+    else:
+        assert terminal.is_file()
+        manifest = json.loads(terminal.read_text(encoding="utf-8"))
+        assert manifest["result"] == "FAILED"
+        assert manifest["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+        assert manifest["cleanup_passed"] is False
+        assert manifest["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
