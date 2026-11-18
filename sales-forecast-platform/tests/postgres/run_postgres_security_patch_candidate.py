@@ -241,7 +241,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
     envfile = evidence/'test-client.env'  # transient credentials, NEVER evidence
     record = {'version': '1.0', 'run_id': str(run_id), 'database': database,
               'source_commit': source_commit,
-              'source_status': '',
+              'source_status': '', 'result': 'FAILED',
+              'cleanup_passed': False, 'cleanup_status': 'CLEANUP_UNCONFIRMED',
               'operations': [], 'native_execution': False, 'production_connections': False}
     record.update(run_hex=run_id.hex, creation_attempts=[])
     token = _LIFECYCLE.set(record)
@@ -256,6 +257,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
     handler_restore_attempted = False
     handler_restore_failed = False
     previous_term = None
+    # Body completion is local bookkeeping, never terminal PASS evidence.
+    body_passed = False
 
     def restore_handler_once():
         """Attempt SIGTERM restoration once; never silently approve failure."""
@@ -378,7 +381,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             if _host_stage is not None:
                 _host_stage(server=server, socket=socket, client=client, envfile=envfile,
                     run_id=run_id, database=database, record=record)
-            record['result'] = 'PASS'
+            body_passed = True
         except BaseException as error:
             record['result'] = 'FAILED'
             record['error_type'] = type(error).__name__
@@ -389,7 +392,6 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             # credential unlink, and prior SIGTERM handler restoration. In
             # particular, BaseException/KeyboardInterrupt escaping cleanup
             # cannot leave a retained in-memory PASS record.
-            body_passed = record.get('result') == 'PASS'
             record['result'] = 'FAILED'
             record['cleanup_passed'] = False
             record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
