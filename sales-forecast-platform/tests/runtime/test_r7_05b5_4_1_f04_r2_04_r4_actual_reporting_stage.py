@@ -161,29 +161,41 @@ def test_actual_reporting_failure_or_interrupt_reconciles_owned_container(
     assert runner._TEST_SECRETS.get() == ()
 
 
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
 def test_actual_reporting_partial_stage_evidence_fails_closed(
-        system, monkeypatch, tmp_path):
-    runner, admission, consumer, stage, _signals, observed = system
+        system, monkeypatch, tmp_path, stream):
+    runner, admission, consumer, stage, signals, observed = system
     original_write = stage.write_evidence
-    evidence = tmp_path / "partial"
-    def fail_reporting_stdout(path, contents):
-        if path.name == "b5-4-1.stdout":
+    evidence = tmp_path / ("partial-" + stream)
+    def fail_reporting_output(path, contents):
+        if path.name == "b5-4-1." + stream:
             path.write_text("partial synthetic evidence", encoding="utf-8")
-            raise OSError("synthetic reporting stdout I/O failure")
+            raise OSError("synthetic reporting " + stream + " I/O failure")
         return original_write(path, contents)
-    monkeypatch.setattr(stage, "write_evidence", fail_reporting_stdout)
-    with pytest.raises(OSError, match="synthetic reporting stdout"):
+    monkeypatch.setattr(stage, "write_evidence", fail_reporting_output)
+    with pytest.raises(OSError, match="synthetic reporting " + stream + " I/O failure"):
         consumer.run_actual_reporting_stage_with_bound_admission_candidate(
             allow=True, wheelhouse=tmp_path, evidence=evidence)
-    assert (evidence / "b5-4-1.stdout").read_text() == "partial synthetic evidence"
+    assert (evidence / ("b5-4-1." + stream)).read_text() == "partial synthetic evidence"
     assert len(observed["stage_seen"]) == 1
     name, lifecycle = observed["stage_seen"][0]
     assert any(kind == "container" and x == name for kind, x, _ in observed["removals"])
+    assert name in lifecycle["possible_owned_containers"]
     assert lifecycle["result"] == "FAILED"
+    assert lifecycle["evidence_status"] == "EVIDENCE_UNAVAILABLE", (
+        "partial B5 evidence must not be classified AVAILABLE in retained state")
+    assert lifecycle["credential_file_cleanup"] == "REMOVED"
     terminal = evidence / "run-manifest.json"
-    assert not terminal.exists() or json.loads(terminal.read_text())["result"] == "FAILED"
+    assert terminal.is_file(), "a fail-closed terminal report is expected here"
+    manifest = json.loads(terminal.read_text(encoding="utf-8"))
+    assert manifest["result"] == "FAILED"
+    assert manifest["evidence_status"] == "EVIDENCE_UNAVAILABLE", (
+        "published FAILED manifest cannot claim complete B5 evidence")
+    assert manifest["run_id"] == lifecycle["run_id"]
     assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
 
 
 def test_reporting_stage_rejects_foreign_lifecycle_before_any_docker(
