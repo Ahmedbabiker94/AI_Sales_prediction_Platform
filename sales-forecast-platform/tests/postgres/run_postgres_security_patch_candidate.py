@@ -100,6 +100,51 @@ def publish_terminal_manifest_candidate(path, text):
             pass
 
 
+def terminal_manifest_accepted_candidate(path, *, run_completed):
+    """Fail-closed admission contract for a candidate manifest consumer.
+
+    The bare terminal filename is NEVER an authoritative success signal:
+    hard-link publication can commit before an error, and an ambiguous
+    rollback can leave a complete PASS file despite a failing caller.
+
+    `run_completed` must be an INDEPENDENT, trusted observation that the
+    corresponding run() returned normally (e.g. a controller with the
+    invocation result), not a field inferred from run-manifest.json.
+    Neither a caller-supplied flag nor this file parser authenticates an
+    untrusted host, and this function does not automatically upgrade existing
+    consumers that read the manifest directly. Operational use must enforce
+    the contract at every evidence-admission boundary.
+    """
+    # Reject bool-like values (1 and user-defined __eq__/__bool__).
+    if run_completed is not True:
+        return False
+    if not isinstance(path, Path):
+        return False
+    try:
+        if (path.name != 'run-manifest.json' or path.is_symlink()
+                or path.absolute() != path.resolve()
+                or not path.is_file()):
+            return False
+        # Refuse a missing, malformed, corrupt, or unrelated terminal artifact.
+        with path.open('r', encoding='utf-8') as stream:
+            manifest = json.load(stream)
+        if type(manifest) is not dict:
+            return False
+        return (
+            manifest.get('result') == 'PASS'
+            and manifest.get('evidence_status') == 'AVAILABLE'
+            and manifest.get('cleanup_passed') is True
+            and manifest.get('cleanup_status') == 'CLEANUP_SUCCESS'
+            and manifest.get('handler_restoration') == 'RESTORED'
+            and type(manifest.get('credential_file_cleanup')) is str
+            and manifest['credential_file_cleanup'] in ('REMOVED', 'NOT_PRESENT')
+            and type(manifest.get('secret_redactions')) is int
+            and manifest['secret_redactions'] == 0
+        )
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return False
+
+
 PROXIES = ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy')
 
 
