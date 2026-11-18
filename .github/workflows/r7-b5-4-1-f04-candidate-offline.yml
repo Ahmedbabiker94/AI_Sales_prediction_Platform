@@ -98,4 +98,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_m2_reconciliation_interrupt.py \
             tests/runtime/test_r7_05b5_4_1_f04_t1_strict_unlink_result_type.py \
             tests/runtime/test_r7_05b5_4_1_f04_t2_partial_evidence_write.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_01_secondary_reap_sanitization.py \
             -q --tb=short -p no:cacheprovider
