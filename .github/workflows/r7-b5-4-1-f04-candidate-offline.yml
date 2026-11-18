@@ -92,4 +92,5 @@ jobs:
             tests/runtime/test_r7_05b5_4_1_f04_credential_cleanup_fallback.py \
             tests/runtime/test_r7_05b5_4_1_f04_credential_cleanup_status_contract.py \
             tests/runtime/test_r7_05b5_4_1_f04_local_envfile_interrupt.py \
+            tests/runtime/test_r7_05b5_4_1_f04_h1_timeout_sanitization.py \
             -q --tb=short -p no:cacheprovider
