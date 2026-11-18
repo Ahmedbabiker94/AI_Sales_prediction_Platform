@@ -317,3 +317,95 @@ def test_run_a_completion_cannot_admit_run_b_failed_leftover_pass(
         allow=True, wheelhouse=tmp_path, evidence=tmp_path / "run-a") is None
     a_raw = (tmp_path / "run-a" / "run-manifest.json").read_bytes()
     assert json.loads(a_raw)["run_id"] != b_manifest["run_id"]
+
+
+def test_same_length_substitution_rejected_even_when_json_stays_valid(
+        admission, runner, monkeypatch, tmp_path):
+    _module, _signals, _calls = runner
+    original = admission._read_manifest_bytes
+    seen = []
+    def same_length_substitute(path):
+        raw = original(path)
+        assert raw is not None
+        assert b'"source_commit": "aaaaaaaa' in raw
+        replaced = raw.replace(
+            b'"source_commit": "aaaaaaaa', b'"source_commit": "bbbbbbbb', 1)
+        assert len(replaced) == len(raw)
+        assert json.loads(replaced)["result"] == "PASS"
+        seen.append(True)
+        return replaced
+    monkeypatch.setattr(admission, "_read_manifest_bytes", same_length_substitute)
+    assert admission.invoke_candidate_and_admit(
+        allow=True, wheelhouse=tmp_path, evidence=tmp_path / "run-a") is None
+    assert seen == [True]
+
+
+@pytest.mark.parametrize("kind", [
+    "symlink", "directory", "oversize", "unreadable", "missing_no_follow",
+    "not_found",
+])
+def test_direct_reader_fail_closed_on_nonregular_or_unreadable_input(
+        admission, monkeypatch, tmp_path, kind):
+    target = tmp_path / "run-manifest.json"
+    if kind == "symlink":
+        real = tmp_path / "real"
+        real.write_bytes(b'{"result":"PASS"}')
+        target.symlink_to(real)
+    elif kind == "directory":
+        target.mkdir()
+    elif kind == "oversize":
+        target.write_bytes(b"x" * (admission._MAX_MANIFEST_BYTES + 1))
+    elif kind in ("unreadable", "missing_no_follow"):
+        target.write_bytes(b'{"result":"PASS"}')
+    if kind == "unreadable":
+        with monkeypatch.context() as faults:
+            faults.setattr(admission.os, "open", lambda *a, **k: (
+                (_ for _ in ()).throw(PermissionError("synthetic unreadable"))))
+            assert admission._read_manifest_bytes(target) is None
+    elif kind == "missing_no_follow":
+        with monkeypatch.context() as faults:
+            faults.delattr(admission.os, "O_NOFOLLOW", raising=False)
+            assert admission._read_manifest_bytes(target) is None
+    else:
+        assert admission._read_manifest_bytes(target) is None
+
+
+@pytest.mark.parametrize("fault", ["duplicate_callback", "wrong_evidence_path"])
+def test_callback_protocol_blocks_untrusted_invocation(
+        admission, monkeypatch, tmp_path, fault):
+    from uuid import uuid4
+    evidence = tmp_path / "stage"
+    run_id = uuid4()
+    def fake_run(**kwargs):
+        callback = kwargs["_host_stage"]
+        callback(run_id=run_id, record={}, envfile=evidence/"test-client.env")
+        if fault == "duplicate_callback":
+            callback(run_id=run_id, record={}, envfile=evidence/"test-client.env")
+    if fault == "wrong_evidence_path":
+        def fake_run(**kwargs):
+            kwargs["_host_stage"](run_id=run_id, record={},
+                                   envfile=tmp_path/"foreign"/"test-client.env")
+    monkeypatch.setattr(admission, "_candidate_run", fake_run)
+    with pytest.raises(RuntimeError, match="untrusted or duplicate"):
+        admission.invoke_candidate_and_admit(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+
+
+def test_verified_snapshot_is_immutable_after_file_replacement_or_deletion(
+        admission, runner, tmp_path):
+    _module, _signals, _calls = runner
+    evidence = tmp_path / "run-a"
+    receipt = admission.invoke_candidate_and_admit(
+        allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert receipt is not None
+    exact = receipt.manifest_bytes
+    path = evidence / "run-manifest.json"
+    path.unlink()
+    path.write_text('{"result":"FAILED"}', encoding="utf-8")
+    assert receipt.manifest_bytes == exact
+    assert json.loads(receipt.manifest_bytes)["result"] == "PASS"
+    assert hashlib.sha256(receipt.manifest_bytes).hexdigest() == receipt.sha256
+    from dataclasses import FrozenInstanceError
+    with pytest.raises(FrozenInstanceError):
+        receipt.manifest_bytes = b"arbitrary"
+    assert admission.admit_archive_without_attestation_candidate(path) is None
