@@ -617,6 +617,15 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             try:
                 manifest_text, rejected = finalize_manifest_candidate(
                     record, tuple(passwords.values()))
+                # R2-03: the pure finalizer owns the definitive *redacted*
+                # terminal classification. Apply its exact serialized state
+                # to the SAME retained record reference captured by host-stage
+                # observers before attempting publication. Updating individual
+                # fields is insufficient: a secret can occur in a nested
+                # value OR dict key, and partial updates retain raw metadata.
+                finalized_record = json.loads(manifest_text)
+                record.clear()
+                record.update(finalized_record)
                 publish_terminal_manifest_candidate(
                     evidence/'run-manifest.json', manifest_text)
             except BaseException:
