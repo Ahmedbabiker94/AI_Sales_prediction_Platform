@@ -221,3 +221,62 @@ def test_primary_error_not_masked_by_manifest_write_failure(
     finally:
         module._LIFECYCLE.set(None)
         module._TEST_SECRETS.set(())
+
+
+def test_manifest_publication_refuses_existing_destination_without_overwrite(
+        fork, monkeypatch, tmp_path):
+    module, restored = fork
+    _, calls = setup_success_path(module, monkeypatch)
+    captured = {}
+    existing = '{"existing_synthetic_artifact":true}'
+
+    def occupy_destination(**kwargs):
+        captured["record"] = kwargs["record"]
+        (tmp_path / "evidence" / "run-manifest.json").write_text(
+            existing, encoding="utf-8")
+
+    evidence = tmp_path / "evidence"
+    try:
+        with pytest.raises(FileExistsError):
+            module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
+                       _host_stage=occupy_destination)
+        assert calls
+        assert (evidence / "run-manifest.json").read_text() == existing
+        assert captured["record"]["result"] == "FAILED"
+        assert captured["record"]["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+        assert len(restored) == 2 and restored[-1] == "old"
+        assert module._LIFECYCLE.get() is None
+        assert module._TEST_SECRETS.get() == ()
+    finally:
+        module._LIFECYCLE.set(None)
+        module._TEST_SECRETS.set(())
+
+
+def test_link_created_then_fault_removes_only_owned_published_manifest(
+        fork, monkeypatch, tmp_path):
+    module, restored = fork
+    _, calls = setup_success_path(module, monkeypatch)
+    captured = {}
+    genuine_link = module.os.link
+    linked = []
+
+    def capture(**kwargs):
+        captured["record"] = kwargs["record"]
+
+    def ambiguous_publish(source, destination, **kwargs):
+        genuine_link(source, destination, **kwargs)
+        linked.append(Path(destination))
+        raise OSError("synthetic link succeeded then callback raised")
+
+    monkeypatch.setattr(module.os, "link", ambiguous_publish)
+    evidence = tmp_path / "evidence"
+    try:
+        with pytest.raises(OSError, match="synthetic link succeeded"):
+            module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
+                       _host_stage=capture)
+        assert linked == [evidence / "run-manifest.json"]
+        assert calls
+        assert_rejected_evidence(module, restored, captured["record"], evidence)
+    finally:
+        module._LIFECYCLE.set(None)
+        module._TEST_SECRETS.set(())
