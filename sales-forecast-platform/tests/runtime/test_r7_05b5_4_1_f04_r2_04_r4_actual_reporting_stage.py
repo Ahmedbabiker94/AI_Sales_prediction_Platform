@@ -1338,6 +1338,37 @@ def test_p1_f_split_secret_cannot_appear_in_admitted_inspect_snapshot(
         return old_command(argv, **kwargs)
 
     monkeypatch.setattr(runner, "command", mocked_inspect)
+    if case == "key_value_split":
+        # New stricter ASCII key grammar rejects the key containing the
+        # test-only password prefix. This is an ALLOWED fail-closed outcome,
+        # not a failed projection or a missing admission test.
+        with pytest.raises(RuntimeError,
+                           match="inspection metadata schema invalid") as caught:
+            consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+                allow=True, wheelhouse=tmp_path, evidence=evidence)
+        assert seen["count"] == 1
+        secret = seen["secret"]
+        assert secret is not None and secret.startswith("test-only-")
+        assert secret[:len(secret)//2] not in str(caught.value)
+        assert secret[len(secret)//2:] not in str(caught.value)
+        assert seen["record"]["result"] == "FAILED"
+        assert seen["record"]["cleanup_passed"] is True
+        assert seen["record"]["error_type"] == "RuntimeError"
+        assert seen["record"]["credential_file_cleanup"] == (
+            "NOT_PRESENT" if target == "server" else "REMOVED")
+        assert not (evidence / "test-client.env").exists()
+        terminal = evidence / "run-manifest.json"
+        assert terminal.is_file()
+        text = terminal.read_text(encoding="utf-8")
+        assert json.loads(text)["result"] == "FAILED"
+        assert secret[:len(secret)//2] not in text
+        assert secret[len(secret)//2:] not in text
+        assert admission.admit_archive_without_attestation_candidate(terminal) is None
+        assert len(signals) == 2 and signals[-1] == "old"
+        assert runner._LIFECYCLE.get() is None
+        assert runner._TEST_SECRETS.get() == ()
+        return
+
     receipt = consumer.run_actual_reporting_stage_with_bound_admission_candidate(
         allow=True, wheelhouse=tmp_path, evidence=evidence)
     assert receipt is not None, "safe projected inspect must not need raw Env"
@@ -1361,7 +1392,9 @@ def test_p1_f_split_secret_cannot_appear_in_admitted_inspect_snapshot(
         published = op["inspect"]
     assert list(published) == ["Config"], (
         "no raw inspect metadata may cross the publication boundary")
-    assert published["Config"]["Env"] in ([], ["SAFE_FEATURE_FLAG=enabled"])
+    assert published["Config"]["Env"] in (
+        [], ["SAFE_FEATURE_FLAG=enabled"],
+        ["HTTP_PROXY=<redacted-env-value>"])
     assert all("PART_" not in x and "UNEXPECTED" not in x
                for x in published["Config"]["Env"])
     assert hashlib.sha256(receipt.manifest_bytes).hexdigest() == receipt.sha256
