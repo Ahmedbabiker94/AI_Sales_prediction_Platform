@@ -1028,7 +1028,8 @@ def test_p1_d_unsafe_inspect_json_error_never_reaches_public_exception(
 # The existing fixture's Env=[] is valid; the OUTER empty list is not.
 P1E_SHAPES = (
     "env_string", "env_dict_item", "env_list_item", "env_int_item",
-    "env_none_item", "env_null", "env_empty_string", "outer_empty",
+    "env_none_item", "env_null", "env_empty_string", "env_character_array",
+    "env_no_equals", "outer_empty",
     "outer_null", "outer_object", "first_not_object", "config_missing",
     "config_null", "config_array", "env_missing", "outer_multiple",
 )
@@ -1059,6 +1060,10 @@ def _p1e_inspect_shape(shape, secret):
         return [{"Config": {"Env": None}, "raw_hint": secret}]
     if shape == "env_empty_string":
         return [{"Config": {"Env": ""}, "raw_hint": secret}]
+    if shape == "env_character_array":
+        return [{"Config": {"Env": list(value)}}]
+    if shape == "env_no_equals":
+        return [{"Config": {"Env": ["NOT_AN_ENV_ENTRY", value]}}]
     if shape == "outer_empty":
         return []
     if shape == "outer_null":
