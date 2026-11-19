@@ -294,6 +294,26 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
     return result
 
 
+def parse_disposable_inspect_metadata_candidate(raw_stdout):
+    """Parse untrusted Docker-inspect metadata without publishing raw JSON.
+
+    A JSONDecodeError.doc/.args may contain the disposable test passwords
+    embedded in Config.Env. Never let the raw parser exception become a
+    primary body error or the implicit cause/context of CleanupUnconfirmed.
+    Do not construct or raise the public diagnostic inside its handler.
+    Traceback frame-local memory sanitization is NOT claimed here.
+    """
+    invalid_json = False
+    try:
+        parsed = json.loads(raw_stdout)
+    except json.JSONDecodeError:
+        invalid_json = True
+    if invalid_json:
+        raise RuntimeError(
+            'disposable PostgreSQL inspection JSON invalid; details suppressed') from None
+    return parsed[0]
+
+
 def inspect_image(identity):
     value = json.loads(command(['docker', 'image', 'inspect', identity]).stdout)[0]
     if value['Id'] != identity or value['Os'] != 'linux' or value['Architecture'] != 'amd64':
@@ -514,7 +534,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                 'psql', '-h', '/var/run/postgresql', '-U', 'r7_test_owner', '-d', database, '-v', 'ON_ERROR_STOP=1',
                 '-v', 'test_database='+database, '-v', 'test_identity=r7_05b3_disposable:'+str(run_id), *variables],
                 stdin=(ROOT/'tests/postgres/bootstrap.sql').read_text())
-            record['server_inspect'] = json.loads(command(['docker', 'inspect', server]).stdout)[0]
+            record['server_inspect'] = parse_disposable_inspect_metadata_candidate(command(['docker', 'inspect', server]).stdout)
             # Only redact test passwords; no production credentials are read.
             record['server_inspect']['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in record['server_inspect']['Config']['Env']]
             with open(envfile, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as handle:
@@ -549,7 +569,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'
                     record['result'] = 'FAILED'
                     raise
-                info = json.loads(command(['docker', 'inspect', name]).stdout)[0]
+                info = parse_disposable_inspect_metadata_candidate(command(['docker', 'inspect', name]).stdout)
                 info['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in info['Config']['Env']]
                 record['operations'].append({'stage': stage, 'exit_code': result.returncode, 'inspect': info})
                 print(redact_test_secrets(result.stdout), flush=True)
