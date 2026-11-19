@@ -896,3 +896,127 @@ def test_p1_c_01_publisher_interrupt_keeps_class_but_not_unsafe_data(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+# F04-P1-D HIGH: json.JSONDecodeError.doc retains raw Docker inspect stdout,
+# including actual randomly created disposable test credentials. An exception
+# must be safely reconstructed before it reaches runner cleanup/finalization.
+@pytest.mark.parametrize("inspection", ["server", "client"])
+@pytest.mark.parametrize("mode", [
+    "confirmed",
+    "confirmed_publisher_fault",
+    "unconfirmed",
+    "unconfirmed_publisher_fault",
+])
+def test_p1_d_unsafe_inspect_json_error_never_reaches_public_exception(
+        system, monkeypatch, tmp_path, inspection, mode):
+    import traceback
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1d-" + inspection + "-" + mode)
+    original_command = runner.command
+    original_remove = runner.remove_owned
+    captured = {"record": None, "secret": None, "bad_json": None,
+                "publisher_attempted": 0, "cleanup_refused": 0, "inspect_attempted": 0}
+    publisher_fault = "publisher_fault" in mode
+    cleanup_uncertain = mode.startswith("unconfirmed")
+
+    def with_malformed_inspect(argv, **kwargs):
+        if argv[:2] == ["docker", "inspect"] and len(argv) == 3:
+            name = argv[2]
+            is_target = ((inspection == "server" and name.endswith("-server"))
+                         or (inspection == "client" and name.endswith("-foundation")))
+            if is_target:
+                record = runner._LIFECYCLE.get()
+                secrets = runner._TEST_SECRETS.get()
+                assert record is not None and len(secrets) == 4
+                secret = secrets[0]
+                malformed = json.dumps([{
+                    "Config": {"Env": ["PGPASSWORD=" + secret,
+                                       "OTHER_TEST_VALUE=" + secret]},
+                    "provenance": "synthetic Docker inspect metadata"}])[:-1]
+                assert secret in malformed
+                captured.update(record=record, secret=secret, bad_json=malformed)
+                captured["inspect_attempted"] += 1
+                return SimpleNamespace(returncode=0, stdout=malformed, stderr="")
+        return original_command(argv, **kwargs)
+
+    def mocked_remove(kind, name, owner):
+        if (cleanup_uncertain and kind == "container"
+                and name.endswith("-server")):
+            captured["cleanup_refused"] += 1
+            observed["removals"].append((kind, name, str(owner)))
+            return False
+        return original_remove(kind, name, owner)
+
+    def untrusted_publisher(path, manifest_text):
+        captured["publisher_attempted"] += 1
+        assert path == evidence / "run-manifest.json"
+        raise OSError("synthetic PUBLISHER " + captured["secret"])
+
+    monkeypatch.setattr(runner, "command", with_malformed_inspect)
+    monkeypatch.setattr(runner, "remove_owned", mocked_remove)
+    if publisher_fault:
+        monkeypatch.setattr(runner, "publish_terminal_manifest_candidate",
+                            untrusted_publisher)
+
+    exception_type = runner.CleanupUnconfirmed if cleanup_uncertain else RuntimeError
+    with pytest.raises(exception_type) as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+
+    assert captured["inspect_attempted"] == 1
+    assert captured["record"] is not None
+    secret = captured["secret"]
+    assert secret and secret.startswith("test-only-")
+    assert secret in captured["bad_json"]
+    assert caught.value.__class__ is exception_type
+    if cleanup_uncertain:
+        assert "CLEANUP_UNCONFIRMED" in str(caught.value)
+        assert captured["cleanup_refused"] > 0
+    else:
+        assert "inspection JSON invalid" in str(caught.value)
+        assert captured["cleanup_refused"] == 0
+
+    # Check public attributes, not only the usual traceback rendering:
+    # JSONDecodeError.doc and args can retain the entire metadata string.
+    queue, visited = [caught.value], set()
+    while queue:
+        exc = queue.pop()
+        if exc is None or id(exc) in visited:
+            continue
+        visited.add(id(exc))
+        printed = (
+            str(exc), repr(exc), repr(exc.args), repr(vars(exc)),
+            repr(getattr(exc, "doc", None)),
+            repr(getattr(exc, "object", None)),
+            repr(getattr(exc, "filename", None)),
+            repr(getattr(exc, "stderr", None)),
+            "".join(traceback.format_exception(exc)),
+        )
+        assert all(secret not in s for s in printed), (
+            "Docker-inspect source credentials leak via exception attributes")
+        queue.extend((exc.__context__, exc.__cause__))
+
+    record = captured["record"]
+    assert record["result"] == "FAILED"
+    assert record["error_type"] == "RuntimeError"
+    assert record["cleanup_passed"] is (not cleanup_uncertain)
+    assert record["cleanup_status"] == (
+        "CLEANUP_SUCCESS" if not cleanup_uncertain else "CLEANUP_UNCONFIRMED")
+    assert record["credential_file_cleanup"] in ("REMOVED", "NOT_PRESENT")
+    assert observed["stage_seen"] == [], "invalid inspect must stop before reporting"
+    assert captured["publisher_attempted"] == int(publisher_fault)
+    terminal = evidence / "run-manifest.json"
+    if publisher_fault:
+        assert not terminal.exists()
+    else:
+        assert terminal.is_file()
+        manifest = json.loads(terminal.read_text(encoding="utf-8"))
+        assert manifest["result"] == "FAILED"
+        assert manifest["cleanup_passed"] is (not cleanup_uncertain)
+        assert manifest["error_type"] == "RuntimeError"
+        assert secret not in terminal.read_text(encoding="utf-8")
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
