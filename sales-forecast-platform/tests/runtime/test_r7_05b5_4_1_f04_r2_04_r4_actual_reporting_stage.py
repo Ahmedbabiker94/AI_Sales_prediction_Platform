@@ -857,3 +857,42 @@ def test_p1_c_01_unsafe_publisher_exception_never_leaks_at_any_exit(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+def test_p1_c_01_publisher_interrupt_keeps_class_but_not_unsafe_data(
+        system, monkeypatch, tmp_path, interrupt_type):
+    """Publisher exit/interrupt is public but unsafe message and chain are not."""
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1c-publisher-" + interrupt_type.__name__)
+    unsafe = interrupt_type("synthetic publisher " + P1C_SECRET)
+    unsafe.object = (P1C_SECRET + "-synthetic").encode()
+    recorded = []
+
+    def interrupted_publish(path, manifest_text):
+        assert path == evidence / "run-manifest.json"
+        recorded.append(True)
+        raise unsafe
+
+    monkeypatch.setattr(runner, "publish_terminal_manifest_candidate",
+                        interrupted_publish)
+    with pytest.raises(interrupt_type, match="details suppressed") as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert caught.value is not unsafe
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+    _assert_p1c_public_exception_has_no_publisher_payload(caught.value)
+    assert recorded == [True]
+    assert len(observed["stage_seen"]) == 1
+    _name, record = observed["stage_seen"][0]
+    assert record["result"] == "FAILED"
+    assert record["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+    assert record["cleanup_passed"] is True
+    assert record["credential_file_cleanup"] == "REMOVED"
+    assert not (evidence / "run-manifest.json").exists()
+    assert admission.admit_archive_without_attestation_candidate(
+        evidence / "run-manifest.json") is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
