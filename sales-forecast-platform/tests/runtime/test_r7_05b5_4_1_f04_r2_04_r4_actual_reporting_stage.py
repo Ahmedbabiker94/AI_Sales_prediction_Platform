@@ -1143,7 +1143,13 @@ def test_p1_e_valid_json_unsupported_inspect_metadata_never_admitted(
     assert seen["inspects"] == 1
     record, secret = seen["record"], seen["secret"]
     assert record is not None and secret and secret.startswith("test-only-")
-    if shape != "outer_empty":
+    if shape == "env_character_array":
+        # The exploit splits a real credential into individual JSON strings;
+        # only joining them reconstructs it. Exact-string checks miss it.
+        assert secret not in seen["raw"]
+        assert "".join(json.loads(seen["raw"])[0]["Config"]["Env"]) == (
+            "PGPASSWORD=" + secret)
+    elif shape not in ("outer_empty", "outer_null"):
         assert secret in seen["raw"]
     if unconfirmed:
         assert seen["refused"] > 0
