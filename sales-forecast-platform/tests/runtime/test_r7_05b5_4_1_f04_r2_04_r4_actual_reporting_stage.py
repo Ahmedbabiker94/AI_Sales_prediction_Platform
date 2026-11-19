@@ -989,6 +989,7 @@ def test_p1_d_unsafe_inspect_json_error_never_reaches_public_exception(
             str(exc), repr(exc), repr(exc.args), repr(vars(exc)),
             repr(getattr(exc, "doc", None)),
             repr(getattr(exc, "object", None)),
+            repr(getattr(exc, "obj", None)),
             repr(getattr(exc, "filename", None)),
             repr(getattr(exc, "stderr", None)),
             "".join(traceback.format_exception(exc)),
@@ -1003,7 +1004,8 @@ def test_p1_d_unsafe_inspect_json_error_never_reaches_public_exception(
     assert record["cleanup_passed"] is (not cleanup_uncertain)
     assert record["cleanup_status"] == (
         "CLEANUP_SUCCESS" if not cleanup_uncertain else "CLEANUP_UNCONFIRMED")
-    assert record["credential_file_cleanup"] in ("REMOVED", "NOT_PRESENT")
+    assert record["credential_file_cleanup"] == ("NOT_PRESENT" if inspection == "server" else "REMOVED")
+    assert not (evidence / "test-client.env").exists()
     assert observed["stage_seen"] == [], "invalid inspect must stop before reporting"
     assert captured["publisher_attempted"] == int(publisher_fault)
     terminal = evidence / "run-manifest.json"
@@ -1016,6 +1018,173 @@ def test_p1_d_unsafe_inspect_json_error_never_reaches_public_exception(
         assert manifest["cleanup_passed"] is (not cleanup_uncertain)
         assert manifest["error_type"] == "RuntimeError"
         assert secret not in terminal.read_text(encoding="utf-8")
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+# F04-P1-E: syntactically valid but unsupported Docker-inspect JSON shapes.
+# The existing fixture's Env=[] is valid; the OUTER empty list is not.
+P1E_SHAPES = (
+    "env_string", "env_dict_item", "env_list_item", "env_int_item",
+    "env_none_item", "env_null", "env_empty_string", "outer_empty",
+    "outer_null", "outer_object", "first_not_object", "config_missing",
+    "config_null", "config_array", "env_missing", "outer_multiple",
+)
+P1E_MODES = tuple(
+    (shape, mode)
+    for shape in P1E_SHAPES
+    for mode in (("confirmed", "unconfirmed",
+                 "confirmed_publisher_fault", "unconfirmed_publisher_fault")
+                 if shape in ("env_string", "env_dict_item")
+                 else ("confirmed", "unconfirmed"))
+)
+
+
+def _p1e_inspect_shape(shape, secret):
+    value = "PGPASSWORD=" + secret
+    valid = {"Config": {"Env": [value]}}
+    if shape == "env_string":
+        return [{"Config": {"Env": value}}]
+    if shape == "env_dict_item":
+        return [{"Config": {"Env": [{"PASSWORD=": secret}]}}]
+    if shape == "env_list_item":
+        return [{"Config": {"Env": [[value]]}}]
+    if shape == "env_int_item":
+        return [{"Config": {"Env": [42, value]}}]
+    if shape == "env_none_item":
+        return [{"Config": {"Env": [None, value]}}]
+    if shape == "env_null":
+        return [{"Config": {"Env": None}, "raw_hint": secret}]
+    if shape == "env_empty_string":
+        return [{"Config": {"Env": ""}, "raw_hint": secret}]
+    if shape == "outer_empty":
+        return []
+    if shape == "outer_null":
+        return None
+    if shape == "outer_object":
+        return valid
+    if shape == "first_not_object":
+        return [value]
+    if shape == "config_missing":
+        return [{"Env": [value]}]
+    if shape == "config_null":
+        return [{"Config": None, "raw_hint": secret}]
+    if shape == "config_array":
+        return [{"Config": [value]}]
+    if shape == "env_missing":
+        return [{"Config": {"Other": value}}]
+    if shape == "outer_multiple":
+        return [valid, {"Config": {"Env": [value]}}]
+    raise AssertionError("unsupported test shape")
+
+
+@pytest.mark.parametrize("inspection", ["server", "client"])
+@pytest.mark.parametrize("shape,mode", P1E_MODES)
+def test_p1_e_valid_json_unsupported_inspect_metadata_never_admitted(
+        system, monkeypatch, tmp_path, inspection, shape, mode):
+    """Two actual parse sites through candidate runner/controller; no Docker.
+
+    Env string previously fragmented a contiguous password; Env dictionary
+    previously could raise AttributeError with raw dictionary in .obj.
+    """
+    import traceback
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1e-" + inspection + "-" + shape + "-" + mode)
+    old_command, old_remove = runner.command, runner.remove_owned
+    unconfirmed = mode.startswith("unconfirmed")
+    pub_fail = mode.endswith("publisher_fault")
+    seen = {"record": None, "secret": None, "raw": None,
+            "inspects": 0, "publish": 0, "refused": 0}
+
+    def inspect_command(args, **kwargs):
+        if args[:2] == ["docker", "inspect"] and len(args) == 3:
+            name = args[2]
+            target = ((inspection == "server" and name.endswith("-server"))
+                      or (inspection == "client" and name.endswith("-foundation")))
+            if target:
+                record = runner._LIFECYCLE.get()
+                secrets = runner._TEST_SECRETS.get()
+                assert record is not None and len(secrets) == 4
+                secret = secrets[0]
+                raw = json.dumps(_p1e_inspect_shape(shape, secret))
+                seen.update(record=record, secret=secret, raw=raw)
+                seen["inspects"] += 1
+                return SimpleNamespace(returncode=0, stdout=raw, stderr="")
+        return old_command(args, **kwargs)
+
+    def remove(kind, name, owner):
+        if unconfirmed and kind == "container" and name.endswith("-server"):
+            seen["refused"] += 1
+            observed["removals"].append((kind, name, str(owner)))
+            return False
+        return old_remove(kind, name, owner)
+
+    def publish(path, contents):
+        assert path == evidence / "run-manifest.json"
+        seen["publish"] += 1
+        raise OSError("synthetic publisher " + seen["secret"])
+
+    monkeypatch.setattr(runner, "command", inspect_command)
+    monkeypatch.setattr(runner, "remove_owned", remove)
+    if pub_fail:
+        monkeypatch.setattr(runner, "publish_terminal_manifest_candidate", publish)
+    expected_type = runner.CleanupUnconfirmed if unconfirmed else RuntimeError
+    with pytest.raises(expected_type) as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+
+    assert seen["inspects"] == 1
+    record, secret = seen["record"], seen["secret"]
+    assert record is not None and secret and secret.startswith("test-only-")
+    if shape != "outer_empty":
+        assert secret in seen["raw"]
+    if unconfirmed:
+        assert seen["refused"] > 0
+        assert "CLEANUP_UNCONFIRMED" in str(caught.value)
+    else:
+        assert type(caught.value) is RuntimeError
+        assert "inspection metadata schema invalid" in str(caught.value)
+
+    queue, visited = [caught.value], set()
+    while queue:
+        exc = queue.pop()
+        if exc is None or id(exc) in visited:
+            continue
+        visited.add(id(exc))
+        visible = (str(exc), repr(exc), repr(exc.args), repr(vars(exc)),
+                   repr(getattr(exc, "doc", None)),
+                   repr(getattr(exc, "object", None)),
+                   repr(getattr(exc, "obj", None)),
+                   repr(getattr(exc, "filename", None)),
+                   "".join(traceback.format_exception(exc)))
+        assert all(secret not in part for part in visible)
+        queue.extend((exc.__context__, exc.__cause__))
+
+    assert record["result"] == "FAILED"
+    assert record["error_type"] == "RuntimeError"
+    assert record["cleanup_passed"] is (not unconfirmed)
+    assert record["cleanup_status"] == (
+        "CLEANUP_UNCONFIRMED" if unconfirmed else "CLEANUP_SUCCESS")
+    assert record["credential_file_cleanup"] == (
+        "NOT_PRESENT" if inspection == "server" else "REMOVED")
+    assert not (evidence / "test-client.env").exists()
+    assert observed["stage_seen"] == [], "bad metadata must stop before reporting"
+    assert seen["publish"] == int(pub_fail)
+    terminal = evidence / "run-manifest.json"
+    if pub_fail:
+        assert not terminal.exists()
+    else:
+        assert terminal.is_file()
+        data = terminal.read_text(encoding="utf-8")
+        assert secret not in data
+        manifest = json.loads(data)
+        assert manifest["result"] == "FAILED"
+        assert manifest["cleanup_passed"] is (not unconfirmed)
+        assert manifest["error_type"] == "RuntimeError"
+        assert manifest["credential_file_cleanup"] == (
+            "NOT_PRESENT" if inspection == "server" else "REMOVED")
     assert admission.admit_archive_without_attestation_candidate(terminal) is None
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
