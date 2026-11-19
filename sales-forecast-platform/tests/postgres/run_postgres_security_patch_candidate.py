@@ -668,6 +668,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             # status: cleanup can succeed even when publication cannot.
             if record.get('evidence_status') != 'EVIDENCE_UNAVAILABLE':
                 record['evidence_status'] = 'AVAILABLE'
+            publication_failed = False
+            publisher_interrupt = None
             try:
                 manifest_text, rejected = finalize_manifest_candidate(
                     record, tuple(passwords.values()))
@@ -682,16 +684,23 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                 record.update(finalized_record)
                 publish_terminal_manifest_candidate(
                     evidence/'run-manifest.json', manifest_text)
-            except BaseException:
+            except BaseException as publisher_error:
+                # P1-C-01: publisher/serializer errors are external-data
+                # surfaces. Their .args/.object/filename/attributes may retain
+                # disposable credentials. Do NOT retain this error object or
+                # raise anything inside its active exception handler. Bare
+                # 'from None' there does NOT clear the public __context__.
+                publication_failed = True
+                if isinstance(publisher_error, KeyboardInterrupt):
+                    publisher_interrupt = 'KEYBOARD_INTERRUPT'
+                elif isinstance(publisher_error, SystemExit):
+                    publisher_interrupt = 'SYSTEM_EXIT'
                 record['result'] = 'FAILED'
                 record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'
-                # P1-A-02: publication failure plus a genuinely unconfirmed
-                # owned-resource reconciliation MUST remain a cleanup-risk
-                # incident, even if a different B5 failure is already pending.
-                # Do not mistake the default fail-closed setup status, before
-                # any resources exist, for proof of an unresolved mutation.
-                # This also preserves original primary-exception precedence
-                # when independently verified cleanup was successful.
+            if publication_failed:
+                # After the publisher exception handler has fully exited,
+                # choose a fixed diagnostic outcome. Uncertain owned cleanup
+                # outranks the test error and the evidence publication error.
                 owned_uncertain = (
                     record.get('cleanup_passed') is not True
                     and record.get('cleanup_status') == 'CLEANUP_UNCONFIRMED'
@@ -702,11 +711,19 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     raise CleanupUnconfirmed(
                         'CLEANUP_UNCONFIRMED: owned resource cleanup and manifest publication not confirmed') from None
                 if pending_error is not None:
-                    # Do not replace a primary error when no owned resource
-                    # uncertainty was observed and publication alone failed.
+                    # With independently confirmed cleanup, a known-safe
+                    # primary test error keeps identity and traceback. It
+                    # cannot inherit the now-exited unsafe publisher error.
                     raise pending_error.with_traceback(
                         pending_error.__traceback__) from None
-                raise
+                if publisher_interrupt == 'KEYBOARD_INTERRUPT':
+                    raise KeyboardInterrupt(
+                        'terminal manifest publication interrupted; details suppressed') from None
+                if publisher_interrupt == 'SYSTEM_EXIT':
+                    raise SystemExit(
+                        'terminal manifest publication interrupted; details suppressed') from None
+                raise OSError(
+                    'terminal manifest publication failed; details suppressed') from None
             if rejected and not (handler_restore_failed and pending_error is not None):
                 raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
     finally:
