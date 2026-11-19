@@ -269,14 +269,22 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
                 sanitized_timeout = RuntimeError(
                     'disposable PostgreSQL command timed out; command details suppressed')
         elif isinstance(error, UnicodeError):
-            # P1-A-01: subprocess text decoding/encoding errors can retain
-            # disposable credentials in .object and .args (raw output bytes).
-            # Never expose the original exception or its implicit chain.
-            # Raise a newly constructed credential-free error only AFTER the
-            # raw exception handler has exited, like the timeout boundary.
-            # The mutation ledger remains DAEMON_UNRESOLVED throughout.
-            sanitized_timeout = RuntimeError(
-                'disposable PostgreSQL subprocess decoding failed; details suppressed')
+            # P1-A-01/P1-C-02: subprocess Unicode errors may carry raw
+            # credentials in .object/.args, while secondary polling, killing
+            # or bounded reaping may receive SIGINT/SystemExit. Preserve the
+            # secondary termination CLASS, never its raw exception object.
+            # Just as for TimeoutExpired, emit ONLY fixed safe diagnostics
+            # outside the raw exception handler; daemon state remains
+            # DAEMON_UNRESOLVED regardless of local reap outcomes.
+            if secondary_interrupt == 'KEYBOARD_INTERRUPT':
+                sanitized_timeout = KeyboardInterrupt(
+                    'disposable PostgreSQL decoding cleanup interrupted; details suppressed')
+            elif secondary_interrupt == 'SYSTEM_EXIT':
+                sanitized_timeout = SystemExit(
+                    'disposable PostgreSQL decoding cleanup interrupted; details suppressed')
+            else:
+                sanitized_timeout = RuntimeError(
+                    'disposable PostgreSQL subprocess decoding failed; details suppressed')
         else:
             raise
     if sanitized_timeout is not None:
