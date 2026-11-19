@@ -58,3 +58,66 @@ This is a **bounded, read-only** source inventory anchored to the P1-F code-test
 **Inventory-A: useful entrypoint findings confirmed, but full exhaustive sweep is still required before the P0 hold can be considered complete.** Next read-only work: review remaining `src/` and `docs/` references, external/deployment scripts and current source-transfer diff, obtain a fresh scoped Codex AI assessment of admission inventory and owner-specific decision points. No owner decision is silently recorded by creating this document.
 
 **State: P1-F technically acceptable FOR OWNER REVIEW; P0/P1 operational admission inventory OPEN; protected edits NOT AUTHORIZED; F-04 OPEN / NO-GO; B5-4-2 BLOCKED.**
+
+
+---
+
+## 7. P1-G extended tracked-source inventory addendum — completed 2026-11-19
+
+**This addendum supersedes only the incomplete-coverage description in Sections 2 and 6 above; it does NOT change the security disposition or grant the owner’s approval.**
+
+### 7.1 Extended audit method and coverage
+
+All observations are anchored to **P1-F source-tested commit `06c3c374232bb4fad6e549c322e3a1f6bdd0d195`**. GitHub's recursive tree was reported **not truncated**, with **593 tracked file blobs**, divided into:
+
+| Tracked path class | Files | Direct-reference audit |
+|---|---:|---|
+| `sales-forecast-platform/src/` | **244** | All **239** `.py/.json/.yml` source/config entries and **5** remaining tracked `.md/.sql/.save` source-support files inspected |
+| `sales-forecast-platform/tests/` | **187** | **69** runtime test modules, **37** PostgreSQL test/launcher files, **81** other test/native/persistence files inspected. Source-unit tests reading the manifest were distinguished from actual callable integration entrypoints |
+| `sales-forecast-platform/docs/` | **84** | All 84 tracked documents inspected for operational runner commands, PASS-file instructions, and admission/archival references |
+| Other tracked paths (including `.github/`) | **78** | 65 text/config/script/reference entries inspected for direct references and entrypoints; remaining binary/model/CSV/notebook/archive assets not interpreted as audited executable code |
+
+The aggregate scan searched direct `run-manifest.json`, `run_postgres.py`, `run_b5_4_1_postgres.py`, `manifest_bytes`, `terminal_manifest`, `VerifiedCandidateManifest`, `admit_archive`, related invocation/admission terms, and checked candidate controller/entrypoint source independently. A separate `fetch_file` UTF-8 recovery successfully inspected root `README.md` and `sales-forecast-platform/output_nb.txt` after `fetch_blob` decoding refused BOM-prefixed content.
+
+**Scope caveat:** This is a **tracked text-source reference sweep**, not a formal static call-graph proof. It does **not** inspect embedded code or historical files inside `*.ipynb`, `*.tar.gz`, binaries/models, PDFs/images or external/untracked/locally deployed files, nor dynamically constructed or encrypted strings. No local checkout or repository-wide code-execution analysis was performed. Therefore the statement is **“no additional direct references found in examined tracked text,” not “no possible consumer exists anywhere.”**
+
+The broad source sweep did **not find another direct PG F-04 manifest admission reader in the 244 tracked `src/` files**, app/API/dashboard/jobs/monitoring/workflow text, or unrelated training tests. `model_candidate.py` and `local_dataset_repository.py` use their **own distinct model/dataset manifests**, not `run-manifest.json`. Their existence does not establish or bypass PostgreSQL F-04 evidence admission.
+
+### 7.2 Additional discovered executable entrypoints — correction to Section 3
+
+The earlier list of base runner, B5-1, B5-2 and B5-4-1 was **not exhaustive**. This expanded scan identifies a further, materially relevant **native + PostgreSQL persistence** route:
+
+| New source | Exact evidence | Source-only risk and required disposition |
+|---|---|---|
+| `tests/persistence/run_authorized_persistence.py`, blob `817873f82131439d34e5fce2cef7a05e5720d50a` | Lines **21–26** require `--authorized-native-postgres`, but use `runpy.run_path(...'tests/postgres/run_postgres.py')`; lines **53–58** parse Docker inspect metadata and retain the same old name-based password heuristic; line **139** calls `pg['run']` directly, **without the synchronous F-04 controller**; line **140** prints a separate B4b `PASS` indicator after normal return | **Separate runnable host integration**, not remediated by P1-F's bounded inspect projection. Must be **explicitly in future protected-transfer scope with tests, or excluded/held NO-GO**. Do not infer that an existing native host-admission handle substitutes for F-04 PostgreSQL evidence admission. |
+| `tests/persistence/test_interruption_recovery.py`, blob `63f53811b246487fd6729719f0388d911d18fda0` | Executable `main()` at lines **23–29**; lines **84–87** invoke that other genuine persistence runner; lines **88–91** read `run-manifest.json` directly and assert `result=='PASS'` / `cleanup_status=='CLEANUP_SUCCESS'`; lines **92–94** write separate proof and print `interruption_recovery='PASS'`. No verified same-invocation receipt checked | **Direct raw-manifest PASS assertion in an executable integration script**, not a mere isolated unit test. It is currently an observed validation step, **not evidence of a demonstrated exploit or external production admission**, but must **not be treated as F-04-authoritative admission**. It must either use the separately approved bound controller receipt and same-run identity, or be explicitly blocked from making F-04-safe claims. |
+
+**Important trust separation:** `src/handoff/host_admission.py` is a **native handoff authorization** mechanism, **not** the PostgreSQL `run-manifest.json` same-invocation admission controller. Similar terminology must not merge these trust domains.
+
+### 7.3 Documentation/instructions needing alignment before any operational GO
+
+- `docs/r7_05b5_4_1_pg16_execution_gate.md`: older human-inspection checklist considers manifest source status and `result: PASS` / cleanup fields as evidence. **This is insufficient as the authoritative admission path** given R2-04's ambiguous publication and file-swap scenarios. Treat it as a historical manual-check aid, not safe completion attestation. It also contains a historical independent-human-reviewer instruction superseded **only** by F04-G01 owner self-review for this personal project.
+- `docs/r7_05b3_postgres_forecast_evidence.md` and `docs/r7_05b5_4_1_windows_host_preflight.md` document running the original harness/B5 wrapper. They must **not** be used to bypass the current F-04 NO-GO or provide live PG permission.
+- `docs/r7_05b5_1_canonical_read.md` and `docs/r7_05b5_2_stored_forecast_accuracy.md` point to the B5-1/B5-2 wrappers. Preserve them as historical evidence, but **no operational F-04 safety claim** applies until their sources are separately scoped and verified.
+
+**No automatic document overwrite or edits were made to these historical pages.** Their provenance remains intact. Any new operational runbook must explicitly require authoritative same-invocation receipt and maintain NO-GO for old entrypoints pending owner-controlled scope.
+
+### 7.4 Updated inventory decision gates
+
+**P1-G source-reference inventory: COMPLETED for tracked text at the pinned P1-F tree, with exclusions above; external deployment inventory and consumer assurance NOT complete.**
+
+**Material direct-invocation paths needing owner disposition (five families):**
+1. Base `tests/postgres/run_postgres.py` CLI;
+2. B5-4-1 `tests/postgres/run_b5_4_1_postgres.py`;
+3. B5-1 `tests/postgres/run_forecast_read.py`;
+4. B5-2 `tests/postgres/run_stored_accuracy.py`;
+5. Native/B4b persistence `tests/persistence/run_authorized_persistence.py` + `test_interruption_recovery.py`.
+
+**Next NO-WRITE hold:**
+- Have Codex perform a **fresh READ-ONLY P1-G review** of these exact source-only findings, especially whether the B4b interruption script's raw PASS is a non-authoritative test observation versus a consumer making acceptance claims.
+- Owner must explicitly pick **narrow F-04 B5-4-1-only transfer with all other entrypoints held NO-GO**, or **an expanded separately reviewed multi-entrypoint rebaseline**. No inference from `Go`.
+- Owner must accept/reject the **lossy inspect evidence projection** and define whether worker/test stdout, readiness output and host callbacks are trusted. If not, non-inspect output publication needs its own reviewed minimization policy.
+- Before any protected-source patch: exact file-level proposed diff, mock-only operational-entrypoint `exception/None/raw PASS` negative tests, same-runtime/`ContextVar` binding proof and **fresh explicit scoped protected-write authorization**, with pinned SHAs. All permitted source changes must retain candidate `OFFLINE_REVIEW_ONLY` and absent CLI unchanged.
+- Keep original `unexpected_manifest_secret` frozen-runner test unchanged and RED until authorized source correction makes it GREEN; no real Docker/PG, OCI or 16-wheel acquisition, merging, deployment or B5-4-2 advancement.
+
+**No extra files changed by this read-only audit apart from this documentation addendum and the Issue #2 evidence entry. F-04 remains OPEN / NO-GO, B5-4-2 BLOCKED.**
