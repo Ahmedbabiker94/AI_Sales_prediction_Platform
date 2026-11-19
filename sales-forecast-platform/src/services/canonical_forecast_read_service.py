@@ -676,4 +676,8 @@ def build_canonical_forecast_reader(reader, scope, *, operator, wall_clock=time,
     repository = ForecastReadRepository(factory, scope)
     state = _ReadState(ForecastReadProvider(repository), operator, wall_clock, elapsed_clock, clock_domain)
     state._operation_origin = _register_origin(_BOOTSTRAP_CREDENTIAL, 'READ', state.provider, state, None, CanonicalForecastReadService.read.__code__)
-    return ReadAuthority(state), CanonicalForecastReadService(state)
+    service = CanonicalForecastReadService(state)
+    # Record exact bootstrap-issued service identity for B5-4-1 reporting.
+    from src.providers._forecast_read_order import _register_authentic_reader
+    _register_authentic_reader(_BOOTSTRAP_CREDENTIAL, service, state)
+    return ReadAuthority(state), service

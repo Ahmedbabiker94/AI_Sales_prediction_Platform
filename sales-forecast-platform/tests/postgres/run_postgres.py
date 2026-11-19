@@ -29,13 +29,31 @@ WHEEL = 'psycopg2_binary-2.9.12-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_
 WHEEL_SHA256 = 'e4e184b1fb6072bf05388aa41c697e1b2d01b3473f107e7ec44f186a32cfd0b8'
 ROOT = Path(__file__).resolve().parents[2]
 _LIFECYCLE = ContextVar('postgres_test_lifecycle', default=None)
+_TEST_SECRETS = ContextVar('postgres_test_secret_values', default=())
 
 
 class CleanupUnconfirmed(RuntimeError):
     pass
 
 
+def redact_test_secrets(value):
+    """Remove exact disposable password values before publishing any text."""
+    if type(value) is not str:
+        raise TypeError('text expected')
+    matches = 0
+    for secret in _TEST_SECRETS.get():
+        if secret and secret in value:
+            matches += value.count(secret)
+            value = value.replace(secret, '<redacted-disposable-secret>')
+    if matches:
+        lifecycle = _LIFECYCLE.get()
+        if lifecycle is not None:
+            lifecycle['secret_redactions'] = lifecycle.get('secret_redactions', 0) + matches
+    return value
+
+
 def write_evidence(path, text):
+    text = redact_test_secrets(text)
     if path.absolute() != path.resolve():
         raise ValueError('symlink evidence output rejected')
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
@@ -103,7 +121,7 @@ def command(args, *, timeout=30, stdin=None, check=True, build=False):
                 attempt['local_reaped'] = process.returncode is not None
         raise
     if check and result.returncode:
-        raise RuntimeError('disposable PostgreSQL command failed: '+result.stderr[-2000:])
+        raise RuntimeError('disposable PostgreSQL command failed: '+redact_test_secrets(result.stderr[-2000:]))
     return result
 
 
@@ -145,11 +163,54 @@ def build_client(wheelhouse, work):
     return identity
 
 
+def remove_transient_credential_file(path):
+    """Fail closed for uncertain removal; never include plaintext in evidence."""
+    try:
+        if path.is_symlink():
+            return 'UNCONFIRMED'
+        if path.exists():
+            path.unlink()
+            return 'REMOVED'
+        return 'NOT_PRESENT'
+    except Exception:
+        return 'UNCONFIRMED'
+
+
+def verified_clean_source():
+    """Fail closed on untrusted/dirty Git provenance before Docker mutations.
+
+    A Windows .git pointer that WSL Git cannot read is rejected. This check
+    establishes a clean source snapshot, not a trust boundary against a
+    malicious host or Docker daemon.
+    """
+    top = command(['git', '-C', str(ROOT), 'rev-parse', '--show-toplevel']).stdout.strip()
+    # This repository keeps the Python project in sales-forecast-platform/.
+    # Validate the entire containing Git worktree, not only the subdirectory.
+    try:
+        root_matches = (bool(top)
+                        and Path(top).resolve(strict=True) == ROOT.parent.resolve(strict=True)
+                        and ROOT.name == 'sales-forecast-platform')
+    except (OSError, RuntimeError):
+        root_matches = False
+    if not root_matches:
+        raise ValueError('disposable test source must be expected Git worktree')
+    commit = command(['git', '-C', str(ROOT), 'rev-parse', '--verify', 'HEAD']).stdout.strip()
+    if len(commit) not in (40, 64) or any(ch not in '0123456789abcdef' for ch in commit):
+        raise ValueError('invalid source commit identity')
+    status = command(['git', '-C', str(ROOT), 'status', '--porcelain',
+                      '--untracked-files=all']).stdout
+    if status:
+        raise ValueError('disposable test source checkout must be clean')
+    return commit
+
+
 def run(*, allow, wheelhouse, evidence, _host_stage=None):
     if allow is not True:
         raise ValueError('explicit disposable-database authorization required')
     if evidence.absolute() != evidence.resolve():
         raise ValueError('symlink evidence directory rejected')
+    # Validate provenance BEFORE creating evidence or touching Docker.
+    source_commit = verified_clean_source()
     evidence.mkdir(mode=0o700, parents=False, exist_ok=False)
     run_id = uuid4()
     prefix = 'r7-05b3-'+run_id.hex
@@ -157,9 +218,10 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
     data, socket, server = prefix+'-data', prefix+'-socket', prefix+'-server'
     containers = []
     volumes = []
+    envfile = evidence/'test-client.env'  # transient credentials, NEVER evidence
     record = {'version': '1.0', 'run_id': str(run_id), 'database': database,
-              'source_commit': command(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).stdout.strip(),
-              'source_status': command(['git', '-C', str(ROOT), 'status', '--porcelain']).stdout,
+              'source_commit': source_commit,
+              'source_status': '',
               'operations': [], 'native_execution': False, 'production_connections': False}
     record.update(run_hex=run_id.hex, creation_attempts=[])
     token = _LIFECYCLE.set(record)
@@ -168,6 +230,7 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         raise KeyboardInterrupt('test runner interrupted')
     signal.signal(signal.SIGTERM, interrupted)
     passwords = {role: 'test-only-'+secrets.token_hex(20) for role in ('admin', 'migrator', 'writer', 'reader')}
+    secret_token = _TEST_SECRETS.set(tuple(passwords.values()))
     empty_proxies = [item for key in PROXIES for item in ('-e', key+'=')]
     isolation = ['--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--cpus=1', '--pids-limit=64']
 
@@ -222,7 +285,6 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         record['server_inspect'] = json.loads(command(['docker', 'inspect', server]).stdout)[0]
         # Only redact test passwords; no production credentials are read.
         record['server_inspect']['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in record['server_inspect']['Config']['Env']]
-        envfile = evidence/'test-client.env'
         with open(envfile, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as handle:
             handle.write('R7_PG_INSTANCE='+str(run_id)+'\nR7_PG_DATABASE='+database+'\n')
             handle.write(''.join('R7_PG_'+role.upper()+'_PASSWORD='+password+'\n' for role, password in passwords.items()))
@@ -251,8 +313,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
             info = json.loads(command(['docker', 'inspect', name]).stdout)[0]
             info['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in info['Config']['Env']]
             record['operations'].append({'stage': stage, 'exit_code': result.returncode, 'inspect': info})
-            print(result.stdout, flush=True)
-            print(result.stderr, flush=True)
+            print(redact_test_secrets(result.stdout), flush=True)
+            print(redact_test_secrets(result.stderr), flush=True)
             if result.returncode:
                 raise RuntimeError('bounded PostgreSQL '+stage+' tests failed')
             command(['docker', 'rm', name])
@@ -269,7 +331,8 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         # Keep named volumes until the bounded container reconciliation finishes.
         # A timed-out create can still attach them after the local CLI is gone.
         attempts = record['creation_attempts']
-        owned_containers = list(dict.fromkeys(containers+[x['name'] for x in attempts if x['kind']=='container']))
+        owned_containers = list(dict.fromkeys(containers + record.get('extra_containers', [])
+            + [x['name'] for x in attempts if x['kind']=='container']))
         owned_volumes = list(dict.fromkeys(volumes+[x['name'] for x in attempts if x['kind']=='volume']))
         ambiguous = any(x['state'] != 'RETURNED' for x in attempts)
         record['cleanup_deadline'] = time.monotonic()+10
@@ -308,9 +371,29 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
         # finish later. Absence is insufficient while any creation is unresolved.
         record['cleanup_passed'] = bool(cleanup) and all(cleanup) and not ambiguous and not record['remaining_containers'] and not record['remaining_volumes']
         record['cleanup_status'] = 'CLEANUP_SUCCESS' if record['cleanup_passed'] else 'CLEANUP_UNCONFIRMED'
-        write_evidence(evidence/'run-manifest.json', json.dumps(record, indent=2, sort_keys=True))
+        # Do not retain plaintext disposable credentials in the evidence archive.
+        # This is only best-effort filesystem cleanup, not secure erase of bytes
+        # from an underlying disk, Docker daemon metadata or host privileges.
+        # If the credentials file cannot be removed, mark the run unaccepted.
+        record['credential_file_cleanup'] = remove_transient_credential_file(envfile)
+        if record['credential_file_cleanup'] == 'UNCONFIRMED':
+            record['cleanup_passed'] = False
+            record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
+        # Detect and redact secrets even in unexpected metadata keys before
+        # publishing the manifest. Any leak is a rejected run, not a PASS.
+        manifest_text = redact_test_secrets(json.dumps(record, indent=2, sort_keys=True))
+        if record.get('secret_redactions', 0):
+            record['cleanup_passed'] = False
+            record['cleanup_status'] = 'CLEANUP_UNCONFIRMED'
         if not record['cleanup_passed']:
-            raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: inspect recorded exact owned identities') from None
+            record['result'] = 'FAILED'
+        manifest_text = redact_test_secrets(json.dumps(record, indent=2, sort_keys=True))
+        try:
+            write_evidence(evidence/'run-manifest.json', manifest_text)
+        finally:
+            _TEST_SECRETS.reset(secret_token)
+        if not record['cleanup_passed']:
+            raise CleanupUnconfirmed('CLEANUP_UNCONFIRMED: owned resource or credential cleanup not confirmed') from None
 
 
 

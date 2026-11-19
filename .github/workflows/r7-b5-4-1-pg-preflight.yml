@@ -1,0 +1,48 @@
+# Read-only preflight only. Never pull images, start containers, upload secrets,
+# change SQL/schema/migrations, or claim PostgreSQL integration was executed.
+name: R7 B5-4-1 PostgreSQL host prerequisites (read-only)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - work/r7-05b5-4-1-bootstrap-foundation
+    paths:
+      - '.github/workflows/r7-b5-4-1-pg-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-only:
+    if: github.event.pull_request.head.ref == 'fix/r7-05b5-4-1-bootstrap'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Read-only runner preflight (no Docker mutations)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Checking required tools and local images (NO docker pull/run).'
+          command -v docker
+          docker version --format 'Docker client={{.Client.Version}}; server={{.Server.Version}}'
+          echo 'Inspecting exact locally cached Docker image identities:'
+          postgres='sha256:6a35283e53fbe883da6a6ffbce8d3999dc66076cc5c4e2f1d21bdbd9e26bf86f'
+          base='sha256:417063b71e35c7a9889c10ac2516c328f16a483e065ec858df101eb9728c2df2'
+          missing=0
+          for id in "$postgres" "$base"; do
+            if docker image inspect "$id" --format '{{.Id}} {{.Os}} {{.Architecture}}' 2>/dev/null; then
+              echo "PRESENT: $id"
+            else
+              echo "MISSING locally: $id"
+              missing=1
+            fi
+          done
+          echo 'Verified offline psycopg2 wheelhouse is not provisioned by this workflow.'
+          echo 'Preflight only; no database tests were executed.'
+          if [ "$missing" -ne 0 ]; then
+            echo 'BLOCKED: exact approved images not locally cached.'
+            exit 2
+          fi
+          echo 'BLOCKED: wheelhouse not supplied; PostgreSQL execution remains NO-GO.'
+          exit 3

@@ -1,0 +1,84 @@
+# Host-only unit evidence. Adversarial boundary audit is a NEGATIVE finding;
+# this workflow does NOT certify isolation or PostgreSQL integration.
+# The evidence redaction tests mock Docker; manifest status changes require CI verification.
+name: R7 B5-4-1 focused offline verification
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - work/r7-05b5-4-1-bootstrap-foundation
+    paths:
+      - 'sales-forecast-platform/src/providers/_forecast_read_order.py'
+      - 'sales-forecast-platform/src/services/**'
+      - 'sales-forecast-platform/tests/runtime/test_r7_05b5_4_1_*.py'
+      - 'sales-forecast-platform/tests/runtime/test_canonical_reporting_read_contract.py'
+      - 'sales-forecast-platform/tests/postgres/run_b5_4_1_postgres.py'
+      - 'sales-forecast-platform/tests/postgres/run_postgres.py'
+      - 'sales-forecast-platform/tests/postgres/preflight_b5_4_1_host.py'
+      - 'sales-forecast-platform/tests/postgres/verify_postgres_oci.py'
+      - 'sales-forecast-platform/tests/postgres/prepare_client_wheelhouse_candidate.py'
+      - '.github/workflows/r7-b5-4-1-focused.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  focused-offline:
+    if: github.event.pull_request.head.ref == 'fix/r7-05b5-4-1-bootstrap'
+    name: Focused CPython ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    defaults:
+      run:
+        working-directory: sales-forecast-platform
+    steps:
+      - name: Checkout PR merge tree (read-only)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install focused test dependencies only
+        run: |
+          python -m pip install --disable-pip-version-check \
+            'pytest==8.4.2' 'pydantic==2.13.3' 'psycopg2-binary==2.9.12' \
+            'numpy==2.4.4' 'pandas==2.3.3'
+      - name: Compile touched modules without importing ML runtimes
+        run: |
+          python -m py_compile \
+            src/providers/_forecast_read_order.py \
+            src/services/canonical_forecast_read_service.py \
+            src/services/stored_forecast_accuracy_service.py \
+            src/services/canonical_reporting_read_service.py \
+            src/services/host_reporting_request_service.py \
+            tests/postgres/run_b5_4_1_postgres.py \
+            tests/postgres/run_postgres.py \
+            tests/postgres/preflight_b5_4_1_host.py \
+            tests/postgres/verify_postgres_oci.py \
+            tests/postgres/prepare_client_wheelhouse_candidate.py \
+            tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
+            tests/runtime/test_r7_05b5_4_1_reporting_requests.py \
+            tests/runtime/test_r7_05b5_4_1_host_boundary_audit.py \
+            tests/runtime/test_r7_05b5_4_1_pg_runner_safety.py \
+            tests/runtime/test_r7_05b5_4_1_oci_identity.py \
+            tests/runtime/test_r7_05b5_4_1_client_dependency_gate.py \
+            tests/runtime/test_r7_05b5_4_1_candidate_wheelhouse.py \
+            tests/runtime/test_canonical_reporting_read_contract.py
+      - name: Run ONLY B5-4-1 and retained B5-3 reporting contract modules
+        run: |
+          python -m pytest -q \
+            tests/runtime/test_r7_05b5_4_1_authentic_host_provenance.py \
+            tests/runtime/test_r7_05b5_4_1_reporting_requests.py \
+            tests/runtime/test_r7_05b5_4_1_host_boundary_audit.py \
+            tests/runtime/test_r7_05b5_4_1_pg_runner_safety.py \
+            tests/runtime/test_r7_05b5_4_1_oci_identity.py \
+            tests/runtime/test_r7_05b5_4_1_client_dependency_gate.py \
+            tests/runtime/test_r7_05b5_4_1_candidate_wheelhouse.py \
+            tests/runtime/test_canonical_reporting_read_contract.py

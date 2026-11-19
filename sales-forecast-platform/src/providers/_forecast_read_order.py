@@ -224,3 +224,70 @@ def _activate_original(handle):
 def _issued_original(handle):
     record=_ISSUED.get(id(handle))
     return record is not None and record[0] is handle and record[1].event.kind=='I' and record[1].event.identity is handle
+
+
+# B5-4-1: trusted-host reader identity, separate from publication/order events.
+# This registry is process-private integrity state under the existing trusted
+# CPython host assumptions, not isolation from malicious code in this process.
+_AUTHENTIC_READERS = {}
+_AUTHENTIC_EVALUATORS = {}
+
+def _register_authentic_evaluator(credential, evaluator, reader, labels):
+    if credential is not _BOOTSTRAP_CREDENTIAL or not _authentic_reporting_sources(reader, None):
+        raise OrderDenied('protected evaluator bootstrap required')
+    origin = getattr(evaluator, '_publication_origin', None)
+    record = _ORIGINS.get(id(origin))
+    if (record is None or record.handle is not origin or record.kind != 'EVAL'
+            or record.source is not evaluator or record.peer is not labels
+            or record.provider is not reader._state.provider):
+        raise OrderDenied('original evaluator origin required')
+    key = id(evaluator)
+    if key in _AUTHENTIC_EVALUATORS:
+        raise OrderDenied('evaluator already registered')
+    _AUTHENTIC_EVALUATORS[key] = (evaluator, reader, labels, origin)
+
+def _register_authentic_reader(credential, reader, state):
+    if credential is not _BOOTSTRAP_CREDENTIAL or reader._state is not state:
+        raise OrderDenied('protected host bootstrap required')
+    origin = getattr(state, '_operation_origin', None)
+    record = _ORIGINS.get(id(origin))
+    if (record is None or record.handle is not origin or record.kind != 'READ'
+            or record.source is not state or record.provider is not state.provider):
+        raise OrderDenied('original reader origin required')
+    key = id(reader)
+    if key in _AUTHENTIC_READERS:
+        raise OrderDenied('reader already registered')
+    _AUTHENTIC_READERS[key] = (reader, state, origin)
+
+def _authentic_reporting_sources(reader, evaluator):
+    from src.services.canonical_forecast_read_service import CanonicalForecastReadService
+    from src.services.stored_forecast_accuracy_service import StoredForecastAccuracyService
+    if type(reader) is not CanonicalForecastReadService:
+        return False
+    entry = _AUTHENTIC_READERS.get(id(reader))
+    if entry is None or entry[0] is not reader or entry[1] is not reader._state:
+        return False
+    state, origin = entry[1], entry[2]
+    record = _ORIGINS.get(id(origin))
+    if (record is None or record.handle is not origin
+            or record.kind != 'READ' or record.source is not state
+            or record.provider is not state.provider
+            or record.owner_code is not CanonicalForecastReadService.read.__code__
+            or getattr(state, '_operation_origin', None) is not origin):
+        return False
+    if evaluator is None:
+        return True
+    if type(evaluator) is not StoredForecastAccuracyService:
+        return False
+    eorigin = getattr(evaluator, '_publication_origin', None)
+    erecord = _ORIGINS.get(id(eorigin))
+    registered = _AUTHENTIC_EVALUATORS.get(id(evaluator))
+    return (registered is not None and registered[0] is evaluator
+            and registered[1] is reader and registered[2] is evaluator._labels
+            and registered[3] is eorigin
+            and erecord is not None and erecord.handle is eorigin
+            and erecord.kind == 'EVAL' and erecord.source is evaluator
+            and erecord.provider is state.provider and erecord.peer is evaluator._labels
+            and erecord.owner_code is StoredForecastAccuracyService.evaluate.__code__
+            and evaluator._reader is reader and evaluator._pinned_reader is reader
+            and evaluator._reader_state is state and evaluator._pinned_labels is evaluator._labels)

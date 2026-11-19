@@ -1,0 +1,113 @@
+# Candidate-only Python tests; no Docker/PG, wheel acquisition, or runner mutations.
+# This job does not approve controlled rebaseline, B5-4-1 closure or merge.
+name: R7 B5-4-1 F-04 candidate offline tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - work/r7-05b5-4-1-bootstrap-foundation
+    paths:
+      - 'sales-forecast-platform/tests/runtime/test_r7_05b5_4_1_f04_*.py'
+      - 'sales-forecast-platform/tests/postgres/real_run_argv_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/runtime_run_plan_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/review_client_supply_chain_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/redaction_finalization_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_context_scope_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_postgres_security_patch_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_manifest_admission_controller_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_b5_4_1_postgres_admission_candidate.py'
+      - 'sales-forecast-platform/tests/postgres/run_b5_4_1_reporting_stage_candidate.py'
+      - '.github/workflows/r7-b5-4-1-f04-candidate-offline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-offline:
+    if: github.event.pull_request.head.ref == 'fix/r7-05b5-4-1-bootstrap'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    defaults:
+      run:
+        working-directory: sales-forecast-platform
+    steps:
+      - name: Checkout isolated PR merge source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install minimal offline-test dependencies (not candidate-v2 artifact approval)
+        run: |
+          python -m pip install --disable-pip-version-check \
+            'pytest==9.0.3' 'packaging>=24,<27'
+      - name: Compile candidate-only F-04 test modules
+        run: |
+          python - <<'PY'
+          import pathlib, py_compile
+          paths = sorted(pathlib.Path('tests/runtime').glob('test_r7_05b5_4_1_f04_*.py'))
+          assert len(paths) >= 8, 'F-04 test inventory unexpectedly absent'
+          paths += [
+              pathlib.Path('tests/postgres/runtime_run_plan_candidate.py'),
+              pathlib.Path('tests/postgres/real_run_argv_candidate.py'),
+              pathlib.Path('tests/postgres/review_client_supply_chain_candidate.py'),
+              pathlib.Path('tests/postgres/redaction_finalization_candidate.py'),
+              pathlib.Path('tests/postgres/run_context_scope_candidate.py'),
+              pathlib.Path('tests/postgres/run_postgres_security_patch_candidate.py'),
+              pathlib.Path('tests/postgres/run_manifest_admission_controller_candidate.py'),
+              pathlib.Path('tests/postgres/run_b5_4_1_postgres_admission_candidate.py'),
+              pathlib.Path('tests/postgres/run_b5_4_1_reporting_stage_candidate.py'),
+          ]
+          for path in paths:
+              py_compile.compile(str(path), doraise=True)
+          print(f'Compiled {len(paths)} Python files')
+          PY
+      - name: Run F-04 offline candidate cases (NO Docker/PG)
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          python -m pytest \
+            tests/runtime/test_r7_05b5_4_1_f04_runner_negative.py \
+            tests/runtime/test_r7_05b5_4_1_f04_cleanup_lifecycle.py \
+            tests/runtime/test_r7_05b5_4_1_f04_oci_negative.py \
+            tests/runtime/test_r7_05b5_4_1_f04_run_plan_candidate.py \
+            tests/runtime/test_r7_05b5_4_1_f04_run_plan_adversarial_audit.py \
+            tests/runtime/test_r7_05b5_4_1_f04_run_plan_strict_edges.py \
+            tests/runtime/test_r7_05b5_4_1_f04_real_argv_candidate.py \
+            tests/runtime/test_r7_05b5_4_1_f04_cr1_independent_source_parity.py \
+            tests/runtime/test_r7_05b5_4_1_f04_cr0_v2_supply_chain_gate.py \
+            tests/runtime/test_r7_05b5_4_1_f04_redaction_finalization_candidate.py \
+            tests/runtime/test_r7_05b5_4_1_f04_redaction_exception_review.py \
+            tests/runtime/test_r7_05b5_4_1_f04_runner_exception_counterexample.py \
+            tests/runtime/test_r7_05b5_4_1_f04_early_setup_counterexamples.py \
+            tests/runtime/test_r7_05b5_4_1_f04_scope_candidate.py \
+            tests/runtime/test_r7_05b5_4_1_f04_security_patch_fork.py \
+            tests/runtime/test_r7_05b5_4_1_f04_fork_signal_failure_review.py \
+            tests/runtime/test_r7_05b5_4_1_f04_fork_default_deny.py \
+            tests/runtime/test_r7_05b5_4_1_f04_fork_ast_operational_parity.py \
+            tests/runtime/test_r7_05b5_4_1_f04_fork_ownership_scope.py \
+            tests/runtime/test_r7_05b5_4_1_f04_cleanup_interrupt_counterexample.py \
+            tests/runtime/test_r7_05b5_4_1_f04_credential_cleanup_fallback.py \
+            tests/runtime/test_r7_05b5_4_1_f04_credential_cleanup_status_contract.py \
+            tests/runtime/test_r7_05b5_4_1_f04_local_envfile_interrupt.py \
+            tests/runtime/test_r7_05b5_4_1_f04_h1_timeout_sanitization.py \
+            tests/runtime/test_r7_05b5_4_1_f04_h2_sigterm_unlink_seam.py \
+            tests/runtime/test_r7_05b5_4_1_f04_m1_signal_manifest_gate.py \
+            tests/runtime/test_r7_05b5_4_1_f04_m2_reconciliation_interrupt.py \
+            tests/runtime/test_r7_05b5_4_1_f04_t1_strict_unlink_result_type.py \
+            tests/runtime/test_r7_05b5_4_1_f04_t2_partial_evidence_write.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_01_secondary_reap_sanitization.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_02_unrepresentable_sigterm.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_03_rejected_finalizer_retained_record.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_04_publication_acceptance.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_04_controller_binding.py \
+            tests/runtime/test_r7_05b5_4_1_f04_r2_04_r4_actual_reporting_stage.py \
+            -q --tb=short -p no:cacheprovider

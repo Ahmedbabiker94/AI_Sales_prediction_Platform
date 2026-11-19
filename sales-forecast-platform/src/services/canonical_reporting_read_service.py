@@ -17,11 +17,10 @@ class CanonicalReportingReadService:
     _evaluator: StoredForecastAccuracyService | None = field(default=None, repr=False)
 
     def __post_init__(self):
-        if type(self._reader) is not CanonicalForecastReadService:
-            raise ValueError('original source required')
-        if self._evaluator is not None and (type(self._evaluator) is not StoredForecastAccuracyService
-                or self._evaluator._pinned_reader is not self._reader):
-            raise ValueError('original bound evaluator required')
+        # Types/pinned attributes are not evidence of host construction.
+        from src.providers._forecast_read_order import _authentic_reporting_sources
+        if not _authentic_reporting_sources(self._reader, self._evaluator):
+            raise ValueError('original host sources required')
 
     def read_forecast(self, grant, selection):
         if type(selection) is not ExactForecastRead:
