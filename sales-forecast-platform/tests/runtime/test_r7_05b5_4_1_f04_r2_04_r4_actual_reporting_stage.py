@@ -1260,3 +1260,201 @@ def test_p1_e_valid_inspect_env_list_still_admits_redacted_snapshot(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+# P1-F HIGH: a valid list of KEY=VALUE strings is not a confidentiality
+# boundary. Test values AND key names split a generated disposable password.
+# Keep all Docker/OS/PG interactions synthetic and the candidate command denied.
+P1F_CASES = (
+    "two_fragments", "four_fragments", "key_value_split",
+    "complete_unexpected_name", "unexpected_nested_field",
+    "unknown_proxy_value",
+)
+P1F_TARGETS = ("server", "foundation", "restart")
+
+
+def _p1f_inspect_payload(case, secret):
+    n = len(secret)
+    if case == "two_fragments":
+        env = ["PART_A=" + secret[:n//2], "PART_B=" + secret[n//2:]]
+    elif case == "four_fragments":
+        env = ["PART_%s=%s" % (i, secret[i*n//4:(i+1)*n//4])
+               for i in range(4)]
+    elif case == "key_value_split":
+        # P1-E admitted keys of any nonempty text; here the key itself
+        # includes the leading portion of a genuine generated password.
+        env = ["PREFIX_" + secret[:n//2] + "=" + secret[n//2:]]
+    elif case == "complete_unexpected_name":
+        env = ["UNEXPECTED_FEATURE=" + secret]
+    elif case == "unknown_proxy_value":
+        env = ["HTTP_PROXY=" + secret[:n//2],
+               "UNEXPECTED_SUFFIX=" + secret[n//2:]]
+    elif case == "unexpected_nested_field":
+        env = ["SAFE_FEATURE_FLAG=enabled", "PART_A=" + secret[:n//2]]
+    else:
+        raise AssertionError("unknown P1-F synthetic payload")
+    response = [{"Config": {"Env": env}}]
+    if case == "unexpected_nested_field":
+        response[0]["EnvInspectExtra"] = {"unsanctioned": secret[n//2:]}
+    return response
+
+
+@pytest.mark.parametrize("target", P1F_TARGETS)
+@pytest.mark.parametrize("case", P1F_CASES)
+def test_p1_f_split_secret_cannot_appear_in_admitted_inspect_snapshot(
+        system, monkeypatch, tmp_path, target, case):
+    """Mock full successful run; inspect stdout contains generated secret shards.
+
+    A safe outcome may be a fail-closed rejection, but the candidate projection
+    must keep normal synthetic B5 runs admissible while publishing NO untrusted
+    secret fragment, key or extra field from inspection.
+    """
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1f-" + target + "-" + case)
+    old_command = runner.command
+    seen = {"count": 0, "secret": None, "shards": [], "record": None}
+
+    def mocked_inspect(argv, **kwargs):
+        if argv[:2] == ["docker", "inspect"] and len(argv) == 3:
+            name = argv[2]
+            hit = ((target == "server" and name.endswith("-server"))
+                   or (target == "foundation" and name.endswith("-foundation"))
+                   or (target == "restart" and name.endswith("-restart")))
+            if hit:
+                record = runner._LIFECYCLE.get()
+                secret_tuple = runner._TEST_SECRETS.get()
+                assert record is not None and len(secret_tuple) == 4
+                password = secret_tuple[0]
+                raw_obj = _p1f_inspect_payload(case, password)
+                seen.update(count=seen["count"] + 1, secret=password,
+                            record=record, source=raw_obj)
+                if case == "four_fragments":
+                    seen["shards"] = [s.split("=", 1)[1] for s in raw_obj[0]["Config"]["Env"]]
+                else:
+                    seen["shards"] = [
+                        password[:len(password)//2], password[len(password)//2:]]
+                return SimpleNamespace(returncode=0,
+                                       stdout=json.dumps(raw_obj), stderr="")
+        return old_command(argv, **kwargs)
+
+    monkeypatch.setattr(runner, "command", mocked_inspect)
+    receipt = consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+        allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert receipt is not None, "safe projected inspect must not need raw Env"
+    assert seen["count"] == 1
+    secret = seen["secret"]
+    assert secret is not None and secret.startswith("test-only-")
+    assert "".join(seen["shards"]) == secret
+    result = receipt.manifest_bytes.decode("utf-8")
+    assert secret not in result
+    # The source fragments are long enough to be meaningful security leaks;
+    # test each individually, not just contiguous full-secret occurrences.
+    assert all(shard not in result for shard in seen["shards"] if shard)
+    record = json.loads(result)
+    assert record["result"] == "PASS"
+    assert record["secret_redactions"] == 0
+    assert record["cleanup_passed"] is True
+    if target == "server":
+        published = record["server_inspect"]
+    else:
+        op = next(x for x in record["operations"] if x["stage"] == target)
+        published = op["inspect"]
+    assert list(published) == ["Config"], (
+        "no raw inspect metadata may cross the publication boundary")
+    assert published["Config"]["Env"] in ([], ["SAFE_FEATURE_FLAG=enabled"])
+    assert all("PART_" not in x and "UNEXPECTED" not in x
+               for x in published["Config"]["Env"])
+    assert hashlib.sha256(receipt.manifest_bytes).hexdigest() == receipt.sha256
+    assert (evidence / "run-manifest.json").read_bytes() == receipt.manifest_bytes
+    assert admission.admit_archive_without_attestation_candidate(
+        evidence / "run-manifest.json") is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("target", P1F_TARGETS)
+def test_p1_f_duplicate_name_conflict_is_rejected_without_admission(
+        system, monkeypatch, tmp_path, target):
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1f-duplicate-" + target)
+    old_command = runner.command
+    seen = {"secret": None, "count": 0}
+
+    def duplicate(argv, **kwargs):
+        if argv[:2] == ["docker", "inspect"] and len(argv) == 3:
+            name = argv[2]
+            if name.endswith("-" + target):
+                password = runner._TEST_SECRETS.get()[0]
+                seen.update(secret=password, count=seen["count"] + 1)
+                return SimpleNamespace(returncode=0, stdout=json.dumps([{
+                    "Config": {"Env": [
+                        "SAFE_FEATURE_FLAG=enabled",
+                        "SAFE_FEATURE_FLAG=" + password,
+                    ]}
+                }]), stderr="")
+        return old_command(argv, **kwargs)
+    monkeypatch.setattr(runner, "command", duplicate)
+    with pytest.raises(RuntimeError,
+                       match="inspection metadata schema invalid") as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert seen["count"] == 1
+    assert seen["secret"] not in repr(caught.value)
+    assert observed["stage_seen"] == []
+    assert admission.admit_archive_without_attestation_candidate(
+        evidence / "run-manifest.json") is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("target", ("server", "foundation"))
+def test_p1_f_approved_safe_env_constants_and_untrusted_value_masked(
+        system, monkeypatch, tmp_path, target):
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1f-safe-constants-" + target)
+    old_command = runner.command
+    seen = {"secret": None, "count": 0}
+
+    def constants(argv, **kwargs):
+        if argv[:2] == ["docker", "inspect"] and len(argv) == 3:
+            name = argv[2]
+            hit = ((target == "server" and name.endswith("-server"))
+                   or (target == "foundation" and name.endswith("-foundation")))
+            if hit:
+                password = runner._TEST_SECRETS.get()[0]
+                seen.update(secret=password, count=seen["count"] + 1)
+                return SimpleNamespace(returncode=0, stdout=json.dumps([{
+                    "Config": {"Env": [
+                        "POSTGRES_PASSWORD=" + password,
+                        "SAFE_FEATURE_FLAG=enabled",
+                        "HTTP_PROXY=",
+                        "NAME=a=b",
+                        "OTHER_NAME=" + password[:len(password)//2],
+                    ]}, "Raw": {"untrusted-extra": password},
+                }]), stderr="")
+        return old_command(argv, **kwargs)
+
+    monkeypatch.setattr(runner, "command", constants)
+    receipt = consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+        allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert receipt is not None and seen["count"] == 1
+    data = receipt.manifest_bytes.decode("utf-8")
+    assert seen["secret"] not in data
+    assert seen["secret"][:len(seen["secret"])//2] not in data
+    manifest = json.loads(data)
+    published = (manifest["server_inspect"] if target == "server"
+                 else next(x["inspect"] for x in manifest["operations"]
+                           if x["stage"] == target))
+    assert published == {"Config": {"Env": [
+        "POSTGRES_PASSWORD=<test-secret>",
+        "SAFE_FEATURE_FLAG=enabled",
+        "HTTP_PROXY=",
+        "NAME=a=b",
+    ]}}
+    assert admission.admit_archive_without_attestation_candidate(
+        evidence / "run-manifest.json") is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
