@@ -1491,3 +1491,130 @@ def test_p1_f_approved_safe_env_constants_and_untrusted_value_masked(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("target", P1F_TARGETS)
+@pytest.mark.parametrize("fault", ("unconfirmed_cleanup", "publisher_failure"))
+def test_p1_f_split_credential_secondary_faults_still_never_publish_fragments(
+        system, monkeypatch, tmp_path, target, fault):
+    """No fragment disclosure when cleanup OR terminal publication also fails.
+
+    Command execution, daemon inventory, signal handling and resource removal
+    are exclusively fake. Unsafe publisher exception uses the test-only secret
+    to challenge P1-C's fixed public-error boundary.
+    """
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1f-fault-" + target + "-" + fault)
+    old_command, old_remove = runner.command, runner.remove_owned
+    seen = {"record": None, "secret": None, "refusals": 0, "publishes": 0}
+
+    def inspect(argv, **kwargs):
+        if argv[:2] == ["docker", "inspect"] and len(argv) == 3:
+            name = argv[2]
+            if name.endswith("-" + target):
+                secret = runner._TEST_SECRETS.get()[0]
+                seen["secret"] = secret
+                seen["record"] = runner._LIFECYCLE.get()
+                return SimpleNamespace(returncode=0, stdout=json.dumps([{
+                    "Config": {"Env": [
+                        "PART_A=" + secret[:len(secret)//2],
+                        "PART_B=" + secret[len(secret)//2:],
+                    ]},
+                }]), stderr="")
+        return old_command(argv, **kwargs)
+
+    def remove(kind, name, owner):
+        if (fault == "unconfirmed_cleanup" and kind == "container"
+                and name.endswith("-server")):
+            seen["refusals"] += 1
+            observed["removals"].append((kind, name, str(owner)))
+            return False
+        return old_remove(kind, name, owner)
+
+    def publish(path, contents):
+        assert path == evidence / "run-manifest.json"
+        seen["publishes"] += 1
+        raise OSError("synthetic unsafe publisher " + seen["secret"])
+
+    monkeypatch.setattr(runner, "command", inspect)
+    monkeypatch.setattr(runner, "remove_owned", remove)
+    if fault == "publisher_failure":
+        monkeypatch.setattr(runner, "publish_terminal_manifest_candidate",
+                            publish)
+
+    public_type = (runner.CleanupUnconfirmed
+                   if fault == "unconfirmed_cleanup" else OSError)
+    with pytest.raises(public_type) as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+
+    secret = seen["secret"]
+    assert secret and seen["record"] is not None
+    left, right = secret[:len(secret)//2], secret[len(secret)//2:]
+    assert left and right
+    assert all(part not in repr(caught.value) for part in (secret, left, right))
+    record = seen["record"]
+    assert record["result"] == "FAILED"
+    assert record["credential_file_cleanup"] == "REMOVED"
+    assert not (evidence / "test-client.env").exists()
+    terminal = evidence / "run-manifest.json"
+    if fault == "unconfirmed_cleanup":
+        assert seen["refusals"] > 0
+        assert record["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+        assert "CLEANUP_UNCONFIRMED" in str(caught.value)
+        assert terminal.is_file()
+        data = terminal.read_text(encoding="utf-8")
+        assert json.loads(data)["result"] == "FAILED"
+        assert all(part not in data for part in (secret, left, right))
+    else:
+        assert seen["publishes"] == 1
+        assert record["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+        assert record["cleanup_passed"] is True
+        assert "details suppressed" in str(caught.value)
+        assert not terminal.exists()
+    assert admission.admit_archive_without_attestation_candidate(terminal) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("target", ("server", "foundation"))
+@pytest.mark.parametrize("name", ("BAD\x00KEY", "BAD\nKEY", "BAD KEY"))
+def test_p1_f_credential_bearing_invalid_env_key_fails_closed(
+        system, monkeypatch, tmp_path, target, name):
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1f-invalid-key-" + target
+                           + "-" + str(len(name)) + "-" + str(ord(name[3])))
+    old_command = runner.command
+    seen = {"secret": None, "record": None}
+
+    def inject(argv, **kwargs):
+        if argv[:2] == ["docker", "inspect"] and len(argv) == 3:
+            if argv[2].endswith("-" + target):
+                secret = runner._TEST_SECRETS.get()[0]
+                seen.update(secret=secret, record=runner._LIFECYCLE.get())
+                return SimpleNamespace(returncode=0, stdout=json.dumps([{
+                    "Config": {"Env": [name + "=" + secret]},
+                }]), stderr="")
+        return old_command(argv, **kwargs)
+    monkeypatch.setattr(runner, "command", inject)
+    with pytest.raises(RuntimeError, match="inspection metadata schema invalid") as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert seen["secret"] and seen["secret"] not in repr(caught.value)
+    record = seen["record"]
+    assert record is not None and record["result"] == "FAILED"
+    assert record["cleanup_passed"] is True
+    assert record["credential_file_cleanup"] == (
+        "NOT_PRESENT" if target == "server" else "REMOVED")
+    assert observed["stage_seen"] == []
+    assert not (evidence / "test-client.env").exists()
+    manifest = evidence / "run-manifest.json"
+    assert manifest.is_file()
+    raw = manifest.read_text(encoding="utf-8")
+    assert seen["secret"] not in raw
+    assert json.loads(raw)["result"] == "FAILED"
+    assert admission.admit_archive_without_attestation_candidate(manifest) is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
