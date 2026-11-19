@@ -799,7 +799,7 @@ def test_p1_c_01_unsafe_publisher_exception_never_leaks_at_any_exit(
             return False
         return original_remove(kind, name, owner)
 
-    unsafe_bytes = ("synthetic publisher " + P1C_SECRET).encode() + b"\\xff"
+    unsafe_bytes = ("synthetic publisher " + P1C_SECRET).encode() + b"\xff"
     if publisher_type == "unicode":
         unsafe = UnicodeDecodeError("utf-8", unsafe_bytes,
                                     len(unsafe_bytes) - 1, len(unsafe_bytes),
