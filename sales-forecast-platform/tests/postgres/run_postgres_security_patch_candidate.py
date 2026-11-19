@@ -330,12 +330,60 @@ def parse_disposable_inspect_metadata_candidate(raw_stdout):
                     and '=' in item
                     and item.split('=', 1)[0] != ''
                     for item in env_entries))
+    # P1-F confidentiality boundary: a schema-compliant Env list is still
+    # untrusted. Multiple harmless-looking KEY=VALUE values (or even key
+    # names) can reconstruct a generated disposable credential without any
+    # contiguous secret for exact redaction to detect. NEVER publish raw Env
+    # names, raw values, or any other fields from Docker inspect.
+    #
+    # Diagnostic projection policy, fixed by reviewed source:
+    # - Only explicitly named password keys may appear, always masked.
+    # - Small, explicitly approved non-secret literal values may appear.
+    # - If an approved nonsecret key has any OTHER value, mask it.
+    # - Unknown keys are omitted entirely (including their NAMES).
+    # - Duplicate/invalid keys fail closed before publication.
+    projected_env = []
+    if valid_structure:
+        masked_names = frozenset((
+            'POSTGRES_PASSWORD', 'PGPASSWORD', 'R7_PG_ADMIN_PASSWORD',
+            'R7_PG_MIGRATOR_PASSWORD', 'R7_PG_WRITER_PASSWORD',
+            'R7_PG_READER_PASSWORD',
+        ))
+        approved_literals = {
+            'SAFE_FEATURE_FLAG': 'enabled',
+            'HTTP_PROXY': '',
+            'NAME': 'a=b',
+        }
+        seen_names = set()
+        for item in env_entries:
+            name, value = item.split('=', 1)
+            # Restrict diagnostic metadata names to a small ASCII variable
+            # grammar. Control characters, NUL and secret-bearing pseudo-
+            # variable keys are never retained in successful evidence.
+            valid_name = (
+                name.isascii()
+                and (name[0].isalpha() or name[0] == '_')
+                and all(char.isalnum() or char == '_' for char in name)
+            )
+            if not valid_name or name in seen_names:
+                valid_structure = False
+                break
+            seen_names.add(name)
+            if name in masked_names:
+                projected_env.append(name + '=<test-secret>')
+            elif name in approved_literals:
+                if value == approved_literals[name]:
+                    projected_env.append(name + '=' + approved_literals[name])
+                else:
+                    projected_env.append(name + '=<redacted-env-value>')
+            # Everything else is dropped, including arbitrary extra metadata
+            # and UNKNOWN_ENV values. No access to raw Env after this point.
     if not valid_structure:
         # A constant error outside the JSON parser handler has no unsafe
         # .doc, .obj, original args or exception-context publication.
         raise RuntimeError(
             'disposable PostgreSQL inspection metadata schema invalid; details suppressed') from None
-    return parsed[0]
+    return {'Config': {'Env': projected_env}}
 
 
 def inspect_image(identity):
@@ -558,9 +606,9 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                 'psql', '-h', '/var/run/postgresql', '-U', 'r7_test_owner', '-d', database, '-v', 'ON_ERROR_STOP=1',
                 '-v', 'test_database='+database, '-v', 'test_identity=r7_05b3_disposable:'+str(run_id), *variables],
                 stdin=(ROOT/'tests/postgres/bootstrap.sql').read_text())
+            # P1-F: record ONLY the approved fixed diagnostic projection;
+            # no raw inspect Env values, keys or other source fields retained.
             record['server_inspect'] = parse_disposable_inspect_metadata_candidate(command(['docker', 'inspect', server]).stdout)
-            # Only redact test passwords; no production credentials are read.
-            record['server_inspect']['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in record['server_inspect']['Config']['Env']]
             with open(envfile, 'x', opener=lambda path, flags: os.open(path, flags, 0o600)) as handle:
                 handle.write('R7_PG_INSTANCE='+str(run_id)+'\nR7_PG_DATABASE='+database+'\n')
                 handle.write(''.join('R7_PG_'+role.upper()+'_PASSWORD='+password+'\n' for role, password in passwords.items()))
@@ -593,8 +641,9 @@ def run(*, allow, wheelhouse, evidence, _host_stage=None):
                     record['evidence_status'] = 'EVIDENCE_UNAVAILABLE'
                     record['result'] = 'FAILED'
                     raise
+                # The parser already projects only approved constant
+                # diagnostics; never reintroduce raw Docker metadata.
                 info = parse_disposable_inspect_metadata_candidate(command(['docker', 'inspect', name]).stdout)
-                info['Config']['Env'] = [s.split('=')[0]+'=<test-secret>' if 'PASSWORD=' in s else s for s in info['Config']['Env']]
                 record['operations'].append({'stage': stage, 'exit_code': result.returncode, 'inspect': info})
                 print(redact_test_secrets(result.stdout), flush=True)
                 print(redact_test_secrets(result.stderr), flush=True)
