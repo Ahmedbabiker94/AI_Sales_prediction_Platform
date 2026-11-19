@@ -71,7 +71,7 @@ def fake_command(fork, scenario, *, primary_unicode=False):
             self.communicates += 1
             if self.communicates == 1:
                 if primary_unicode:
-                    raw = ("synthetic " + SECRET).encode() + b"\\xff"
+                    raw = ("synthetic " + SECRET).encode() + b"\xff"
                     raise UnicodeDecodeError(
                         "utf-8", raw, len(raw)-1, len(raw),
                         "synthetic raw subprocess output")
