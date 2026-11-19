@@ -103,7 +103,7 @@ def test_link_created_then_fault_never_accepts_bare_pass_without_run_success(
         monkeypatch.setattr(module.os.path, "samefile", fail_identity)
 
     # The published PASS may survive despite the runner's reported exception.
-    with pytest.raises(OSError, match="synthetic post-link"):
+    with pytest.raises(OSError, match="terminal manifest publication failed; details suppressed"):
         module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
                    _host_stage=stage)
 
