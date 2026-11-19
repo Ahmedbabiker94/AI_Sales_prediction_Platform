@@ -1200,3 +1200,63 @@ def test_p1_e_valid_json_unsupported_inspect_metadata_never_admitted(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+@pytest.mark.parametrize("inspection", ["server", "client"])
+def test_p1_e_valid_inspect_env_list_still_admits_redacted_snapshot(
+        system, monkeypatch, tmp_path, inspection):
+    """The strict schema check must not reject a legitimate KEY=VALUE list.
+
+    The secret is generated in the actual runner, not a literal test fixture.
+    Every value with a password-bearing key is redacted before the retained
+    manifest is finalized; only the verified controller snapshot is consumed.
+    """
+    runner, admission, consumer, _stage, signals, observed = system
+    evidence = tmp_path / ("p1e-valid-" + inspection)
+    old_command = runner.command
+    captured = {"secret": None, "count": 0}
+    def valid_inspect(args, **kwargs):
+        if args[:2] == ["docker", "inspect"] and len(args) == 3:
+            name = args[2]
+            match = ((inspection == "server" and name.endswith("-server"))
+                     or (inspection == "client" and name.endswith("-foundation")))
+            if match:
+                secrets = runner._TEST_SECRETS.get()
+                assert len(secrets) == 4
+                captured["count"] += 1
+                captured["secret"] = secrets[0]
+                return SimpleNamespace(returncode=0, stdout=json.dumps([{
+                    "Config": {"Env": [
+                        "POSTGRES_PASSWORD=" + secrets[0],
+                        "SAFE_FEATURE_FLAG=enabled",
+                    ]}, "Synthetic": "only-for-offline-test",
+                }]), stderr="")
+        return old_command(args, **kwargs)
+    monkeypatch.setattr(runner, "command", valid_inspect)
+    receipt = consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+        allow=True, wheelhouse=tmp_path, evidence=evidence)
+    assert receipt is not None
+    assert captured["count"] == 1
+    assert captured["secret"].startswith("test-only-")
+    raw = receipt.manifest_bytes.decode("utf-8")
+    assert captured["secret"] not in raw
+    manifest = json.loads(raw)
+    assert manifest["result"] == "PASS"
+    assert manifest["evidence_status"] == "AVAILABLE"
+    assert manifest["cleanup_passed"] is True
+    if inspection == "server":
+        entries = manifest["server_inspect"]["Config"]["Env"]
+    else:
+        first = next(x for x in manifest["operations"]
+                     if x["stage"] == "foundation")
+        entries = first["inspect"]["Config"]["Env"]
+    assert entries == [
+        "POSTGRES_PASSWORD=<test-secret>", "SAFE_FEATURE_FLAG=enabled",
+    ]
+    assert hashlib.sha256(receipt.manifest_bytes).hexdigest() == receipt.sha256
+    assert (evidence / "run-manifest.json").read_bytes() == receipt.manifest_bytes
+    assert admission.admit_archive_without_attestation_candidate(
+        evidence / "run-manifest.json") is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
