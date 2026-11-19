@@ -38,7 +38,7 @@ CASES = [
 ]
 
 
-def fake_command(fork, scenario):
+def fake_command(fork, scenario, *, primary_unicode=False):
     source = ast.parse(FORK_PATH.read_text(encoding="utf-8"))
     original = next(node for node in source.body
                     if isinstance(node, ast.FunctionDef) and node.name == "command")
@@ -62,12 +62,19 @@ def fake_command(fork, scenario):
             if scenario.startswith("poll_"):
                 if scenario.endswith("keyboard_interrupt"):
                     raise KeyboardInterrupt("synthetic poll interrupt")
+                if scenario.endswith("system_exit"):
+                    raise SystemExit("synthetic poll exit")
                 raise OSError("synthetic poll failure")
             return self.returncode
 
         def communicate(self, input=None, timeout=None):
             self.communicates += 1
             if self.communicates == 1:
+                if primary_unicode:
+                    raw = ("synthetic " + SECRET).encode() + b"\\xff"
+                    raise UnicodeDecodeError(
+                        "utf-8", raw, len(raw)-1, len(raw),
+                        "synthetic raw subprocess output")
                 raise subprocess.TimeoutExpired(
                     cmd=self.argv, timeout=timeout,
                     output="stdout " + SECRET,
@@ -88,6 +95,8 @@ def fake_command(fork, scenario):
         if scenario.startswith("kill_"):
             if scenario.endswith("keyboard_interrupt"):
                 raise KeyboardInterrupt("synthetic kill interrupt")
+            if scenario.endswith("system_exit"):
+                raise SystemExit("synthetic kill exit")
             raise OSError("synthetic kill failure")
 
     namespace = {
@@ -150,3 +159,57 @@ def test_secondary_reap_fault_never_exposes_original_timeout(
 def test_default_review_only_command_remains_unconditionally_blocked(fork):
     with pytest.raises(RuntimeError, match="OFFLINE_REVIEW_ONLY"):
         fork.command(["docker", "run", "-e", "PGPASSWORD=" + SECRET])
+
+
+P1C_SECONDARY_UNICODE_CASES = [
+    ("poll_keyboard_interrupt", KeyboardInterrupt, "POLL_EXCEPTION", False),
+    ("poll_system_exit", SystemExit, "POLL_EXCEPTION", False),
+    ("kill_keyboard_interrupt", KeyboardInterrupt, "KILLPG_EXCEPTION", True),
+    ("kill_system_exit", SystemExit, "KILLPG_EXCEPTION", True),
+    ("reap_keyboard_interrupt", KeyboardInterrupt, "WAIT_EXCEPTION", True),
+    ("reap_system_exit", SystemExit, "WAIT_EXCEPTION", True),
+]
+
+
+@pytest.mark.parametrize("scenario,expected,issue,kill_expected",
+                         P1C_SECONDARY_UNICODE_CASES)
+def test_p1_c_02_unicode_error_secondary_interrupt_preserves_termination_class(
+        fork, scenario, expected, issue, kill_expected):
+    """Raw decoding error + secondary interrupt must not expose either raw error.
+
+    The only executed function is an in-memory AST copy; a fake subprocess
+    and a fake killpg perform all work. No CLI/PG/network/signal is launched.
+    """
+    command, observed = fake_command(fork, scenario, primary_unicode=True)
+    record = {"run_hex": "abc123", "creation_attempts": []}
+    token = fork._LIFECYCLE.set(record)
+    args = ["docker", "run", "--name", "r7-05b3-abc123-synthetic",
+            "-e", "PGPASSWORD=" + SECRET, "sha256:synthetic"]
+    try:
+        with pytest.raises(expected, match="details suppressed") as captured:
+            command(args, timeout=2)
+        public = captured.value
+        assert public.__context__ is None
+        assert public.__cause__ is None
+        assert not hasattr(public, "object")
+        assert not hasattr(public, "cmd")
+        assert not hasattr(public, "output")
+        assert not hasattr(public, "stderr")
+        texts = [
+            str(public), repr(public), repr(public.args), repr(vars(public)),
+            "".join(traceback.format_exception(public)),
+        ]
+        assert all(SECRET not in part and "PGPASSWORD" not in part
+                   for part in texts)
+        assert len(record["creation_attempts"]) == 1
+        attempt = record["creation_attempts"][0]
+        assert attempt["state"] == "DAEMON_UNRESOLVED"
+        assert issue in attempt.get("local_reap_issues", [])
+        assert isinstance(attempt.get("local_reaped"), bool)
+        assert bool(observed["kills"]) is kill_expected
+        assert observed["process"].communicates == 2
+    finally:
+        fork._LIFECYCLE.reset(token)
+    assert fork._LIFECYCLE.get() is None
+    with pytest.raises(RuntimeError, match="OFFLINE_REVIEW_ONLY"):
+        fork.command(["docker", "version"])
