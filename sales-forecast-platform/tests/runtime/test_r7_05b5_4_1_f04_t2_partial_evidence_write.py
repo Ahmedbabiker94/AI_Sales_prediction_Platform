@@ -101,7 +101,7 @@ def test_manifest_writer_error_cannot_publish_pass(
     monkeypatch.setattr(module, "write_evidence", faulty_write)
     evidence = tmp_path / "evidence"
     try:
-        with pytest.raises(OSError, match="synthetic manifest"):
+        with pytest.raises(OSError, match="terminal manifest publication failed; details suppressed"):
             module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
                        _host_stage=capture)
         assert intercepted, "the terminal manifest writer must be exercised"
@@ -127,7 +127,7 @@ def test_serialization_fault_classified_as_evidence_unavailable(
     monkeypatch.setattr(module, "finalize_manifest_candidate", fail_serializer)
     evidence = tmp_path / "evidence"
     try:
-        with pytest.raises(ValueError, match="synthetic terminal JSON"):
+        with pytest.raises(OSError, match="terminal manifest publication failed; details suppressed"):
             module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
                        _host_stage=capture)
         assert calls
@@ -152,7 +152,7 @@ def test_publication_fault_cannot_leave_pass_manifest(
     monkeypatch.setattr(module.os, "link", deny_link)
     evidence = tmp_path / "evidence"
     try:
-        with pytest.raises(OSError, match="synthetic atomic publish failed"):
+        with pytest.raises(OSError, match="terminal manifest publication failed; details suppressed"):
             module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
                        _host_stage=capture)
         assert calls
@@ -237,7 +237,7 @@ def test_manifest_publication_refuses_existing_destination_without_overwrite(
 
     evidence = tmp_path / "evidence"
     try:
-        with pytest.raises(FileExistsError):
+        with pytest.raises(OSError, match="terminal manifest publication failed; details suppressed"):
             module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
                        _host_stage=occupy_destination)
         assert calls
@@ -271,7 +271,7 @@ def test_link_created_then_fault_removes_only_owned_published_manifest(
     monkeypatch.setattr(module.os, "link", ambiguous_publish)
     evidence = tmp_path / "evidence"
     try:
-        with pytest.raises(OSError, match="synthetic link succeeded"):
+        with pytest.raises(OSError, match="terminal manifest publication failed; details suppressed"):
             module.run(allow=True, wheelhouse=tmp_path, evidence=evidence,
                        _host_stage=capture)
         assert linked == [evidence / "run-manifest.json"]
