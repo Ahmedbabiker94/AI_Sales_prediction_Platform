@@ -103,7 +103,7 @@ def test_controller_does_not_issue_receipt_after_ambiguous_failed_publication(
         monkeypatch.setattr(Path, "unlink", refuse_unlink)
     else:
         monkeypatch.setattr(module.os.path, "samefile", refuse_inode)
-    with pytest.raises(OSError, match="synthetic published then failed"):
+    with pytest.raises(OSError, match="terminal manifest publication failed; details suppressed"):
         admission.invoke_candidate_and_admit(
             allow=True, wheelhouse=tmp_path, evidence=evidence)
     assert accepted.exists()
@@ -296,7 +296,7 @@ def test_run_a_completion_cannot_admit_run_b_failed_leftover_pass(
     with monkeypatch.context() as faults:
         faults.setattr(module.os, "link", link_after_commit_fault)
         faults.setattr(Path, "unlink", rollback_refused)
-        with pytest.raises(OSError, match="synthetic B link"):
+        with pytest.raises(OSError, match="terminal manifest publication failed; details suppressed"):
             admission.invoke_candidate_and_admit(
                 allow=True, wheelhouse=tmp_path, evidence=tmp_path / "run-b")
     assert b_path.exists()
