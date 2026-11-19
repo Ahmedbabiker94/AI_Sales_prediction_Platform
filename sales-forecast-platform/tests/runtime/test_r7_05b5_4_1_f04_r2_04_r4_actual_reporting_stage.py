@@ -738,3 +738,122 @@ def test_p1_absence_then_late_labeled_container_reappearance_is_rejected(
     assert len(signals) == 2 and signals[-1] == "old"
     assert runner._LIFECYCLE.get() is None
     assert runner._TEST_SECRETS.get() == ()
+
+
+# F04-P1-C: publisher exceptions are untrusted external-data surfaces.
+# A bare "from None" is NOT enough: __context__ may still reference them.
+# No real subprocess, Docker, signal, PG or user credential is involved.
+P1C_SECRET = "test-only-P1C-PUBLISHER-CREDENTIAL-NOT-REAL"
+
+
+def _assert_p1c_public_exception_has_no_publisher_payload(public):
+    import traceback
+    queue, seen = [public], set()
+    while queue:
+        exc = queue.pop()
+        if exc is None or id(exc) in seen:
+            continue
+        seen.add(id(exc))
+        displayed = (
+            str(exc), repr(exc), repr(exc.args), repr(vars(exc)),
+            repr(getattr(exc, "object", None)),
+            repr(getattr(exc, "filename", None)),
+            repr(getattr(exc, "stderr", None)),
+            repr(getattr(exc, "output", None)),
+            repr(getattr(exc, "cmd", None)),
+            "".join(traceback.format_exception(exc)),
+        )
+        assert all(P1C_SECRET not in item for item in displayed), (
+            "unsafe publisher exception retained in public exception graph")
+        queue.extend((exc.__context__, exc.__cause__))
+
+
+@pytest.mark.parametrize("publisher_type", ["unicode", "oserror"])
+@pytest.mark.parametrize("prior", ["owned_cleanup_unconfirmed",
+                                     "safe_primary", "publisher_only"])
+def test_p1_c_01_unsafe_publisher_exception_never_leaks_at_any_exit(
+        system, monkeypatch, tmp_path, publisher_type, prior):
+    """Six negative paths: unsafe publisher with three completion states.
+
+    The controller invokes the actual B5-stage candidate under the already
+    mocked command/daemon. The publishing callback is the ONLY unsafe source.
+    """
+    runner, admission, consumer, stage, signals, observed = system
+    evidence = tmp_path / ("p1c-" + publisher_type + "-" + prior)
+    original_write = stage.write_evidence
+    original_remove = runner.remove_owned
+    primary = OSError("synthetic SAFE PRIMARY B5 output failure")
+    events = {"publication": 0, "refusal": 0}
+
+    def stage_write(path, data):
+        if prior != "publisher_only" and path.name == "b5-4-1.stderr":
+            path.write_text("synthetic incomplete stage output", encoding="utf-8")
+            raise primary
+        return original_write(path, data)
+
+    def refuse_owned(kind, name, owner):
+        if (prior == "owned_cleanup_unconfirmed" and kind == "container"
+                and name.endswith("-b5-4-1")):
+            events["refusal"] += 1
+            observed["removals"].append((kind, name, str(owner)))
+            return False
+        return original_remove(kind, name, owner)
+
+    unsafe_bytes = ("synthetic publisher " + P1C_SECRET).encode() + b"\\xff"
+    if publisher_type == "unicode":
+        unsafe = UnicodeDecodeError("utf-8", unsafe_bytes,
+                                    len(unsafe_bytes) - 1, len(unsafe_bytes),
+                                    "synthetic publisher decode")
+    else:
+        unsafe = OSError(5, "synthetic publisher " + P1C_SECRET,
+                         "/synthetic/" + P1C_SECRET)
+        unsafe.object = unsafe_bytes
+        unsafe.stderr = P1C_SECRET
+
+    def unsafe_publish(path, text):
+        assert path == evidence / "run-manifest.json"
+        events["publication"] += 1
+        raise unsafe
+
+    monkeypatch.setattr(stage, "write_evidence", stage_write)
+    monkeypatch.setattr(runner, "remove_owned", refuse_owned)
+    monkeypatch.setattr(runner, "publish_terminal_manifest_candidate",
+                        unsafe_publish)
+
+    if prior == "owned_cleanup_unconfirmed":
+        expected_type = runner.CleanupUnconfirmed
+    elif prior == "safe_primary":
+        expected_type = OSError
+    else:
+        expected_type = OSError  # fixed-message sanitized publication exception
+
+    with pytest.raises(expected_type) as caught:
+        consumer.run_actual_reporting_stage_with_bound_admission_candidate(
+            allow=True, wheelhouse=tmp_path, evidence=evidence)
+    public = caught.value
+    assert public is not unsafe, "publisher error object itself is never public"
+    if prior == "safe_primary":
+        assert public is primary, "safe primary identity must be preserved"
+    elif prior == "owned_cleanup_unconfirmed":
+        assert "CLEANUP_UNCONFIRMED" in str(public)
+        assert events["refusal"] > 0
+    else:
+        assert "publication failed" in str(public)
+        assert "details suppressed" in str(public)
+    _assert_p1c_public_exception_has_no_publisher_payload(public)
+    assert events["publication"] == 1
+    assert len(observed["stage_seen"]) == 1
+    _name, record = observed["stage_seen"][0]
+    assert record["result"] == "FAILED"
+    assert record["evidence_status"] == "EVIDENCE_UNAVAILABLE"
+    assert record["credential_file_cleanup"] == "REMOVED"
+    if prior == "owned_cleanup_unconfirmed":
+        assert record["cleanup_status"] == "CLEANUP_UNCONFIRMED"
+    else:
+        assert record["cleanup_passed"] is True
+    assert not (evidence / "run-manifest.json").exists()
+    assert admission.admit_archive_without_attestation_candidate(
+        evidence / "run-manifest.json") is None
+    assert len(signals) == 2 and signals[-1] == "old"
+    assert runner._LIFECYCLE.get() is None
+    assert runner._TEST_SECRETS.get() == ()
