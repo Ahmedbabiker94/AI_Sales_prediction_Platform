@@ -72,3 +72,12 @@ Use it **only in the two affected Docker inspect sites**, before any access/scru
 - Before any protected runner/wrapper/controller edit: require a fresh **read-only Codex P1-D review of exact tested/latest Git blobs**, review all remaining operational consumers and explicit owner F04-G01 authorization for narrow protected source changes. After any future authorized security rebaseline, make the original immutable frozen-runner negative regression green without altering its test. Real Docker 29/OCI no-pull pins, 16-wheel candidate-v2 provenance/license/OSV, `_HOST_HEALTH`, and disposable PG16.15 require separate permission/evidence.
 
 **Decision recorded:** P1-D **TARGETED SYNTHETIC TESTS PASS at last code-tested e6 snapshot; final fixture-only tree STILL NEEDS ITS OWN CI RUN; FRESH CODEX AI REVIEW PENDING**. **F-04 OPEN / NO-GO; B5-4-2 BLOCKED.**
+
+
+## 6. Post-publication exact-source verification addendum (2026-11-19)
+
+**This addendum supersedes the earlier timestamped CI-pending wording in Sections 1 and 4.** After the initial report was created, the GitHub PR workflow ran against the **report creation commit `5ea518216322fe8abd2d8b229e6c15ac737453b9`**. That commit includes **BOTH** fixture-only corrections, including the final `59b14ae25545ff22f4f9dd9469fee7a1913e54e4` change. Thus the exact latest source/test tree in this review packet **now has verified CI**. The report commit itself changed only documentation after the tests had been written.
+
+**Verified [latest full candidate offline CI run 44463174519](https://github.com/Ahmedbabiker94/AI_Sales_prediction_Platform/actions/runs/44463174519):** Python **3.11 and 3.12 each 393 passed / 1 failed (394 collected)**. The **sole fail** remains the unchanged protected accepted-runner `unexpected_manifest_secret` regression. Full workflow conclusion is **FAILURE** and is *not* a green release gate. [Focused offline verification 44463174473](https://github.com/Ahmedbabiker94/AI_Sales_prediction_Platform/actions/runs/44463174473) succeeded; [host read-only prerequisites 44463174479](https://github.com/Ahmedbabiker94/AI_Sales_prediction_Platform/actions/runs/44463174479) failed.
+
+**P1-D candidate-only targeted tests: PASS on the final full source/test tree.** This updates the prior separate last-commit verification limitation, **not** the approval status: fresh read-only Codex P1-D review and operational-consumer inventory are still pending; F-04 remains OPEN / NO-GO, B5-4-2 BLOCKED. No protected-source, real Docker or PostgreSQL permission granted.
