@@ -311,6 +311,30 @@ def parse_disposable_inspect_metadata_candidate(raw_stdout):
     if invalid_json:
         raise RuntimeError(
             'disposable PostgreSQL inspection JSON invalid; details suppressed') from None
+    # P1-E: valid JSON can still be hostile inspection metadata. Validate
+    # structure BEFORE assigning to the retained lifecycle or iterating Env:
+    # Config.Env as a STRING would silently become a character array;
+    # a DICT entry can raise AttributeError.obj with a raw test credential.
+    # One inspect target must yield exactly one object; only a list of
+    # plain KEY=VALUE strings is supported (empty Env list is valid).
+    valid_structure = (
+        type(parsed) is list
+        and len(parsed) == 1
+        and type(parsed[0]) is dict
+        and type(parsed[0].get('Config')) is dict)
+    if valid_structure:
+        env_entries = parsed[0]['Config'].get('Env')
+        valid_structure = (
+            type(env_entries) is list
+            and all(type(item) is str
+                    and '=' in item
+                    and item.split('=', 1)[0] != ''
+                    for item in env_entries))
+    if not valid_structure:
+        # A constant error outside the JSON parser handler has no unsafe
+        # .doc, .obj, original args or exception-context publication.
+        raise RuntimeError(
+            'disposable PostgreSQL inspection metadata schema invalid; details suppressed') from None
     return parsed[0]
 
 
